@@ -1,0 +1,53 @@
+version: 1
+review_owner: paxbeach@gmail.com
+risks:
+  - id: tos-facebook
+    description: >-
+      Facebook Platform Terms restrict automation of the platform. This project
+      automates only the operator's own personal profile via a Playwright session
+      authenticated once in headed mode by the operator; no Graph API misuse, no
+      scraping of others' content, no fake-account workflows. ToS risk is borne by
+      the operator.
+    severity: high
+    accepted_by: paxbeach@gmail.com
+    accepted_on: 2026-05-21
+    expires: 2026-08-19
+  - id: tos-linkedin
+    description: >-
+      LinkedIn User Agreement restricts automation. This project automates only
+      the operator's own profile through a Playwright session the operator has
+      manually logged into. No data scraping, no connection spamming. ToS risk is
+      borne by the operator.
+    severity: high
+    accepted_by: paxbeach@gmail.com
+    accepted_on: 2026-05-21
+    expires: 2026-08-19
+  - id: tos-x-twitter
+    description: >-
+      X Developer Agreement restricts automation of the service. This project
+      automates the operator's own account via a Playwright-managed browser
+      session. No third-party scraping, no spam patterns. ToS risk is borne by
+      the operator.
+    severity: high
+    accepted_by: paxbeach@gmail.com
+    accepted_on: 2026-05-21
+    expires: 2026-08-19
+  - id: tos-reddit
+    description: >-
+      Reddit User Agreement and content policy restrict automated behavior. This
+      project posts and comments as the operator's own account through a manually
+      logged-in browser session, with platform-specific rate limits respected by
+      design. ToS risk is borne by the operator.
+    severity: high
+    accepted_by: paxbeach@gmail.com
+    accepted_on: 2026-05-21
+    expires: 2026-08-19
+  - id: tos-vkontakte
+    description: >-
+      VKontakte service rules restrict automated activity. This project automates
+      the operator's own profile via a manually authenticated Playwright session.
+      No scraping, no message blasts. ToS risk is borne by the operator.
+    severity: high
+    accepted_by: paxbeach@gmail.com
+    accepted_on: 2026-05-21
+    expires: 2026-08-19

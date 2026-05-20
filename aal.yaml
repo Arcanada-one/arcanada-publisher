@@ -1,0 +1,39 @@
+project: arcanada-publisher
+spec: https://github.com/Arcanada-one/datarim/blob/main/documentation/mandates/aal-mandate.md
+current_aal: L1
+target_aal: L2
+last_validated: 2026-05-21
+public_page: https://arcanada.one/publisher/aal
+
+weakest_links:
+  - cookie-expiry-detection
+  - tos-aware-rate-limiting
+  - screenshot-on-fail-forensics
+
+milestones:
+  L1-baseline:
+    status: in_progress
+    description: Operator-initiated CLI; one command per publish; persistent profile login is a manual step.
+    covers:
+      - core-contracts
+      - facebook-adapter
+      - linkedin-adapter
+      - x-adapter
+      - reddit-adapter
+      - vkontakte-adapter
+  L2-agent-callable:
+    status: planned
+    description: Loopback HTTP API allows local agents (Claude Code / Codex) to publish under explicit, audited policy.
+    requires:
+      - audit-log-per-publish
+      - cost-circuit-breaker-per-platform
+      - drift-detection-cron
+      - tool-scoping-input-validation
+    gate_criteria:
+      - thirty-days-no-aal-drift-events
+      - ten-successful-agent-callable-publishes-with-audit-ref
+      - cost-circuit-breaker-triggered-at-least-once
+
+out_of_scope:
+  - L3-autonomous-schedule
+  - L3-content-generation

@@ -1,0 +1,31 @@
+{
+  "name": "@arcanada/publisher-server",
+  "version": "0.1.0-pre.0",
+  "description": "Fastify HTTP server for arcanada-publisher (placeholder — implementation in Phase 6)",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "test": "vitest run --passWithNoTests",
+    "lint": "eslint --no-error-on-unmatched-pattern src tests"
+  },
+  "dependencies": {
+    "@arcanada/publisher-core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

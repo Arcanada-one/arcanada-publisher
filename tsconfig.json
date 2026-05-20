@@ -1,0 +1,13 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/cli" },
+    { "path": "packages/api" },
+    { "path": "packages/adapter-facebook" },
+    { "path": "packages/adapter-linkedin" },
+    { "path": "packages/adapter-x-twitter" },
+    { "path": "packages/adapter-reddit" },
+    { "path": "packages/adapter-vkontakte" }
+  ]
+}
