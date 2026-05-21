@@ -18,6 +18,7 @@
   ],
   "scripts": {
     "build": "tsc --build",
+    "typecheck": "tsc --build --noEmit",
     "test": "vitest run --passWithNoTests",
     "lint": "eslint --no-error-on-unmatched-pattern src tests"
   },
