@@ -1,7 +1,7 @@
 {
   "name": "@arcanada/publisher-linkedin",
   "version": "0.1.0-pre.0",
-  "description": "LinkedIn adapter (placeholder — implementation in Phase 2)",
+  "description": "LinkedIn adapter for arcanada-publisher (Playwright + persistent profile).",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -14,16 +14,20 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc --build",
     "typecheck": "tsc --build --noEmit",
     "test": "vitest run --passWithNoTests",
+    "test:smoke": "vitest run tests/smoke.spec.ts",
     "lint": "eslint --no-error-on-unmatched-pattern src tests"
   },
   "dependencies": {
-    "@arcanada/publisher-core": "workspace:*"
+    "@arcanada/publisher-core": "workspace:*",
+    "playwright": "^1.60.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

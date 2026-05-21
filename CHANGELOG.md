@@ -4,6 +4,28 @@ All notable changes to `arcanada-publisher` are documented here. The format foll
 
 ## [Unreleased]
 
+### Added
+
+- `@arcanada/publisher-linkedin` 0.1.0 — LinkedIn adapter ported from
+  `Arcanada-one/li-publish@7ddadf8` to native TypeScript + Playwright
+  (PUB-0004, Phase 2 of `PUB-0001`). 60 unit tests + 2 gated live smoke
+  cases. See `packages/adapter-linkedin/CHANGELOG.md` for the per-package
+  history.
+
+### Fixed
+
+- **INFRA-0259** — LinkedIn composer shadow-DOM image intercept closed
+  structurally in `@arcanada/publisher-linkedin` by bypassing the «Add a
+  photo» button click and calling `setInputFiles` on the hidden
+  `input[type="file"]` scoped to the composer dialog.
+- **INFRA-0260** — LinkedIn activity URN extraction tightened to the strict
+  `^https://(?:www\.)?linkedin\.com/feed/update/urn:li:activity:\d+/?$`
+  pattern; recommended-company-card `/company/.../posts/` candidates are
+  rejected by construction.
+- **INFRA-0261** — LinkedIn `edit` flow now accepts an optional image
+  attachment (`imagePath` or `imageFile` alias) so a text-only post can be
+  retrofitted with a cover image without hand-crafting in the UI.
+
 ## [0.1.0-pre.0] — 2026-05-21
 
 ### Added

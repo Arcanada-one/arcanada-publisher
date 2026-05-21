@@ -23,8 +23,8 @@ Operators automating their own social-media posting across several platforms tod
 | Package                         | Status      | Purpose                                                                          |
 | ------------------------------- | ----------- | -------------------------------------------------------------------------------- |
 | `@arcanada/publisher-core`      | foundation  | Adapter contract, result schemas, error taxonomy, profile manager, network guard |
-| `@arcanada/publisher-facebook`  | placeholder | Facebook personal-profile publisher                                              |
-| `@arcanada/publisher-linkedin`  | placeholder | LinkedIn personal-profile publisher                                              |
+| `@arcanada/publisher-facebook`  | live        | Facebook personal-profile publisher                                              |
+| `@arcanada/publisher-linkedin`  | live        | LinkedIn personal-profile publisher                                              |
 | `@arcanada/publisher-x`         | placeholder | X (Twitter) publisher                                                            |
 | `@arcanada/publisher-reddit`    | placeholder | Reddit publisher                                                                 |
 | `@arcanada/publisher-vkontakte` | placeholder | VKontakte publisher                                                              |
