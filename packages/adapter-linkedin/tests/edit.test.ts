@@ -51,6 +51,31 @@ describe("edit — input validation + INFRA-0261 imageFile alias", () => {
     }
   });
 
+  it("INFRA-0261: accepts when imageFile and imagePath are set to the SAME value (alias collapse)", async () => {
+    // Boundary contract for edit.ts:57 — `imageFile !== imagePath` predicate.
+    // Different values must reject (covered below); identical values must
+    // collapse silently to the same image. Without this case the alias-collision
+    // check could mutate to a strict «never both set» without detection.
+    const dir = mkdtempSync(join(tmpdir(), "pub-0004-edit-alias-same-"));
+    const img = join(dir, "same.png");
+    writeFileSync(img, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    try {
+      await edit({
+        postUrl: POST_OK,
+        imageFile: img,
+        imagePath: img,
+        profile: FAKE_PROFILE,
+      });
+    } catch (err) {
+      // Validation MUST pass (no INVALID_ARGS from alias collision, no
+      // MISSING_INPUT). Subsequent failure mode is browser-launch territory
+      // — irrelevant to this contract.
+      const code = (err as AdapterError).code;
+      expect(code).not.toBe(ErrorCode.INVALID_ARGS);
+      expect(code).not.toBe(ErrorCode.MISSING_INPUT);
+    }
+  });
+
   it("INFRA-0261: rejects when imageFile and imagePath are both set to DIFFERENT values", async () => {
     const dir = mkdtempSync(join(tmpdir(), "pub-0004-edit-conflict-"));
     const imgA = join(dir, "a.png");

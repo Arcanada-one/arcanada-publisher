@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { AdapterError, ErrorCode, ProfileManager } from "@arcanada/publisher-core";
 import { publish } from "../src/publish.js";
 
 const FAKE_PROFILE = "vitest-fake-profile";
@@ -40,5 +43,40 @@ describe("publish — input validation (pre-Playwright)", () => {
         profile: FAKE_PROFILE,
       }),
     ).rejects.toMatchObject({ code: ErrorCode.MISSING_INPUT });
+  });
+
+  it("rejects imagePath that points to a directory with INVALID_ARGS", async () => {
+    // validateImagePath line 212-218 ("not a regular file") — previously uncovered.
+    // mkdtemp yields a real directory; passing it as imagePath must fail the
+    // statSync(abs).isFile() guard, NOT slip through to extension check.
+    const dir = mkdtempSync(join(tmpdir(), "pub-0004-pub-dir-"));
+    await expect(
+      publish({ text: "ok", imagePath: dir, profile: FAKE_PROFILE }),
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
+  });
+
+  it("rejects imagePath with unsupported extension with INVALID_ARGS", async () => {
+    // validateImagePath line 219-226 (extension allowlist) — previously uncovered
+    // on the publish path (edit.ts has its own copy + test). LinkedIn rejects
+    // .bmp uploads in the composer; we fail fast before launching the browser.
+    const dir = mkdtempSync(join(tmpdir(), "pub-0004-pub-ext-"));
+    const bad = join(dir, "logo.bmp");
+    writeFileSync(bad, Buffer.from([0x42, 0x4d, 0x00, 0x00])); // BMP magic
+    await expect(
+      publish({ text: "ok", imagePath: bad, profile: FAKE_PROFILE }),
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
+  });
+
+  it("propagates NO_PROFILE when profile dir does not exist on disk", async () => {
+    // Exercises the post-validation → ProfileManager.ensureProfileExists chain
+    // on publish.ts:62-63. Previously every test failed at the validation guard
+    // before reaching profile lookup. We pass valid inputs + an isolated
+    // ProfileManager root with no profile created — ensureProfileExists must
+    // throw NO_PROFILE, and publish() must surface it to the caller verbatim.
+    const isolatedRoot = mkdtempSync(join(tmpdir(), "pub-0004-no-profile-"));
+    const isolatedPM = new ProfileManager({ root: isolatedRoot });
+    await expect(
+      publish({ text: "valid text", profile: FAKE_PROFILE }, { profileManager: isolatedPM }),
+    ).rejects.toMatchObject({ code: ErrorCode.NO_PROFILE });
   });
 });
