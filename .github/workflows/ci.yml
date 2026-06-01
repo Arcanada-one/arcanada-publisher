@@ -74,5 +74,12 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck dev-tools/*.sh
-      - run: bats tests/dev-tools
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r --filter "./packages/*" build # bridge round-trip drives the built CLI
+      - run: shellcheck dev-tools/*.sh examples/*/publish.sh
+      - run: bats tests/dev-tools tests/examples

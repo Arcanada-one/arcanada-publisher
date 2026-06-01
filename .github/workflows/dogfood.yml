@@ -1,0 +1,58 @@
+name: AAL Drift Detection
+
+# Weekly dogfood of the agent-callable surface against a sandbox profile. A
+# failed verify() signals AAL drift (the L2 controls no longer hold) and posts
+# an aal_drift event to the ops hub.
+#
+# STATUS (PUB-0008): the sandbox profile + the ops endpoint's acceptance of the
+# aal_drift category are NOT yet provisioned, so the verify step is a documented
+# placeholder. The schedule + workflow_dispatch wiring is real; the verify body
+# and the event POST activate once the sandbox profile lands (tracked as a
+# follow-up). The drift report is fail-soft: a missing/!2xx ops endpoint must
+# never fail the workflow on top of the drift it is trying to report.
+
+on:
+  schedule:
+    - cron: "0 8 * * 1" # weekly, Monday 08:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-sandbox:
+    name: Sandbox verify (drift detection)
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r --filter "./packages/*" build
+
+      - name: Sandbox verify
+        id: verify
+        continue-on-error: true
+        run: |
+          # PLACEHOLDER (PUB-0008): a real verify() runs the agent-callable
+          # round-trip (publish dry-run → /health → audit assertion) against a
+          # sandbox profile with known throwaway credentials. That profile is not
+          # yet provisioned, so this step intentionally fails to keep the drift
+          # path exercised rather than green-by-omission.
+          echo "sandbox profile not provisioned — verify() is a documented placeholder" >&2
+          exit 1
+
+      - name: Report AAL drift (fail-soft)
+        if: steps.verify.outcome == 'failure'
+        run: |
+          # Fail-soft: report drift without letting a missing/!2xx ops endpoint
+          # mask the drift itself. The endpoint's acceptance of the aal_drift
+          # category is operator-dependent (deferred).
+          curl -fsS -X POST \
+            -H "Content-Type: application/json" \
+            -d '{"category":"aal_drift","source":"arcanada-publisher","message":"sandbox verify failed — AAL L2 controls may have drifted"}' \
+            https://ops.arcanada.one/events || \
+            echo "ops endpoint unreachable or rejected aal_drift — drift still recorded in this run log"
