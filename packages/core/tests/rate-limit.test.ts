@@ -1,9 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import {
-  RateLimiter,
-  DEFAULT_RATE_PER_HOUR,
-  WINDOW_MS,
-} from "../src/rate-limit.js";
+import { RateLimiter, DEFAULT_RATE_PER_HOUR, WINDOW_MS } from "../src/rate-limit.js";
 import { AdapterError, ErrorCode } from "../src/errors.js";
 
 describe("RateLimiter", () => {
@@ -44,7 +40,10 @@ describe("RateLimiter", () => {
     }
     expect(caught).toBeInstanceOf(AdapterError);
     expect((caught as AdapterError).code).toBe(ErrorCode.RATE_LIMIT);
-    expect((caught as AdapterError).details).toMatchObject({ platform: "x", limit: DEFAULT_RATE_PER_HOUR });
+    expect((caught as AdapterError).details).toMatchObject({
+      platform: "x",
+      limit: DEFAULT_RATE_PER_HOUR,
+    });
   });
 
   it("counts platforms independently", () => {

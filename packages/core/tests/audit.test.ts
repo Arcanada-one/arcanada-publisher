@@ -106,9 +106,10 @@ describe("appendAudit", () => {
       { baseDir, now: new Date("2026-06-01T10:30:00.000Z") },
     );
     const files = readdirSync(baseDir);
-    const rec = JSON.parse(
-      readFileSync(join(baseDir, files[0]), "utf8").trim(),
-    ) as Record<string, unknown>;
+    const rec = JSON.parse(readFileSync(join(baseDir, files[0]), "utf8").trim()) as Record<
+      string,
+      unknown
+    >;
     expect(rec.callerToken).toBe("agent-claude-01");
   });
 });
