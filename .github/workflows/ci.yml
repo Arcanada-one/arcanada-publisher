@@ -68,3 +68,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit --prod --audit-level=high
+
+  shell:
+    name: Shell (shellcheck + bats)
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck dev-tools/*.sh
+      - run: bats tests/dev-tools
