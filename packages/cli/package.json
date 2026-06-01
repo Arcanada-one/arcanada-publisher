@@ -1,11 +1,14 @@
 {
   "name": "@arcanada/publisher",
   "version": "0.1.0-pre.0",
-  "description": "Unified CLI for arcanada-publisher (placeholder — implementation in Phase 6)",
+  "description": "Unified CLI for arcanada-publisher",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "arcanada-publisher": "dist/index.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -23,7 +26,12 @@
     "lint": "eslint --no-error-on-unmatched-pattern src tests"
   },
   "dependencies": {
-    "@arcanada/publisher-core": "workspace:*"
+    "@arcanada/publisher-core": "workspace:*",
+    "@arcanada/publisher-facebook": "workspace:*",
+    "@arcanada/publisher-linkedin": "workspace:*",
+    "@arcanada/publisher-x": "workspace:*",
+    "@arcanada/publisher-reddit": "workspace:*",
+    "@arcanada/publisher-vkontakte": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

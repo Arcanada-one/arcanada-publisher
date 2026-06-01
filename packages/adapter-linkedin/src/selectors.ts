@@ -19,6 +19,14 @@ export const selectors = {
   editPostActionRu: /^(Открыть меню|Действия|Параметры)/,
   editPostActionEn: /^(Open control menu|Open options menu|More)/,
   editPostMenuItem: /^(Редактировать публикацию|Редактировать пост|Edit post)$/,
+  // R10: LinkedIn tolerates in-place comment edit (unlike Facebook). The kebab
+  // on a comment carries a per-author aria-label; `Edit` opens the inline editor
+  // and `Save changes` (not `Save`) commits it.
+  commentOptionsMenu: /(View more options for|Открыть дополнительные действия|Ещё действия)/,
+  commentEditMenuItem: /^(Изменить|Редактировать|Edit)$/,
+  commentSaveChanges: /^(Сохранить изменения|Save changes)$/,
+  deleteMenuItem: /^(Удалить публикацию|Удалить пост|Удалить|Delete post|Delete)$/,
+  confirmDelete: /^(Удалить|Delete)$/,
   loginEmail: /^(Email or phone|Эл\.? адрес или номер телефона)$/,
   captchaIndicator:
     /(captcha|verifications|подтвердите, что вы человек|verify you are human|security check|проверка безопасности)/i,

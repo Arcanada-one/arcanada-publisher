@@ -1,0 +1,29 @@
+{
+  "_comment": "Recorded /api/comment response for a reply to a comment (t1_). Oracle for V-AC-12: a reply to a comment sends parent=t1_<id>. The response mirrors Reddit's real shape: the transport returns res.json = { json: { errors, data: { things } } }.",
+  "request": {
+    "path": "/api/comment",
+    "form": {
+      "parent": "t1_l9abc12",
+      "text": "thanks for the detail — here is the article: https://example.com"
+    }
+  },
+  "response": {
+    "json": {
+      "json": {
+        "errors": [],
+        "data": {
+          "things": [
+            {
+              "kind": "t1",
+              "data": {
+                "id": "l9def34",
+                "parent_id": "t1_l9abc12",
+                "body": "thanks for the detail — here is the article: https://example.com"
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

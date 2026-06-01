@@ -1,7 +1,7 @@
 {
   "name": "@arcanada/publisher-vkontakte",
   "version": "0.1.0-pre.0",
-  "description": "VKontakte adapter (placeholder — implementation in Phase 5)",
+  "description": "VKontakte adapter for arcanada-publisher (VK API)",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",

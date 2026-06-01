@@ -44,7 +44,14 @@ export const VerifyResultSchema = z.object({
   account: z.string().optional(),
 });
 
+export const DeleteResultSchema = z.object({
+  ...baseResultShape,
+  deleted: z.boolean(),
+  targetUrl: z.string().url(),
+});
+
 export type PublishResult = z.infer<typeof PublishResultSchema>;
 export type CommentResult = z.infer<typeof CommentResultSchema>;
 export type EditResult = z.infer<typeof EditResultSchema>;
 export type VerifyResult = z.infer<typeof VerifyResultSchema>;
+export type DeleteResult = z.infer<typeof DeleteResultSchema>;

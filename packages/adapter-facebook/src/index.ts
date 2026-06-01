@@ -10,6 +10,8 @@ import {
   BaseAdapter,
   type CommentInput,
   type CommentResult,
+  type DeleteInput,
+  type DeleteResult,
   type EditInput,
   type EditResult,
   type LoginOptions,
@@ -19,14 +21,23 @@ import {
 
 import { login as loginImpl, type LoginContext } from "./login.js";
 import { publish as publishImpl, type PublishOptions } from "./publish.js";
-import { comment as commentImpl, type CommentOptions } from "./comment.js";
+import {
+  comment as commentImpl,
+  replaceCommentText as replaceCommentTextImpl,
+  type CommentOptions,
+  type ReplaceCommentInput,
+  type ReplaceCommentOptions,
+} from "./comment.js";
 import { edit as editImpl, type EditOptions, type FacebookEditInput } from "./edit.js";
+import { del as deleteImpl, type DeleteOptions } from "./delete.js";
 
 export interface FacebookAdapterOptions {
   loginContext?: LoginContext;
   publishOptions?: PublishOptions;
   commentOptions?: CommentOptions;
+  replaceCommentOptions?: ReplaceCommentOptions;
   editOptions?: EditOptions;
+  deleteOptions?: DeleteOptions;
 }
 
 export class FacebookAdapter extends BaseAdapter {
@@ -50,8 +61,21 @@ export class FacebookAdapter extends BaseAdapter {
     return commentImpl(input, this.opts.commentOptions);
   }
 
+  /**
+   * R10: change a comment's text by deleting the old comment and adding a new
+   * one (in-place edit breaks the contenteditable field). Not part of the core
+   * `Adapter` contract — a Facebook-specific safe-replace surface.
+   */
+  async replaceComment(input: ReplaceCommentInput): Promise<CommentResult> {
+    return replaceCommentTextImpl(input, this.opts.replaceCommentOptions);
+  }
+
   async edit(input: EditInput | FacebookEditInput): Promise<EditResult> {
     return editImpl(input as FacebookEditInput, this.opts.editOptions);
+  }
+
+  async delete(input: DeleteInput): Promise<DeleteResult> {
+    return deleteImpl(input, this.opts.deleteOptions);
   }
 }
 
@@ -60,3 +84,4 @@ export { selectors, matchesExact, isCaptchaBlob } from "./selectors.js";
 export { classifyFbError, mapFbError } from "./errors.js";
 export type { FbErrorType } from "./errors.js";
 export type { FacebookEditInput } from "./edit.js";
+export type { ReplaceCommentInput } from "./comment.js";

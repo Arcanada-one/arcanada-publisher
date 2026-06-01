@@ -1,0 +1,19 @@
+{
+  "_comment": "Recorded wall.createComment response for a reply to a comment. Oracle for V-AC-13: a reply to a comment sends reply_to_comment=<id> and the response's comment_id is the new comment.",
+  "request": {
+    "method": "wall.createComment",
+    "params": {
+      "owner_id": "-123456",
+      "post_id": "789",
+      "message": "спасибо за детали — статья: https://example.com",
+      "reply_to_comment": "42"
+    }
+  },
+  "response": {
+    "json": {
+      "response": {
+        "comment_id": 57
+      }
+    }
+  }
+}

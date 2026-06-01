@@ -12,6 +12,9 @@ import {
 } from "@arcanada/publisher-core";
 import { extractAccountFromUrl, extractPostUrlFromHref } from "./url-extraction.js";
 import { launchSession, withScreenshotOnFail } from "./context.js";
+import { selectors } from "./selectors.js";
+import { typeMultiline } from "./input.js";
+import { VERIFY_DELAY_MS } from "./timing.js";
 
 const FB_HOSTNAME = "www.facebook.com";
 
@@ -71,9 +74,12 @@ async function runCommentFlow(page: Page, input: CommentInput): Promise<CommentR
       .first();
     await composer.waitFor({ state: "visible", timeout: 10_000 });
     await composer.click();
-    await page.keyboard.insertText(input.text);
-    await page.keyboard.press("Enter");
-    await page.waitForTimeout(3_000);
+    // R6: a multi-line first comment (CTA links + TG cross-link) must use
+    // Shift+Enter between lines — a raw "\n" makes FB submit on the first line,
+    // dropping links 2-N (the "only the first link is inserted" bug). The final
+    // plain Enter submits the comment.
+    await typeMultiline(page, input.text, { submit: true });
+    await page.waitForTimeout(VERIFY_DELAY_MS);
 
     const rawHref = await page.$eval(
       'a[href*="comment_id="]',
@@ -126,3 +132,136 @@ async function defaultVerifyParent(parentPostUrl: string): Promise<boolean> {
     return false;
   }
 }
+
+// --- R10: comment-text change = DELETE + ADD (never in-place edit) ---------
+//
+// Editing a Facebook comment's contenteditable field breaks it (collapses to
+// the first line on focus/clear, keystrokes do not print). The only
+// reliable way to change a comment's text is to delete the old one and add a
+// new one. This is intentionally NOT an `edit()` arm: the two-step contract has
+// no in-place edit path.
+
+export interface ReplaceCommentInput {
+  parentPostUrl: string;
+  /** Read-before-delete oracle: the current text of the comment to replace. */
+  oldText: string;
+  /** The new comment body (may be multi-line — typed via Shift+Enter, R6). */
+  text: string;
+  profile: string;
+}
+
+/** Injectable two-step choreography (test seam): delete old, then add new. */
+export interface ReplaceCommentRecorder {
+  deleteOldComment(page: Page, input: ReplaceCommentInput): Promise<void>;
+  /** Returns the new comment id. */
+  addNewComment(page: Page, input: ReplaceCommentInput): Promise<string>;
+}
+
+export interface ReplaceCommentOptions {
+  headed?: boolean;
+  profileManager?: ProfileManager;
+  page?: Page;
+  __recorder?: ReplaceCommentRecorder;
+  skipTeardown?: boolean;
+}
+
+export async function replaceCommentText(
+  input: ReplaceCommentInput,
+  options: ReplaceCommentOptions = {},
+): Promise<CommentResult> {
+  assertParentHost(input.parentPostUrl);
+  if (!input.text || input.text.trim() === "") {
+    throw new AdapterError(ErrorCode.MISSING_INPUT, "replaceCommentText: 'text' is required");
+  }
+  if (!input.oldText || input.oldText.trim() === "") {
+    throw new AdapterError(
+      ErrorCode.MISSING_INPUT,
+      "replaceCommentText: 'oldText' is required (read-before-delete oracle)",
+    );
+  }
+
+  const profiles = options.profileManager ?? new ProfileManager();
+  const profileDir = profiles.ensureProfileExists("facebook", input.profile);
+
+  if (options.page) {
+    return runReplaceFlow(options.page, input, options.__recorder);
+  }
+
+  const session = await launchSession({
+    profileDir,
+    ...(options.headed !== undefined ? { headed: options.headed } : {}),
+  });
+  try {
+    return await runReplaceFlow(session.page, input, options.__recorder);
+  } finally {
+    if (!options.skipTeardown) {
+      await session.close();
+    }
+  }
+}
+
+async function runReplaceFlow(
+  page: Page,
+  input: ReplaceCommentInput,
+  recorder?: ReplaceCommentRecorder,
+): Promise<CommentResult> {
+  const steps = recorder ?? defaultReplaceSteps;
+  return withScreenshotOnFail(page, "comment-replace", async () => {
+    // R10: delete the old comment FIRST, then add the new one.
+    await steps.deleteOldComment(page, input);
+    const commentId = await steps.addNewComment(page, input);
+    return CommentResultSchema.parse({
+      ok: true,
+      platform: "facebook",
+      account: extractAccountFromUrl(input.parentPostUrl),
+      commentId,
+      parentPostUrl: input.parentPostUrl,
+    });
+  });
+}
+
+const defaultReplaceSteps: ReplaceCommentRecorder = {
+  async deleteOldComment(page: Page, input: ReplaceCommentInput): Promise<void> {
+    await page.goto(input.parentPostUrl);
+    // Read-before-delete: the comment menu is only opened for the comment whose
+    // rendered text matches `oldText`; a mismatch aborts before any click.
+    const commentBlock = page
+      .locator('[role="article"]')
+      .filter({ hasText: input.oldText })
+      .first();
+    await commentBlock.waitFor({ state: "visible", timeout: 10_000 });
+    const menu = commentBlock.getByLabel(selectors.commentActionsMenu).first();
+    await menu.click();
+    const deleteItem = page.getByRole("menuitem", { name: selectors.deleteMenuItem }).first();
+    await deleteItem.waitFor({ state: "visible", timeout: 5_000 });
+    await deleteItem.click();
+    const confirm = page.getByRole("button", { name: selectors.confirmDelete, exact: true });
+    await confirm.first().click();
+    await page.waitForTimeout(VERIFY_DELAY_MS);
+  },
+
+  async addNewComment(page: Page, input: ReplaceCommentInput): Promise<string> {
+    const composer = page
+      .getByRole("textbox", { name: /(Напишите комментарий|Write a comment)/ })
+      .first();
+    await composer.waitFor({ state: "visible", timeout: 10_000 });
+    await composer.click();
+    // R6: multi-line comment via Shift+Enter, final Enter submits.
+    await typeMultiline(page, input.text, { submit: true });
+    await page.waitForTimeout(VERIFY_DELAY_MS);
+    const rawHref = await page.$eval(
+      'a[href*="comment_id="]',
+      (a) => (a as unknown as { href: string }).href,
+    );
+    const commentHref = extractPostUrlFromHref(rawHref);
+    const commentId = new URL(commentHref).searchParams.get("comment_id");
+    if (!commentId) {
+      throw new AdapterError(
+        ErrorCode.VERIFY_FAILED,
+        "replaceCommentText: added but commentId missing from rendered href",
+        { commentHref, fbErrorType: "verify_mismatch" },
+      );
+    }
+    return commentId;
+  },
+};

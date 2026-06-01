@@ -17,6 +17,12 @@ export const selectors = {
   editPostMenuItemFallback: /^(Редактировать или удалить|Edit or delete)$/,
   editPostMenuItemDelegated: /^(Редактировать|Edit)$/,
   commentEditMenu: /^(Изменить|Edit)$/,
+  // R10: comment-actions kebab — opens the "edit / delete / report" menu on a
+  // comment block (FB 2026 aria-label, RU/EN variants).
+  commentActionsMenu:
+    /(Редактировать, удалить или пожаловаться|Comment actions|Действия для комментария)/,
+  deleteMenuItem: /^(Удалить|Move to trash|Delete)$/,
+  confirmDelete: /^(Удалить|Переместить|Move|Delete)$/,
   editedMarker: /^(Отредактировано|Edited)$/,
   loginEmail: /^(Эл\. адрес или номер мобильного телефона|Email or phone number)$/,
   captchaIndicator:

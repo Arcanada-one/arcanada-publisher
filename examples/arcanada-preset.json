@@ -1,0 +1,18 @@
+{
+  "_comment": "Arcanada content-policy preset (D-1). This is consumer-specific configuration, NOT part of the public @arcanada/publisher-* packages — it is loaded at runtime via the CLI --policy-config flag and is excluded from every package's npm tarball (each package ships only dist/). The neutral engine in @arcanada/publisher-core holds zero of these constants; they live here as data.",
+  "languageByPlatform": {
+    "facebook": "ru",
+    "vkontakte": "ru",
+    "linkedin": "en",
+    "x": "en"
+  },
+  "linksInFirstComment": true,
+  "crossLink": {
+    "url": "https://t.me/valentovtypes",
+    "templateByLang": {
+      "ru": "Telegram: {url}",
+      "en": "Telegram (in Russian): {url}"
+    }
+  },
+  "headerSeparatorPlatforms": ["facebook", "linkedin"]
+}

@@ -1,7 +1,7 @@
 {
   "name": "@arcanada/publisher-server",
   "version": "0.1.0-pre.0",
-  "description": "Fastify HTTP server for arcanada-publisher (placeholder — implementation in Phase 6)",
+  "description": "Loopback HTTP server for arcanada-publisher",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",

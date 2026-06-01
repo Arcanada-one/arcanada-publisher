@@ -67,7 +67,8 @@ export async function screenshotOnFail(
   stage: string,
   artefactsDir = resolveArtifactsDir(),
 ): Promise<string | null> {
-  if (!page || page.isClosed()) return null;
+  // Defensive: injected fake pages (unit tests) may not implement isClosed().
+  if (!page || typeof page.isClosed !== "function" || page.isClosed()) return null;
   const target = join(artefactsDir, artifactFilename(stage, "png"));
   try {
     await page.screenshot({ path: target, fullPage: true });

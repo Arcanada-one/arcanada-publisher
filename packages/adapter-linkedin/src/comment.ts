@@ -151,3 +151,130 @@ async function defaultVerifyParent(parentPostUrl: string): Promise<boolean> {
     return false;
   }
 }
+
+// --- R10: edit a LinkedIn comment in place (menu → Edit → Save changes) -----
+//
+// Unlike Facebook (where in-place comment edit is broken and we delete+add),
+// LinkedIn supports editing a comment's text: open the comment kebab («View
+// more options for <Name>'s comment»), click «Edit», replace the body, and
+// commit with «Save changes» (NOT «Save», which is a different control).
+
+export interface EditCommentInput {
+  parentPostUrl: string;
+  /** Read-before-edit oracle: the current text of the comment to edit. */
+  oldText: string;
+  /** The replacement comment body. */
+  text: string;
+  profile: string;
+}
+
+/** Injectable choreography (test seam): open menu → edit → save changes. */
+export interface EditCommentRecorder {
+  openCommentMenu(page: Page, input: EditCommentInput): Promise<void>;
+  clickEditItem(page: Page): Promise<void>;
+  replaceText(page: Page, text: string): Promise<void>;
+  clickSaveChanges(page: Page): Promise<void>;
+}
+
+export interface EditCommentOptions {
+  headed?: boolean;
+  profileManager?: ProfileManager;
+  page?: Page;
+  __recorder?: EditCommentRecorder;
+  skipTeardown?: boolean;
+}
+
+export async function editComment(
+  input: EditCommentInput,
+  options: EditCommentOptions = {},
+): Promise<CommentResult> {
+  assertParentActivityUrl(input.parentPostUrl);
+  if (!input.text || input.text.trim() === "") {
+    throw new AdapterError(ErrorCode.MISSING_INPUT, "editComment: 'text' is required");
+  }
+  if (!input.oldText || input.oldText.trim() === "") {
+    throw new AdapterError(
+      ErrorCode.MISSING_INPUT,
+      "editComment: 'oldText' is required (read-before-edit oracle)",
+    );
+  }
+
+  const profiles = options.profileManager ?? new ProfileManager();
+  const profileDir = profiles.ensureProfileExists("linkedin", input.profile);
+
+  if (options.page) {
+    return runEditCommentFlow(options.page, input, options.__recorder);
+  }
+
+  const session = await launchSession({
+    profileDir,
+    ...(options.headed !== undefined ? { headed: options.headed } : {}),
+  });
+  try {
+    return await runEditCommentFlow(session.page, input, options.__recorder);
+  } finally {
+    if (!options.skipTeardown) {
+      await session.close();
+    }
+  }
+}
+
+async function runEditCommentFlow(
+  page: Page,
+  input: EditCommentInput,
+  recorder?: EditCommentRecorder,
+): Promise<CommentResult> {
+  const steps = recorder ?? defaultEditCommentSteps;
+  return withScreenshotOnFail(page, "comment-edit", async () => {
+    await steps.openCommentMenu(page, input);
+    await steps.clickEditItem(page);
+    await steps.replaceText(page, input.text);
+    await steps.clickSaveChanges(page);
+    const account = `urn:li:activity:${extractActivityId(input.parentPostUrl)}`;
+    return CommentResultSchema.parse({
+      ok: true,
+      platform: "linkedin",
+      account,
+      commentId: "edited",
+      parentPostUrl: input.parentPostUrl,
+    });
+  });
+}
+
+const defaultEditCommentSteps: EditCommentRecorder = {
+  async openCommentMenu(page: Page, input: EditCommentInput): Promise<void> {
+    await page.goto(input.parentPostUrl);
+    // Read-before-edit: scope the kebab to the comment block whose rendered text
+    // matches `oldText`, so we never edit the wrong comment.
+    const block = page
+      .locator("article, [data-id^='urn:li:comment']")
+      .filter({ hasText: input.oldText })
+      .first();
+    await block.waitFor({ state: "visible", timeout: 10_000 });
+    await block.scrollIntoViewIfNeeded();
+    const menu = block.getByRole("button", { name: selectors.commentOptionsMenu }).first();
+    await menu.click();
+  },
+
+  async clickEditItem(page: Page): Promise<void> {
+    const editItem = page.getByRole("menuitem", { name: selectors.commentEditMenuItem }).first();
+    await editItem.waitFor({ state: "visible", timeout: 5_000 });
+    await editItem.click();
+  },
+
+  async replaceText(page: Page, text: string): Promise<void> {
+    const editor = page.getByRole("textbox", { name: selectors.commentBox }).first();
+    await editor.click();
+    await page.keyboard.press("Control+A");
+    await page.keyboard.press("Delete");
+    await page.keyboard.insertText(text);
+  },
+
+  async clickSaveChanges(page: Page): Promise<void> {
+    // R10: the commit control is «Save changes», NOT «Save».
+    const save = page.getByRole("button", { name: selectors.commentSaveChanges, exact: true });
+    await save.first().waitFor({ state: "visible", timeout: 5_000 });
+    await save.first().click();
+    await page.waitForTimeout(3_000);
+  },
+};

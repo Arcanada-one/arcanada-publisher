@@ -112,29 +112,18 @@ async function editPostFlow(page: Page, input: FacebookEditInput): Promise<EditR
   });
 }
 
-async function editCommentFlow(page: Page, input: FacebookEditInput): Promise<EditResult> {
-  return withScreenshotOnFail(page, "edit-comment", async () => {
-    await page.goto(input.postUrl);
-    const commentMenu = page.getByLabel(/^(Действия для комментария|Comment actions)/).first();
-    await commentMenu.waitFor({ state: "visible", timeout: 10_000 });
-    await commentMenu.click();
-
-    const editItem = page.getByRole("menuitem", { name: selectors.commentEditMenu }).first();
-    await editItem.waitFor({ state: "visible", timeout: 5_000 });
-    await editItem.click();
-
-    if (input.text) {
-      const textbox = page.getByRole("textbox").first();
-      await textbox.click();
-      await page.keyboard.press("Control+A");
-      await page.keyboard.press("Delete");
-      await page.keyboard.insertText(input.text);
-      await page.keyboard.press("Enter");
-    }
-    await page.waitForTimeout(3_000);
-
-    return finalizeEditResult(page, input);
-  });
+// R10: in-place editing of a Facebook comment's contenteditable field is
+// broken (the field collapses to its first line on focus/clear and keystrokes
+// do not print). Changing a comment's text MUST go through the
+// delete-old + add-new path. This arm fails closed and routes the caller to
+// `replaceComment` rather than performing the broken in-place edit.
+async function editCommentFlow(_page: Page, input: FacebookEditInput): Promise<EditResult> {
+  throw new AdapterError(
+    ErrorCode.INVALID_ARGS,
+    "edit-comment: in-place comment edit is unsafe on Facebook (R10) — " +
+      "use replaceComment() (delete old + add new) to change a comment's text",
+    { postUrl: input.postUrl, commentId: input.commentId, fbErrorType: "verify_mismatch" },
+  );
 }
 
 async function finalizeEditResult(page: Page, input: FacebookEditInput): Promise<EditResult> {

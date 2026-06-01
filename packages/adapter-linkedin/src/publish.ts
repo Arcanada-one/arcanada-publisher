@@ -35,6 +35,19 @@ const IMAGE_EXT_ALLOWLIST = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const LINKEDIN_FEED = "https://www.linkedin.com/feed/";
 const RECENT_ACTIVITY = "https://www.linkedin.com/in/me/recent-activity/all/";
 const POST_BODY_LIMIT = 3000;
+/** R7: the share-creation API call is the real publish confirmation. */
+const LINKEDIN_SHARE_API = "voyager/api/contentcreation";
+
+/** R1: collect every image path (imagePaths wins; imagePath is the legacy alias). */
+export function collectImagePaths(input: PublishInput): string[] {
+  if (input.imagePaths && input.imagePaths.length > 0) {
+    return input.imagePaths;
+  }
+  if (input.imagePath) {
+    return [input.imagePath];
+  }
+  return [];
+}
 
 export interface PublishOptions {
   headed?: boolean;
@@ -58,12 +71,27 @@ export async function publish(
       `publish: text exceeds LinkedIn limit of ${POST_BODY_LIMIT} characters (got ${input.text.length})`,
     );
   }
-  const safeImagePath = input.imagePath ? validateImagePath(input.imagePath) : undefined;
+  // R1: validate every image path (multi-image); the array order is preserved.
+  const safeImagePaths = collectImagePaths(input).map(validateImagePath);
+
+  // Dry-run validates inputs but performs no IO — no profile store, no browser.
+  // (A page-injected test still exercises the dry-run branch in runPublishFlow.)
+  if (input.dryRun && !options.page) {
+    return PublishResultSchema.parse({
+      ok: true,
+      platform: "linkedin",
+      account: "dry-run",
+      postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:0/",
+      attachments: safeImagePaths.map((src) => ({ kind: "image" as const, src })),
+      commentIds: [],
+    });
+  }
+
   const profiles = options.profileManager ?? new ProfileManager();
   const profileDir = profiles.ensureProfileExists("linkedin", input.profile);
 
   if (options.page) {
-    return runPublishFlow(options.page, input, safeImagePath);
+    return runPublishFlow(options.page, input, safeImagePaths);
   }
 
   const session = await launchSession({
@@ -71,7 +99,7 @@ export async function publish(
     ...(options.headed !== undefined ? { headed: options.headed } : {}),
   });
   try {
-    return await runPublishFlow(session.page, input, safeImagePath);
+    return await runPublishFlow(session.page, input, safeImagePaths);
   } finally {
     if (!options.skipTeardown) {
       await session.close();
@@ -82,7 +110,7 @@ export async function publish(
 async function runPublishFlow(
   page: Page,
   input: PublishInput,
-  imagePath: string | undefined,
+  imagePaths: string[],
 ): Promise<PublishResult> {
   return withScreenshotOnFail(page, "publish", async () => {
     await page.goto(LINKEDIN_FEED);
@@ -102,7 +130,7 @@ async function runPublishFlow(
         platform: "linkedin",
         account: "dry-run",
         postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:0/",
-        attachments: imagePath ? [{ kind: "image", src: imagePath }] : [],
+        attachments: imagePaths.map((src) => ({ kind: "image" as const, src })),
         commentIds: [],
       });
     }
@@ -118,7 +146,11 @@ async function runPublishFlow(
     await editor.click();
     await page.keyboard.insertText(input.text);
 
-    if (imagePath) {
+    if (imagePaths.length > 0) {
+      // R1 multi-image: the «Add media» native file chooser accepts a
+      // multi-selection, so the whole batch uploads in a single setFiles call —
+      // the «Add media → upload → Next» cascade runs once for all images.
+      //
       // CONTENT-0051 fix: LinkedIn 2026 composer lives inside an open shadow
       // root (<div id="interop-outlet">). The «Add media» button is the only
       // image trigger now (aria-label="Add media", no «Add a photo» anymore).
@@ -191,7 +223,9 @@ async function runPublishFlow(
           extra: { stage: "add_media_button" },
         });
       }
-      await chooser.setFiles(imagePath);
+      // R1: hand the whole batch to the chooser (LinkedIn's media picker is
+      // multi-select); each image lands as a separate attachment.
+      await chooser.setFiles(imagePaths);
       await page.waitForTimeout(3_500);
       let done = false;
       for (let i = 0; i < 40; i++) {
@@ -214,7 +248,15 @@ async function runPublishFlow(
     if (await postBtn.first().isDisabled()) {
       throw mapLiError("publish_button_disabled");
     }
-    await postBtn.first().click();
+    // R7: the share-creation API call is the publish confirmation; the DOM toast
+    // caches and lies. We race the click against the network response and fall
+    // back to a timed settle if the API path drifts (best-effort confirmation).
+    await Promise.all([
+      page
+        .waitForResponse((r) => r.url().includes(LINKEDIN_SHARE_API), { timeout: 15_000 })
+        .catch(() => null),
+      postBtn.first().click(),
+    ]);
     await page.waitForTimeout(6_000);
 
     const postUrl = await extractPublishedUrl(page);
@@ -224,7 +266,7 @@ async function runPublishFlow(
       platform: "linkedin",
       account: extractAccountFromActivityUrl(postUrl),
       postUrl,
-      attachments: imagePath ? [{ kind: "image", src: imagePath }] : [],
+      attachments: imagePaths.map((src) => ({ kind: "image" as const, src })),
       commentIds: [],
     });
   });

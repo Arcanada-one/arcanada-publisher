@@ -4,6 +4,7 @@ import {
   CommentResultSchema,
   EditResultSchema,
   VerifyResultSchema,
+  DeleteResultSchema,
 } from "../src/result.js";
 
 describe("PublishResultSchema", () => {
@@ -84,6 +85,31 @@ describe("EditResultSchema", () => {
       edited: true,
     });
     expect(r.edited).toBe(true);
+  });
+});
+
+describe("DeleteResultSchema", () => {
+  it("parses a valid delete result (R13)", () => {
+    const r = DeleteResultSchema.parse({
+      ok: true,
+      platform: "facebook",
+      account: "pavel",
+      deleted: true,
+      targetUrl: "https://www.facebook.com/posts/1",
+    });
+    expect(r.deleted).toBe(true);
+    expect(r.targetUrl).toBe("https://www.facebook.com/posts/1");
+  });
+
+  it("rejects a non-URL targetUrl", () => {
+    const r = DeleteResultSchema.safeParse({
+      ok: true,
+      platform: "facebook",
+      account: "pavel",
+      deleted: true,
+      targetUrl: "not-a-url",
+    });
+    expect(r.success).toBe(false);
   });
 });
 

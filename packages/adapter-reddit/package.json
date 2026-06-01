@@ -1,7 +1,7 @@
 {
   "name": "@arcanada/publisher-reddit",
   "version": "0.1.0-pre.0",
-  "description": "Reddit adapter (placeholder — implementation in Phase 4)",
+  "description": "Reddit adapter for arcanada-publisher (OAuth API)",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",

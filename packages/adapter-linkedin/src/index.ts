@@ -12,6 +12,8 @@ import {
   BaseAdapter,
   type CommentInput,
   type CommentResult,
+  type DeleteInput,
+  type DeleteResult,
   type EditInput,
   type EditResult,
   type LoginOptions,
@@ -21,14 +23,23 @@ import {
 
 import { login as loginImpl, type LoginContext } from "./login.js";
 import { publish as publishImpl, type PublishOptions } from "./publish.js";
-import { comment as commentImpl, type CommentOptions } from "./comment.js";
+import {
+  comment as commentImpl,
+  editComment as editCommentImpl,
+  type CommentOptions,
+  type EditCommentInput,
+  type EditCommentOptions,
+} from "./comment.js";
 import { edit as editImpl, type EditOptions, type LinkedInEditInput } from "./edit.js";
+import { del as deleteImpl, type DeleteOptions } from "./delete.js";
 
 export interface LinkedInAdapterOptions {
   loginContext?: LoginContext;
   publishOptions?: PublishOptions;
   commentOptions?: CommentOptions;
+  editCommentOptions?: EditCommentOptions;
   editOptions?: EditOptions;
+  deleteOptions?: DeleteOptions;
 }
 
 export class LinkedInAdapter extends BaseAdapter {
@@ -52,8 +63,21 @@ export class LinkedInAdapter extends BaseAdapter {
     return commentImpl(input, this.opts.commentOptions);
   }
 
+  /**
+   * R10: edit an existing comment's text in place (menu → Edit → Save changes).
+   * LinkedIn supports this; Facebook does not (it uses delete+add). Not part of
+   * the core `Adapter` contract — a LinkedIn-specific surface.
+   */
+  async editComment(input: EditCommentInput): Promise<CommentResult> {
+    return editCommentImpl(input, this.opts.editCommentOptions);
+  }
+
   async edit(input: EditInput | LinkedInEditInput): Promise<EditResult> {
     return editImpl(input as LinkedInEditInput, this.opts.editOptions);
+  }
+
+  async delete(input: DeleteInput): Promise<DeleteResult> {
+    return deleteImpl(input, this.opts.deleteOptions);
   }
 }
 
@@ -67,3 +91,4 @@ export { selectors, matchesExact, isCaptchaBlob } from "./selectors.js";
 export { classifyLiError, mapLiError } from "./errors.js";
 export type { LiErrorType } from "./errors.js";
 export type { LinkedInEditInput } from "./edit.js";
+export type { EditCommentInput } from "./comment.js";
