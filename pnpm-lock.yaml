@@ -118,6 +118,21 @@ importers:
       '@arcanada/publisher-core':
         specifier: workspace:*
         version: link:../core
+      '@arcanada/publisher-facebook':
+        specifier: workspace:*
+        version: link:../adapter-facebook
+      '@arcanada/publisher-linkedin':
+        specifier: workspace:*
+        version: link:../adapter-linkedin
+      '@arcanada/publisher-reddit':
+        specifier: workspace:*
+        version: link:../adapter-reddit
+      '@arcanada/publisher-vkontakte':
+        specifier: workspace:*
+        version: link:../adapter-vkontakte
+      '@arcanada/publisher-x':
+        specifier: workspace:*
+        version: link:../adapter-x-twitter
     devDependencies:
       typescript:
         specifier: ^5.7.2

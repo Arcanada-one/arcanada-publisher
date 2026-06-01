@@ -23,7 +23,12 @@
     "lint": "eslint --no-error-on-unmatched-pattern src tests"
   },
   "dependencies": {
-    "@arcanada/publisher-core": "workspace:*"
+    "@arcanada/publisher-core": "workspace:*",
+    "@arcanada/publisher-facebook": "workspace:*",
+    "@arcanada/publisher-linkedin": "workspace:*",
+    "@arcanada/publisher-x": "workspace:*",
+    "@arcanada/publisher-reddit": "workspace:*",
+    "@arcanada/publisher-vkontakte": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.2",
