@@ -89,7 +89,6 @@ export async function appendAudit(
     return auditRef;
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    // eslint-disable-next-line no-console
     console.error(`audit: failed to write ${file}: ${reason}`);
     return null;
   }

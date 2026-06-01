@@ -22,13 +22,17 @@ milestones:
       - reddit-adapter
       - vkontakte-adapter
   L2-agent-callable:
+    # The four L2 controls are BUILT and TESTED; the L1->L2 flip is deferred
+    # until the gate_criteria below hold in practice (operator decision: build
+    # the mechanisms now, flip later after a real observation window). The
+    # surface is honest-limited until then — not advertised as agent-callable L2.
     status: planned
     description: Loopback HTTP API allows local agents (Claude Code / Codex) to publish under explicit, audited policy.
     requires:
-      - audit-log-per-publish
-      - cost-circuit-breaker-per-platform
-      - drift-detection-cron
-      - tool-scoping-input-validation
+      audit-log-per-publish: implemented # core/src/audit.ts (JSONL, 0600, allowlisted)
+      cost-circuit-breaker-per-platform: implemented # core/src/rate-limit.ts (sliding hour window)
+      drift-detection-cron: implemented # .github/workflows/dogfood.yml (verify body deferred)
+      tool-scoping-input-validation: implemented # core/src/tool-scoping.ts (length/MIME/profile)
     gate_criteria:
       - thirty-days-no-aal-drift-events
       - ten-successful-agent-callable-publishes-with-audit-ref
