@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@arcanada/publisher-core": "workspace:*",
+    "@arcanada/publisher-server": "workspace:*",
     "@arcanada/publisher-facebook": "workspace:*",
     "@arcanada/publisher-linkedin": "workspace:*",
     "@arcanada/publisher-x": "workspace:*",

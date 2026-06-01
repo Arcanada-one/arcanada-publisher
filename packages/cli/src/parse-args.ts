@@ -7,8 +7,8 @@
 // `--image` is repeatable and accumulates into imagePaths[]. Unknown flags
 // fail closed so a typo is loud, not silently dropped.
 
-export type Command = "publish" | "comment" | "delete" | "login";
-const COMMANDS = new Set<Command>(["publish", "comment", "delete", "login"]);
+export type Command = "publish" | "comment" | "edit" | "delete" | "login" | "server";
+const COMMANDS = new Set<Command>(["publish", "comment", "edit", "delete", "login", "server"]);
 
 export interface ParsedArgs {
   command: Command;
@@ -22,6 +22,14 @@ export interface ParsedArgs {
   parentUrl: string | undefined;
   expectedContent: string | undefined;
   bind: string | undefined;
+  /** Loopback port for the `server` command (undefined → server default). */
+  port: number | undefined;
+  /** Reddit-specific: target subreddit (without the r/ prefix). */
+  subreddit: string | undefined;
+  /** Reddit-specific: self-post title. */
+  title: string | undefined;
+  /** VK-specific: wall owner id (negative for communities). */
+  ownerId: number | undefined;
 }
 
 /** Flags that take a value; everything else is a boolean switch. */
@@ -35,6 +43,10 @@ const VALUE_FLAGS = new Set([
   "--parent-url",
   "--expected-content",
   "--bind",
+  "--port",
+  "--subreddit",
+  "--title",
+  "--owner-id",
 ]);
 
 export class CliParseError extends Error {}
@@ -59,6 +71,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     parentUrl: undefined,
     expectedContent: undefined,
     bind: undefined,
+    port: undefined,
+    subreddit: undefined,
+    title: undefined,
+    ownerId: undefined,
   };
 
   for (let i = 0; i < rest.length; i++) {
@@ -102,6 +118,28 @@ export function parseArgs(argv: string[]): ParsedArgs {
       case "--bind":
         out.bind = value;
         break;
+      case "--port": {
+        const port = Number.parseInt(value, 10);
+        if (!Number.isInteger(port) || port < 0 || port > 65535) {
+          throw new CliParseError(`--port must be an integer 0-65535, got '${value}'`);
+        }
+        out.port = port;
+        break;
+      }
+      case "--subreddit":
+        out.subreddit = value;
+        break;
+      case "--title":
+        out.title = value;
+        break;
+      case "--owner-id": {
+        const ownerId = Number.parseInt(value, 10);
+        if (!Number.isInteger(ownerId)) {
+          throw new CliParseError(`--owner-id must be an integer, got '${value}'`);
+        }
+        out.ownerId = ownerId;
+        break;
+      }
     }
   }
 

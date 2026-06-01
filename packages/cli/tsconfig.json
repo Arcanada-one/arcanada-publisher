@@ -8,6 +8,7 @@
   "exclude": ["tests/**/*", "dist/**/*"],
   "references": [
     { "path": "../core" },
+    { "path": "../api" },
     { "path": "../adapter-facebook" },
     { "path": "../adapter-linkedin" },
     { "path": "../adapter-x-twitter" },

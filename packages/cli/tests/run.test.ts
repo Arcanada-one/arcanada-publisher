@@ -62,4 +62,44 @@ describe("cli run — X dry-run publish (V-AC-11)", () => {
     expect(res.code).toBe(1);
     expect(res.message).toMatch(/unknown or missing command/);
   });
+
+  it("edit without --target-url/--text-file exits with MISSING_INPUT", async () => {
+    const res = await run(["edit", "--platform", "facebook"]);
+    expect(res.code).toBe(2); // ErrorCode.MISSING_INPUT
+  });
+
+  it("server with a non-loopback bind fails closed (NETWORK_GUARD, never daemonises)", async () => {
+    const res = await run(["server", "--bind", "0.0.0.0"]);
+    expect(res.code).toBe(7); // ErrorCode.NETWORK_GUARD
+    expect(res.message).toMatch(/server failed to start/);
+  });
+
+  // V-AC-9: the full dry-run publish matrix is GREEN for all five platforms once
+  // the reddit/vk platform-specific flags are supplied (operator decision, Q&A 6).
+  it("dry-run publish matrix → exit 0 for all five platforms (V-AC-9)", async () => {
+    const img = join(HERE, "fixtures", "hero.png");
+    const cases: Array<[string, string[]]> = [
+      ["facebook", []],
+      ["linkedin", []],
+      ["x", []],
+      ["reddit", ["--subreddit", "test", "--title", "Hello"]],
+      ["vkontakte", ["--owner-id", "-1"]],
+    ];
+    for (const [platform, extra] of cases) {
+      const res = await run([
+        "publish",
+        "--platform",
+        platform,
+        "--text-file",
+        TEXT_279,
+        "--image",
+        img,
+        "--dry-run",
+        "--profile",
+        "default",
+        ...extra,
+      ]);
+      expect(res.code, `${platform} dry-run should exit 0`).toBe(0);
+    }
+  });
 });

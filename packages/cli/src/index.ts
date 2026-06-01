@@ -2,9 +2,12 @@
 // arcanada-publisher — unified CLI entry (Phase 6).
 //
 //   arcanada-publisher publish  --platform <p> --text-file <f> [--image <p> ...] [--dry-run] [--policy-config <f>]
+//                               [--subreddit <r> --title <t>]  (reddit)  [--owner-id <id>]  (vk)
 //   arcanada-publisher comment  --platform <p> --text-file <f> --parent-url <url>
+//   arcanada-publisher edit     --platform <p> --target-url <url> --text-file <f> [--image <p>]
 //   arcanada-publisher delete   --platform <p> --target-url <url> --expected-content <text>
 //   arcanada-publisher login    --platform <p> [--profile <name>]
+//   arcanada-publisher server   [--bind <host>] [--port <n>]   (loopback API; 127.0.0.1:8787 default)
 
 import { run } from "./run.js";
 
