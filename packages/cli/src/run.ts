@@ -57,64 +57,85 @@ async function dispatch(args: ParsedArgs): Promise<RunResult> {
   const platform = args.platform;
   const profile = args.profile ?? "default";
 
-  if (args.command === "login") {
-    const adapter = makeAdapter(platform, args);
-    await adapter.login({ profile, headed: true });
-    return { code: ErrorCode.SUCCESS, message: `login flow started for ${platform}` };
+  switch (args.command) {
+    case "login":
+      return runLogin(platform, profile, args);
+    case "delete":
+      return runDelete(platform, profile, args);
+    case "edit":
+      return runEdit(platform, profile, args);
+    case "comment":
+      return runComment(platform, profile, args);
+    case "publish":
+      return runPublish(platform, profile, args);
   }
+}
 
-  if (args.command === "delete") {
-    if (!args.targetUrl || !args.expectedContent) {
-      return {
-        code: ErrorCode.MISSING_INPUT,
-        message: "delete requires --target-url and --expected-content (read-before-delete)",
-      };
-    }
-    const adapter = makeAdapter(platform, args);
-    const res = await adapter.delete({
-      targetUrl: args.targetUrl,
-      kind: "post",
-      expectedContent: args.expectedContent,
-      profile,
-    });
-    return { code: ErrorCode.SUCCESS, message: `deleted ${res.targetUrl}` };
+async function runLogin(platform: Platform, profile: string, args: ParsedArgs): Promise<RunResult> {
+  await makeAdapter(platform, args).login({ profile, headed: true });
+  return { code: ErrorCode.SUCCESS, message: `login flow started for ${platform}` };
+}
+
+async function runDelete(
+  platform: Platform,
+  profile: string,
+  args: ParsedArgs,
+): Promise<RunResult> {
+  if (!args.targetUrl || !args.expectedContent) {
+    return {
+      code: ErrorCode.MISSING_INPUT,
+      message: "delete requires --target-url and --expected-content (read-before-delete)",
+    };
   }
+  const res = await makeAdapter(platform, args).delete({
+    targetUrl: args.targetUrl,
+    kind: "post",
+    expectedContent: args.expectedContent,
+    profile,
+  });
+  return { code: ErrorCode.SUCCESS, message: `deleted ${res.targetUrl}` };
+}
 
-  if (args.command === "edit") {
-    if (!args.targetUrl || !args.textFile) {
-      return {
-        code: ErrorCode.MISSING_INPUT,
-        message: "edit requires --target-url and --text-file",
-      };
-    }
-    const adapter = makeAdapter(platform, args);
-    const res = await adapter.edit({
-      postUrl: args.targetUrl,
-      text: readText(args),
-      ...(args.images[0] ? { imagePath: args.images[0] } : {}),
-      profile,
-    });
-    return { code: ErrorCode.SUCCESS, message: `edited ${res.postUrl}` };
+async function runEdit(platform: Platform, profile: string, args: ParsedArgs): Promise<RunResult> {
+  if (!args.targetUrl || !args.textFile) {
+    return { code: ErrorCode.MISSING_INPUT, message: "edit requires --target-url and --text-file" };
   }
+  const res = await makeAdapter(platform, args).edit({
+    postUrl: args.targetUrl,
+    text: readText(args),
+    ...(args.images[0] ? { imagePath: args.images[0] } : {}),
+    profile,
+  });
+  return { code: ErrorCode.SUCCESS, message: `edited ${res.postUrl}` };
+}
 
-  // publish / comment both need the body text.
-  const rawText = readText(args);
-  const policy = loadPolicy(args.policyConfig);
-  const body = applyPolicy(rawText, platform, policy);
-
-  const adapter = makeAdapter(platform, args);
-  if (args.command === "comment") {
-    if (!args.parentUrl) {
-      return { code: ErrorCode.MISSING_INPUT, message: "comment requires --parent-url" };
-    }
-    const res = await adapter.comment({ parentPostUrl: args.parentUrl, text: body, profile });
-    return { code: ErrorCode.SUCCESS, message: `comment posted: ${res.commentId}` };
+async function runComment(
+  platform: Platform,
+  profile: string,
+  args: ParsedArgs,
+): Promise<RunResult> {
+  if (!args.parentUrl) {
+    return { code: ErrorCode.MISSING_INPUT, message: "comment requires --parent-url" };
   }
+  const body = applyPolicy(readText(args), platform, loadPolicy(args.policyConfig));
+  const res = await makeAdapter(platform, args).comment({
+    parentPostUrl: args.parentUrl,
+    text: body,
+    profile,
+  });
+  return { code: ErrorCode.SUCCESS, message: `comment posted: ${res.commentId}` };
+}
 
-  // publish — platform-specific fields (subreddit/title for reddit, ownerId for
-  // vk) ride alongside the shared shape; adapters that don't use them ignore the
-  // extras. They are required for the reddit/vk dry-run path to reach success.
-  const res = await adapter.publish({
+async function runPublish(
+  platform: Platform,
+  profile: string,
+  args: ParsedArgs,
+): Promise<RunResult> {
+  const body = applyPolicy(readText(args), platform, loadPolicy(args.policyConfig));
+  // Platform-specific fields (subreddit/title for reddit, ownerId for vk) ride
+  // alongside the shared shape; adapters that don't use them ignore the extras.
+  // They are required for the reddit/vk dry-run path to reach success.
+  const res = await makeAdapter(platform, args).publish({
     text: body,
     imagePaths: args.images,
     profile,
@@ -122,7 +143,7 @@ async function dispatch(args: ParsedArgs): Promise<RunResult> {
     ...(args.subreddit !== undefined ? { subreddit: args.subreddit } : {}),
     ...(args.title !== undefined ? { title: args.title } : {}),
     ...(args.ownerId !== undefined ? { ownerId: args.ownerId } : {}),
-  } as Parameters<typeof adapter.publish>[0]);
+  } as Parameters<ReturnType<typeof makeAdapter>["publish"]>[0]);
   return { code: ErrorCode.SUCCESS, message: `published: ${res.postUrl}` };
 }
 
