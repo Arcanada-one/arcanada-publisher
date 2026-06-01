@@ -4,7 +4,7 @@ name: AAL Drift Detection
 # failed verify() signals AAL drift (the L2 controls no longer hold) and posts
 # an aal_drift event to the ops hub.
 #
-# STATUS (PUB-0008): the sandbox profile + the ops endpoint's acceptance of the
+# STATUS: the sandbox profile + the ops endpoint's acceptance of the
 # aal_drift category are NOT yet provisioned, so the verify step is a documented
 # placeholder. The schedule + workflow_dispatch wiring is real; the verify body
 # and the event POST activate once the sandbox profile lands (tracked as a
@@ -37,7 +37,7 @@ jobs:
         id: verify
         continue-on-error: true
         run: |
-          # PLACEHOLDER (PUB-0008): a real verify() runs the agent-callable
+          # PLACEHOLDER: a real verify() runs the agent-callable
           # round-trip (publish dry-run → /health → audit assertion) against a
           # sandbox profile with known throwaway credentials. That profile is not
           # yet provisioned, so this step intentionally fails to keep the drift
