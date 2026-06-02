@@ -1,4 +1,4 @@
-// Migrated from Arcanada-one/li-publish@7ddadf81a1662abd66d7f04ea2b7acf737d6afe2 on 2026-05-21 (PUB-0004)
+// Migrated from Arcanada-one/li-publish@7ddadf81a1662abd66d7f04ea2b7acf737d6afe2 on 2026-05-21
 // Source: lib/playwright-helpers.sh (pw_classify_error / pw_error_exit_code)
 //
 // li-publish error taxonomy → core ErrorCode mapping. Lossy by design (LI has

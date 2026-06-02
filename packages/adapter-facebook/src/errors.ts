@@ -1,7 +1,7 @@
-// Migrated from Arcanada-one/fb-publish@8df49fa51822795075f746ad7389c8bd400b1aa4 on 2026-05-21 (PUB-0003)
+// Migrated from Arcanada-one/fb-publish@8df49fa51822795075f746ad7389c8bd400b1aa4 on 2026-05-21
 // Source: lib/playwright-helpers.sh (pw_classify_error / pw_error_exit_code)
 //
-// fb-publish error taxonomy → core ErrorCode mapping. See PUB-0003-fixtures.md § 3.
+// fb-publish error taxonomy → core ErrorCode mapping. See the fb-publish migration fixtures doc § 3.
 // Mapping is lossy by design (FB has more distinctions than core enum);
 // `AdapterError.details.fbErrorType` carries the original token for forensics.
 

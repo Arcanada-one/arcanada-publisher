@@ -1,4 +1,4 @@
-// Migrated from Arcanada-one/li-publish@7ddadf81a1662abd66d7f04ea2b7acf737d6afe2 on 2026-05-21 (PUB-0004)
+// Migrated from Arcanada-one/li-publish@7ddadf81a1662abd66d7f04ea2b7acf737d6afe2 on 2026-05-21
 // Source: bin/li-publish.sh:290-313 (extract_post_url) — INFRA-0260 site.
 //
 // Pure URL-extraction helpers for LinkedIn activity URNs.

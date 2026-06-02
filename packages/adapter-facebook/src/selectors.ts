@@ -1,4 +1,4 @@
-// Migrated from Arcanada-one/fb-publish@8df49fa51822795075f746ad7389c8bd400b1aa4 on 2026-05-21 (PUB-0003)
+// Migrated from Arcanada-one/fb-publish@8df49fa51822795075f746ad7389c8bd400b1aa4 on 2026-05-21
 // Source: lib/playwright-helpers.sh (pw_find_ref_exact / pw_classify_error patterns)
 //
 // Pure Playwright selector constants. RU/EN regex variants for FB UI.

@@ -1,4 +1,4 @@
-// Migrated from Arcanada-one/li-publish@7ddadf81a1662abd66d7f04ea2b7acf737d6afe2 on 2026-05-21 (PUB-0004)
+// Migrated from Arcanada-one/li-publish@7ddadf81a1662abd66d7f04ea2b7acf737d6afe2 on 2026-05-21
 // Source: bin/li-publish.sh (publish flow, lines 200-460).
 //
 // INFRA-0259 fix (shadow-DOM image intercept): we never click the «Add a
@@ -366,7 +366,7 @@ async function safeContent(page: Page): Promise<string> {
 
 /** LinkedIn activity URLs are not tied to an account slug; we return `"self"`
  *  for owner-published posts since `extractActivityUrn` is profile-agnostic.
- *  Future enhancement (post-PUB-0008): derive author from DOM author-card. */
+ *  Future enhancement: derive author from DOM author-card. */
 function extractAccountFromActivityUrl(activityUrl: string): string {
   // Sanity-check format; throws if drift breaks contract.
   extractActivityUrn(activityUrl);

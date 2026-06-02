@@ -1,4 +1,4 @@
-// Migrated from Arcanada-one/li-publish@7ddadf81a1662abd66d7f04ea2b7acf737d6afe2 on 2026-05-21 (PUB-0004)
+// Migrated from Arcanada-one/li-publish@7ddadf81a1662abd66d7f04ea2b7acf737d6afe2 on 2026-05-21
 // Source: bin/li-publish.sh + bin/li-comment.sh + bin/li-edit-post.sh + lib/playwright-helpers.sh
 //
 // LinkedIn UI selectors. RU/EN regex variants. Native equivalents of bash

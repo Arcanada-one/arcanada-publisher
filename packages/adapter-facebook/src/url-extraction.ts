@@ -1,4 +1,4 @@
-// Migrated from Arcanada-one/fb-publish@8df49fa51822795075f746ad7389c8bd400b1aa4 on 2026-05-21 (PUB-0003)
+// Migrated from Arcanada-one/fb-publish@8df49fa51822795075f746ad7389c8bd400b1aa4 on 2026-05-21
 // Source: bin/fb-publish.sh:165-175 (extract_post_url) — INFRA-0190 site.
 //
 // Pure URL-extraction helpers. The native Playwright `page.$eval(...)` returns
