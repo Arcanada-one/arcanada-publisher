@@ -143,9 +143,11 @@ async function runPublishFlow(
     await dialog.waitFor({ state: "visible", timeout: 15_000 });
 
     const editor = dialog.getByRole("textbox", { name: selectors.editor }).first();
-    await editor.click();
-    await page.keyboard.insertText(input.text);
 
+    // LinkedIn ordering: attach media FIRST, then fill text. Filling text first
+    // collapses the «Add media» affordance and the in-page file chooser never
+    // appears (operator rule, 2026-06-17). Text is inserted after the image
+    // cascade completes (see below).
     if (imagePaths.length > 0) {
       // R1 multi-image: the «Add media» native file chooser accepts a
       // multi-selection, so the whole batch uploads in a single setFiles call —
@@ -240,6 +242,11 @@ async function runPublishFlow(
       }
       await page.waitForTimeout(2_500);
     }
+
+    // Fill text AFTER media (operator rule, 2026-06-17): image-first ordering
+    // is mandatory on LinkedIn — see the comment above the image cascade.
+    await editor.click();
+    await page.keyboard.insertText(input.text);
 
     const postBtn = page.getByRole("button", { name: selectors.postButton, exact: true });
     if ((await postBtn.count()) === 0) {
