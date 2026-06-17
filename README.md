@@ -25,15 +25,14 @@ Operators automating their own social-media posting across several platforms tod
 | `@arcanada/publisher-core`      | foundation  | Adapter contract, result schemas, error taxonomy, profile manager, network guard |
 | `@arcanada/publisher-facebook`  | live        | Facebook personal-profile publisher                                              |
 | `@arcanada/publisher-linkedin`  | live        | LinkedIn personal-profile publisher                                              |
-| `@arcanada/publisher-x`         | placeholder | X (Twitter) publisher                                                            |
-| `@arcanada/publisher-reddit`    | placeholder | Reddit publisher                                                                 |
-| `@arcanada/publisher-vkontakte` | placeholder | VKontakte publisher                                                              |
-| `@arcanada/publisher`           | placeholder | Unified CLI (`arcanada-publisher`)                                               |
-| `@arcanada/publisher-server`    | placeholder | Local HTTP API (Fastify, loopback by default)                                    |
+| `@arcanada/publisher-x`         | live        | X (Twitter) publisher                                                            |
+| `@arcanada/publisher-reddit`    | live        | Reddit publisher                                                                 |
+| `@arcanada/publisher-vkontakte` | live        | VKontakte publisher                                                              |
+| `@arcanada/publisher`           | live        | Unified CLI (`arcanada-publisher`)                                               |
+| `@arcanada/publisher-server`    | live        | Local HTTP API (Fastify, loopback by default)                                    |
 
-Placeholders intentionally throw at runtime so accidental imports during foundation work fail fast.
 
-## Quick start (foundation only)
+## Quick start
 
 ```bash
 pnpm install --frozen-lockfile
@@ -42,7 +41,7 @@ pnpm -r test
 pnpm audit --prod --audit-level=high
 ```
 
-Adapter-level publish flows are implemented in subsequent phases; this commit ships only the contract surface.
+All five platform adapters (Facebook, LinkedIn, X, Reddit, VKontakte), the unified CLI, and the loopback HTTP API are implemented and tested.
 
 ## Status disclosure
 
