@@ -52,8 +52,12 @@ export interface PublishStepRecorder {
   typeBody(page: Page, text: string): Promise<void>;
   /** R7: snapshot the composer — both text and image must be present. */
   preSubmitSnapshot(page: Page, input: PublishInput): Promise<PreSubmitSnapshot>;
-  /** R7: submit and confirm via the GraphQL network response; returns post URL. */
-  submitAndConfirm(page: Page): Promise<string>;
+  /**
+   * R7: submit and confirm via the GraphQL network response; returns post URL.
+   * `publishedText` (the body just published) is used to disambiguate the
+   * just-published post from older posts in the /me feed (PUB-0030).
+   */
+  submitAndConfirm(page: Page, publishedText?: string): Promise<string>;
   /** R7/R11: re-open the post and confirm text + image round-trip. */
   postVerify(page: Page, postUrl: string): Promise<boolean>;
 }
@@ -174,7 +178,9 @@ async function runPublishFlow(
     }
 
     // R7: submit and confirm via the GraphQL network response, not the DOM.
-    const postUrl = await steps.submitAndConfirm(page);
+    // PUB-0030: pass the published body so the step can disambiguate the
+    // just-published post from older posts in the /me feed.
+    const postUrl = await steps.submitAndConfirm(page, input.text);
 
     // R7/R11: post-submit verify the published post round-trips (text+image).
     const verified = await steps.postVerify(page, postUrl);
@@ -244,7 +250,7 @@ const defaultSteps: PublishStepRecorder = {
     return { hasText, hasImage };
   },
 
-  async submitAndConfirm(page: Page): Promise<string> {
+  async submitAndConfirm(page: Page, publishedText?: string): Promise<string> {
     const publishBtn = page.getByRole("button", { name: selectors.publishButton, exact: true });
     const nextBtn = page.getByRole("button", { name: selectors.nextButton, exact: true });
     if ((await nextBtn.count()) > 0 && (await nextBtn.first().isVisible())) {
@@ -267,10 +273,11 @@ const defaultSteps: PublishStepRecorder = {
     void response;
 
     await page.goto(FB_ME);
-    const rawHref = await page.$eval(
-      '[role="article"] a[href*="/posts/"]',
-      (a) => (a as unknown as { href: string }).href,
-    );
+    // PUB-0030: do NOT blindly grab the FIRST article on /me — the feed render
+    // races the just-published post, so the first `[role=article]` is often the
+    // PREVIOUS post and we return the wrong pfbid. Resolve the article whose
+    // body matches the text we just published, then read ITS post href.
+    const rawHref = await resolveJustPublishedHref(page, publishedText);
     return extractPostUrlFromHref(rawHref);
   },
 
@@ -289,6 +296,54 @@ const defaultSteps: PublishStepRecorder = {
     return hasImage && text.trim().length > 0;
   },
 };
+
+/**
+ * PUB-0030: derive a stable text fragment from the published body to match the
+ * just-published article against the /me feed. Uses the first non-empty line,
+ * trimmed and capped, so a title-first post (our convention) is matched on its
+ * title. Pure (no Page) → unit-testable.
+ */
+export function publishedTextMatchFragment(text: string | undefined): string {
+  if (!text) return "";
+  const firstLine = text
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.length > 0);
+  if (!firstLine) return "";
+  // Cap to keep the Playwright `hasText` filter cheap and resilient to trailing
+  // emoji / truncation the feed may apply.
+  return firstLine.slice(0, 40);
+}
+
+/**
+ * PUB-0030: resolve the href of the article we JUST published, not merely the
+ * first article in the /me feed. When a match fragment is available we filter
+ * the feed articles by body text; otherwise we fall back to the legacy
+ * first-article behaviour (best-effort, logged by the caller's verify step).
+ */
+async function resolveJustPublishedHref(page: Page, publishedText?: string): Promise<string> {
+  const fragment = publishedTextMatchFragment(publishedText);
+  if (fragment !== "") {
+    const article = page
+      .locator('[role="article"]')
+      .filter({ hasText: fragment })
+      .first();
+    try {
+      await article.waitFor({ state: "visible", timeout: 10_000 });
+      return await article
+        .locator('a[href*="/posts/"]')
+        .first()
+        .evaluate((a) => (a as unknown as { href: string }).href);
+    } catch {
+      // Fall through to the legacy first-article path below — better a
+      // best-effort URL than a hard failure when the feed render is unusual.
+    }
+  }
+  return page.$eval(
+    '[role="article"] a[href*="/posts/"]',
+    (a) => (a as unknown as { href: string }).href,
+  );
+}
 
 function validateImagePath(rawPath: string): string {
   if (rawPath.includes("\0")) {

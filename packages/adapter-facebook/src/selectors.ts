@@ -17,6 +17,14 @@ export const selectors = {
   editPostMenuItemFallback: /^(Редактировать или удалить|Edit or delete)$/,
   editPostMenuItemDelegated: /^(Редактировать|Edit)$/,
   commentEditMenu: /^(Изменить|Edit)$/,
+  // First-comment composer textbox. FB labels this textbox differently depending
+  // on surface and A/B variant: a feed post shows «Напишите комментарий…» /
+  // "Write a comment…", while a profile-post permalink (the surface a fresh
+  // publish lands on) shows «Комментировать как <name>» / "Comment as <name>".
+  // PUB-0030: the original regex only matched the feed variant, so first-comment
+  // posting timed out on profile posts. Cover every observed label variant.
+  commentComposer:
+    /(Напишите комментарий|Прокомментировать|Комментировать как|Write a comment|Comment as|Add a comment)/,
   // R10: comment-actions kebab — opens the "edit / delete / report" menu on a
   // comment block (FB 2026 aria-label, RU/EN variants).
   commentActionsMenu:

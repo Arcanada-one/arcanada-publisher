@@ -70,7 +70,7 @@ async function runCommentFlow(page: Page, input: CommentInput): Promise<CommentR
   return withScreenshotOnFail(page, "comment", async () => {
     await page.goto(input.parentPostUrl);
     const composer = page
-      .getByRole("textbox", { name: /(Напишите комментарий|Write a comment)/ })
+      .getByRole("textbox", { name: selectors.commentComposer })
       .first();
     await composer.waitFor({ state: "visible", timeout: 10_000 });
     await composer.click();
@@ -242,7 +242,7 @@ const defaultReplaceSteps: ReplaceCommentRecorder = {
 
   async addNewComment(page: Page, input: ReplaceCommentInput): Promise<string> {
     const composer = page
-      .getByRole("textbox", { name: /(Напишите комментарий|Write a comment)/ })
+      .getByRole("textbox", { name: selectors.commentComposer })
       .first();
     await composer.waitFor({ state: "visible", timeout: 10_000 });
     await composer.click();
