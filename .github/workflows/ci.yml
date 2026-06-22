@@ -95,6 +95,17 @@ jobs:
           install -m 0755 "$tmp/shellcheck-${ver}/shellcheck" "$HOME/.local/bin/shellcheck"
           rm -rf "$tmp"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      # Install jq — official static binary, no root/apt required. The bridge
+      # round-trip wrappers (examples/*/publish.sh) pipe the API response through
+      # jq, so a missing jq surfaced as a confusing exit-127 in the bats suite.
+      - name: Install jq v1.7.1
+        run: |
+          ver=1.7.1
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL "https://github.com/jqlang/jq/releases/download/jq-${ver}/jq-linux-amd64" \
+            -o "$HOME/.local/bin/jq"
+          chmod 0755 "$HOME/.local/bin/jq"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       # Install bats-core via git-clone into $HOME/.bats — rootless, version-pinned.
       # Idempotent: remove any previous install first so the exact tag is always present.
       - name: Install bats-core v1.13.0
