@@ -6,7 +6,7 @@
 //   - No user string is ever concatenated into an argument array.
 //   - ffprobe is used only for duration probing on a validated path.
 
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
 
 // Cache the resolved paths for the lifetime of the process.
@@ -15,7 +15,7 @@ let _ffprobePath: string | undefined;
 
 function whichSync(bin: string): string | undefined {
   try {
-    const out = execSync(`which ${bin}`, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const out = execFileSync("which", [bin], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
     return out.trim() || undefined;
   } catch {
     return undefined;
