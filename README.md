@@ -20,17 +20,16 @@ Operators automating their own social-media posting across several platforms tod
 
 ## Packages
 
-| Package                         | Status      | Purpose                                                                          |
-| ------------------------------- | ----------- | -------------------------------------------------------------------------------- |
-| `@arcanada/publisher-core`      | foundation  | Adapter contract, result schemas, error taxonomy, profile manager, network guard |
-| `@arcanada/publisher-facebook`  | live        | Facebook personal-profile publisher                                              |
-| `@arcanada/publisher-linkedin`  | live        | LinkedIn personal-profile publisher                                              |
-| `@arcanada/publisher-x`         | live        | X (Twitter) publisher                                                            |
-| `@arcanada/publisher-reddit`    | live        | Reddit publisher                                                                 |
-| `@arcanada/publisher-vkontakte` | live        | VKontakte publisher                                                              |
-| `@arcanada/publisher`           | live        | Unified CLI (`arcanada-publisher`)                                               |
-| `@arcanada/publisher-server`    | live        | Local HTTP API (Fastify, loopback by default)                                    |
-
+| Package                         | Status     | Purpose                                                                          |
+| ------------------------------- | ---------- | -------------------------------------------------------------------------------- |
+| `@arcanada/publisher-core`      | foundation | Adapter contract, result schemas, error taxonomy, profile manager, network guard |
+| `@arcanada/publisher-facebook`  | live       | Facebook personal-profile publisher                                              |
+| `@arcanada/publisher-linkedin`  | live       | LinkedIn personal-profile publisher                                              |
+| `@arcanada/publisher-x`         | live       | X (Twitter) publisher                                                            |
+| `@arcanada/publisher-reddit`    | live       | Reddit publisher                                                                 |
+| `@arcanada/publisher-vkontakte` | live       | VKontakte publisher                                                              |
+| `@arcanada/publisher`           | live       | Unified CLI (`arcanada-publisher`)                                               |
+| `@arcanada/publisher-server`    | live       | Local HTTP API (Fastify, loopback by default)                                    |
 
 ## Quick start
 
