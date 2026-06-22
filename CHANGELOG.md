@@ -6,6 +6,15 @@ All notable changes to `arcanada-publisher` are documented here. The format foll
 
 ### Added
 
+- `@arcanada/publisher-video` 0.1.0-pre.0 — new `packages/video-generator`
+  package. Turns a cover image + optional audio into a polished MP4 for social
+  posts using only ffmpeg built-in filters (no plugins). Provides ≥3 presets
+  selectable via `--preset` (zoompan, cqt, cycle); the `cycle` preset is the
+  house style (timeline-changing, ported from `dev-tools/video/make-cycle-video.sh`).
+  Exposed via the `arcanada-publisher video` CLI subcommand. X adapter allowlist
+  extended to accept `.mp4`/`.mov` so generated videos attach via the existing
+  `--image` path. 74 unit + integration tests; ffmpeg spawned with arg-array
+  (no shell-string interpolation).
 - `@arcanada/publisher-linkedin` 0.1.0 — LinkedIn adapter ported from
   `Arcanada-one/li-publish@7ddadf8` to native TypeScript + Playwright
   (PUB-0004, Phase 2 of `PUB-0001`). 60 unit tests + 2 gated live smoke
