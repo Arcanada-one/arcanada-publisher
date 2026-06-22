@@ -81,39 +81,52 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r --filter "./packages/*" build # bridge round-trip drives the built CLI
-      # Install shellcheck — official static binary, no root/apt required.
-      # NB: install the binary only; do NOT use an auto-linting action — those
-      # recursively scan the whole tree (incl. node_modules/.bin/* npm wrappers),
-      # which fails on unrelated SC2006 warnings. We lint a controlled file set below.
-      - name: Install shellcheck v0.11.0
+      # Provision the three CLI tools the Shell job needs (shellcheck, jq, bats).
+      # Most runners already carry them as apt packages in /usr/bin, so every step
+      # below is idempotent: it installs ONLY when the tool is absent (a fresh or
+      # re-created runner), and is a no-op otherwise. Installs are rootless static
+      # binaries / git-clone — no apt or sudo required on a clean runner.
+      # NB: install the shellcheck binary only; do NOT use an auto-linting action —
+      # those recursively scan the whole tree (incl. node_modules/.bin/* npm
+      # wrappers) and fail on unrelated SC2006 warnings. We lint a controlled set.
+      - name: Ensure shellcheck (install v0.11.0 only if missing)
         run: |
-          ver=v0.11.0
-          tmp=$(mktemp -d)
-          curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/${ver}/shellcheck-${ver}.linux.x86_64.tar.xz" \
-            | tar -xJ -C "$tmp"
-          mkdir -p "$HOME/.local/bin"
-          install -m 0755 "$tmp/shellcheck-${ver}/shellcheck" "$HOME/.local/bin/shellcheck"
-          rm -rf "$tmp"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      # Install jq — official static binary, no root/apt required. The bridge
-      # round-trip wrappers (examples/*/publish.sh) pipe the API response through
-      # jq, so a missing jq surfaced as a confusing exit-127 in the bats suite.
-      - name: Install jq v1.7.1
+          if command -v shellcheck >/dev/null 2>&1; then
+            echo "shellcheck present ($(command -v shellcheck)) — skipping install"
+          else
+            ver=v0.11.0
+            tmp=$(mktemp -d)
+            curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/${ver}/shellcheck-${ver}.linux.x86_64.tar.xz" \
+              | tar -xJ -C "$tmp"
+            mkdir -p "$HOME/.local/bin"
+            install -m 0755 "$tmp/shellcheck-${ver}/shellcheck" "$HOME/.local/bin/shellcheck"
+            rm -rf "$tmp"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
+      # jq: the bridge round-trip wrappers (examples/*/publish.sh) pipe the API
+      # response through jq, so a missing jq surfaced as a confusing exit-127.
+      - name: Ensure jq (install v1.7.1 only if missing)
         run: |
-          ver=1.7.1
-          mkdir -p "$HOME/.local/bin"
-          curl -fsSL "https://github.com/jqlang/jq/releases/download/jq-${ver}/jq-linux-amd64" \
-            -o "$HOME/.local/bin/jq"
-          chmod 0755 "$HOME/.local/bin/jq"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      # Install bats-core via git-clone into $HOME/.bats — rootless, version-pinned.
-      # Idempotent: remove any previous install first so the exact tag is always present.
-      - name: Install bats-core v1.13.0
+          if command -v jq >/dev/null 2>&1; then
+            echo "jq present ($(command -v jq)) — skipping install"
+          else
+            ver=1.7.1
+            mkdir -p "$HOME/.local/bin"
+            curl -fsSL "https://github.com/jqlang/jq/releases/download/jq-${ver}/jq-linux-amd64" \
+              -o "$HOME/.local/bin/jq"
+            chmod 0755 "$HOME/.local/bin/jq"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
+      - name: Ensure bats-core (install v1.13.0 only if missing)
         run: |
-          rm -rf "$HOME/.bats"
-          git clone --depth 1 --branch v1.13.0 https://github.com/bats-core/bats-core.git "$HOME/.bats-src"
-          bash "$HOME/.bats-src/install.sh" "$HOME/.bats"
-          rm -rf "$HOME/.bats-src"
-          echo "$HOME/.bats/bin" >> "$GITHUB_PATH"
+          if command -v bats >/dev/null 2>&1; then
+            echo "bats present ($(command -v bats)) — skipping install"
+          else
+            rm -rf "$HOME/.bats"
+            git clone --depth 1 --branch v1.13.0 https://github.com/bats-core/bats-core.git "$HOME/.bats-src"
+            bash "$HOME/.bats-src/install.sh" "$HOME/.bats"
+            rm -rf "$HOME/.bats-src"
+            echo "$HOME/.bats/bin" >> "$GITHUB_PATH"
+          fi
       - run: shellcheck dev-tools/*.sh examples/*/publish.sh
       - run: bats tests/dev-tools tests/examples
