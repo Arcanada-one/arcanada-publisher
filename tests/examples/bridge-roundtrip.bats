@@ -6,17 +6,34 @@
 
 setup() {
   ROOT="${BATS_TEST_DIRNAME}/../.."
-  PORT=4291
+  # publish.sh pipes the API response through jq; a missing jq surfaces as a
+  # confusing exit-127 from the wrapper, so fail loudly with a clear reason.
+  command -v jq >/dev/null 2>&1 || {
+    echo "jq not found on PATH — required by examples/*/publish.sh" >&2
+    return 1
+  }
   IMG_DIR="$(mktemp -d)"
   IMG="${IMG_DIR}/hero.png"
   printf '\x89PNG\r\n\x1a\n' >"$IMG"
+  # Pick a free ephemeral port instead of a hard-coded one: parallel CI jobs (or a
+  # leftover server from a previous run) can already hold a fixed port, which made
+  # the bind silently fail and the round-trip flaky (exit 0 on a clean runner,
+  # connection-refused otherwise).
+  PORT="$(node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{process.stdout.write(String(s.address().port));s.close();});')"
   node "${ROOT}/packages/cli/dist/index.js" server --port "$PORT" >/tmp/bridge-bats-server.log 2>&1 &
   SERVER_PID=$!
-  # Wait for the loopback listener to come up.
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    if curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then break; fi
-    sleep 0.3
+  # Wait for the loopback listener to come up; fail explicitly on timeout so a
+  # dead server is a clear error, not a downstream connection-refused mystery.
+  local up=
+  for _ in $(seq 1 40); do
+    if curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then up=1; break; fi
+    sleep 0.25
   done
+  if [ -z "$up" ]; then
+    echo "loopback server did not become healthy on port ${PORT}; log:" >&2
+    cat /tmp/bridge-bats-server.log >&2 || true
+    return 1
+  fi
   export ARCANADA_PUBLISHER_PORT="$PORT"
 }
 
