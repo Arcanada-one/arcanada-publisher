@@ -224,8 +224,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
         break;
       }
       case "--max-bitrate": {
+        if (!/^\d+$/.test(value)) {
+          throw new CliParseError(
+            `--max-bitrate must be a positive integer (kbit/s), got '${value}'`,
+          );
+        }
         const kbps = Number.parseInt(value, 10);
-        if (!Number.isInteger(kbps) || kbps <= 0) {
+        if (kbps <= 0) {
           throw new CliParseError(
             `--max-bitrate must be a positive integer (kbit/s), got '${value}'`,
           );

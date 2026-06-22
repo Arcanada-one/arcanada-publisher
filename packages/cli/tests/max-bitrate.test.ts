@@ -49,12 +49,18 @@ describe("T6: --max-bitrate flag", () => {
     ).toThrow(CliParseError);
   });
 
-  it("rejects float '1.5'", () => {
-    // parseInt('1.5') === 1 which IS a positive integer — document actual behavior:
-    // parseInt parses the leading integer part, so '1.5' → 1 (valid).
-    // This is the same behavior as --port; document it explicitly.
-    const a = parseArgs(["video", "--cover", "c.jpg", "--out", "o.mp4", "--max-bitrate", "1.5"]);
-    // parseInt('1.5', 10) === 1 — leading integer is positive, so it is accepted as 1.
-    expect(a.maxBitrateKbps).toBe(1);
+  it("rejects float '1.5' (strict integer check — no trailing non-digits)", () => {
+    // The strict /^\d+$/ guard rejects '1.5' because '.' is not a digit.
+    // This is stricter than parseInt alone (which would silently accept the leading 1).
+    expect(() =>
+      parseArgs(["video", "--cover", "c.jpg", "--out", "o.mp4", "--max-bitrate", "1.5"]),
+    ).toThrow(CliParseError);
+  });
+
+  it("rejects trailing-garbage input '300abc'", () => {
+    // parseInt('300abc', 10) === 300 — but the strict /^\d+$/ guard rejects it.
+    expect(() =>
+      parseArgs(["video", "--cover", "c.jpg", "--out", "o.mp4", "--max-bitrate", "300abc"]),
+    ).toThrow(CliParseError);
   });
 });
