@@ -15,7 +15,10 @@ let _ffprobePath: string | undefined;
 
 function whichSync(bin: string): string | undefined {
   try {
-    const out = execFileSync("which", [bin], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const out = execFileSync("which", [bin], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
     return out.trim() || undefined;
   } catch {
     return undefined;
@@ -72,14 +75,12 @@ export function runFfmpeg(args: string[]): void {
  */
 export function probeDuration(filePath: string): number {
   const { ffprobe } = requireFfmpeg();
-  const args = [
-    "-v", "error",
-    "-show_entries", "format=duration",
-    "-of", "csv=p=0",
-    filePath,
-  ];
+  const args = ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", filePath];
   try {
-    const out = execFileSync(ffprobe, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    const out = execFileSync(ffprobe, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     const dur = parseFloat(out.trim());
     if (!Number.isFinite(dur) || dur <= 0) {
       throw new AdapterError(
@@ -102,14 +103,19 @@ export function probeDuration(filePath: string): number {
  * Probe whether a file has a video stream and an audio stream.
  * Returns { hasVideo, hasAudio, durationSec }.
  */
-export function probeStreams(
-  filePath: string,
-): { hasVideo: boolean; hasAudio: boolean; durationSec: number } {
+export function probeStreams(filePath: string): {
+  hasVideo: boolean;
+  hasAudio: boolean;
+  durationSec: number;
+} {
   const { ffprobe } = requireFfmpeg();
   const args = [
-    "-v", "error",
-    "-show_entries", "stream=codec_type:format=duration",
-    "-of", "flat",
+    "-v",
+    "error",
+    "-show_entries",
+    "stream=codec_type:format=duration",
+    "-of",
+    "flat",
     filePath,
   ];
   try {

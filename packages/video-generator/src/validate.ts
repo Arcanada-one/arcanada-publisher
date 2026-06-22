@@ -32,11 +32,10 @@ export function validateCoverPath(rawPath: string): string {
   }
   const ext = extname(abs).toLowerCase();
   if (!COVER_EXT_ALLOWLIST.has(ext)) {
-    throw new AdapterError(
-      ErrorCode.INVALID_ARGS,
-      `video: unsupported cover extension '${ext}'`,
-      { path: abs, allowed: [...COVER_EXT_ALLOWLIST] },
-    );
+    throw new AdapterError(ErrorCode.INVALID_ARGS, `video: unsupported cover extension '${ext}'`, {
+      path: abs,
+      allowed: [...COVER_EXT_ALLOWLIST],
+    });
   }
   return abs;
 }
@@ -61,11 +60,10 @@ export function validateAudioPath(rawPath: string): string {
   }
   const ext = extname(abs).toLowerCase();
   if (!AUDIO_EXT_ALLOWLIST.has(ext)) {
-    throw new AdapterError(
-      ErrorCode.INVALID_ARGS,
-      `video: unsupported audio extension '${ext}'`,
-      { path: abs, allowed: [...AUDIO_EXT_ALLOWLIST] },
-    );
+    throw new AdapterError(ErrorCode.INVALID_ARGS, `video: unsupported audio extension '${ext}'`, {
+      path: abs,
+      allowed: [...AUDIO_EXT_ALLOWLIST],
+    });
   }
   return abs;
 }

@@ -2,7 +2,12 @@
 // exactly ≥1 timelineChanging:true.
 
 import { describe, it, expect } from "vitest";
-import { resolve, names, describe as describePresets, PRESET_REGISTRY } from "../src/presets/index.js";
+import {
+  resolve,
+  names,
+  describe as describePresets,
+  PRESET_REGISTRY,
+} from "../src/presets/index.js";
 import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
 
 describe("PRESET_REGISTRY", () => {

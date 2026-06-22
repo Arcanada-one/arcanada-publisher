@@ -195,9 +195,7 @@ describe("cycle preset", () => {
   });
 
   it("throws when duration exceeds 60-minute safety cap", () => {
-    expect(() =>
-      cyclePreset.buildPlan({ ...baseCtx, durationSec: 61 * 60 }),
-    ).toThrow(/safety cap/);
+    expect(() => cyclePreset.buildPlan({ ...baseCtx, durationSec: 61 * 60 })).toThrow(/safety cap/);
   });
 
   it("seeds produce deterministic effect sequences", () => {

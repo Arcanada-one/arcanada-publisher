@@ -16,9 +16,7 @@ import { generateVideo, listPresets } from "../src/index.js";
 const [, , rawCover, rawAudio, rawOut] = process.argv;
 
 if (!rawCover || !rawAudio || !rawOut) {
-  process.stderr.write(
-    "Usage: make-demos.ts <cover> <audio> <outDir>\n",
-  );
+  process.stderr.write("Usage: make-demos.ts <cover> <audio> <outDir>\n");
   process.exit(1);
 }
 

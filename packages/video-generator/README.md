@@ -44,16 +44,16 @@ arcanada-publisher publish \
 
 ### Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--cover <path>` | required | Cover image (.png/.jpg/.jpeg/.webp/.gif) |
-| `--audio <path>` | — | Audio file (.mp3/.m4a/.aac/.wav/.ogg). When omitted, produces cover-only clip. |
-| `--out <path>` | required | Output .mp4 path. Parent directory must exist. |
-| `--preset <name>` | `cycle` | Visual preset (see `--list-presets`). |
-| `--cover-seconds <n>` | `30` | Duration in seconds for cover-only clips. |
-| `--seed <n>` | — | Integer seed for reproducible effect shuffle (cycle preset). |
-| `--max-bitrate <kbps>` | `600` | Max output bitrate ceiling in kbit/s (VBV cap on final encode). Default 600 kbps (~35 MB for a 7–8 min clip). |
-| `--list-presets` | — | Print available presets and exit. |
+| Flag                   | Default  | Description                                                                                                   |
+| ---------------------- | -------- | ------------------------------------------------------------------------------------------------------------- |
+| `--cover <path>`       | required | Cover image (.png/.jpg/.jpeg/.webp/.gif)                                                                      |
+| `--audio <path>`       | —        | Audio file (.mp3/.m4a/.aac/.wav/.ogg). When omitted, produces cover-only clip.                                |
+| `--out <path>`         | required | Output .mp4 path. Parent directory must exist.                                                                |
+| `--preset <name>`      | `cycle`  | Visual preset (see `--list-presets`).                                                                         |
+| `--cover-seconds <n>`  | `30`     | Duration in seconds for cover-only clips.                                                                     |
+| `--seed <n>`           | —        | Integer seed for reproducible effect shuffle (cycle preset).                                                  |
+| `--max-bitrate <kbps>` | `600`    | Max output bitrate ceiling in kbit/s (VBV cap on final encode). Default 600 kbps (~35 MB for a 7–8 min clip). |
+| `--list-presets`       | —        | Print available presets and exit.                                                                             |
 
 ### Programmatic API
 
@@ -69,21 +69,21 @@ const result = await generateVideo({
   cover: "/path/to/cover.jpg",
   audio: "/path/to/audio.mp3", // optional
   out: "/path/to/out.mp4",
-  preset: "cycle",       // optional, default: "cycle"
-  seed: 42,              // optional: reproducible shuffle
-  coverOnlySeconds: 30,  // optional: ignored when audio is provided
-  maxBitrateKbps: 600,   // optional: VBV ceiling (default 600 kbps)
+  preset: "cycle", // optional, default: "cycle"
+  seed: 42, // optional: reproducible shuffle
+  coverOnlySeconds: 30, // optional: ignored when audio is provided
+  maxBitrateKbps: 600, // optional: VBV ceiling (default 600 kbps)
 });
 // result: { out, durationSec, hasAudio }
 ```
 
 ## Presets
 
-| Name | Timeline-changing | Description |
-|------|-------------------|-------------|
-| `zoompan` | no | Calm slow zoom-in on the cover image. Works with or without audio. |
-| `cqt` | no | showcqt music visualizer overlaid on a blurred cover. Requires audio; falls back to zoompan for cover-only. |
-| `cycle` | **yes** | House-style: clean cover intro (~2s), then a new visual effect every 3s from a shuffled pool of 44 effects with smooth crossfades. Default preset. |
+| Name      | Timeline-changing | Description                                                                                                                                        |
+| --------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `zoompan` | no                | Calm slow zoom-in on the cover image. Works with or without audio.                                                                                 |
+| `cqt`     | no                | showcqt music visualizer overlaid on a blurred cover. Requires audio; falls back to zoompan for cover-only.                                        |
+| `cycle`   | **yes**           | House-style: clean cover intro (~2s), then a new visual effect every 3s from a shuffled pool of 44 effects with smooth crossfades. Default preset. |
 
 For house-style rules and platform-specific attach instructions, see
 [`docs/how-to/animated-cover-video.md`](../../docs/how-to/animated-cover-video.md).

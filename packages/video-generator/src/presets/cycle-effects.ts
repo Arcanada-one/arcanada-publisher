@@ -62,7 +62,7 @@ export const EFFECT_POOL: readonly string[] = [
  */
 export function fisherYates<T>(arr: T[], seed?: number): T[] {
   // Seedable xorshift32 PRNG (same statistical quality as bash $RANDOM).
-  let s = seed !== undefined ? (seed >>> 0) || 1 : (Date.now() >>> 0) || 1;
+  let s = seed !== undefined ? seed >>> 0 || 1 : Date.now() >>> 0 || 1;
   const rand = (): number => {
     s ^= s << 13;
     s ^= s >>> 17;
