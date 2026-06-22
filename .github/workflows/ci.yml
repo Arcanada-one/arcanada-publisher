@@ -81,14 +81,20 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r --filter "./packages/*" build # bridge round-trip drives the built CLI
-      # Install shellcheck — static binary, no root/apt required (ludeeus/action-shellcheck
-      # downloads a prebuilt release tarball and adds it to PATH automatically).
-      - uses: ludeeus/action-shellcheck@2.0.0
-        with:
-          version: v0.11.0
-          check_together: 'yes'
-        env:
-          SHELLCHECK_OPTS: ''
+      # Install shellcheck — official static binary, no root/apt required.
+      # NB: install the binary only; do NOT use an auto-linting action — those
+      # recursively scan the whole tree (incl. node_modules/.bin/* npm wrappers),
+      # which fails on unrelated SC2006 warnings. We lint a controlled file set below.
+      - name: Install shellcheck v0.11.0
+        run: |
+          ver=v0.11.0
+          tmp=$(mktemp -d)
+          curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/${ver}/shellcheck-${ver}.linux.x86_64.tar.xz" \
+            | tar -xJ -C "$tmp"
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 "$tmp/shellcheck-${ver}/shellcheck" "$HOME/.local/bin/shellcheck"
+          rm -rf "$tmp"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       # Install bats-core via git-clone into $HOME/.bats — rootless, version-pinned.
       # Idempotent: remove any previous install first so the exact tag is always present.
       - name: Install bats-core v1.13.0
