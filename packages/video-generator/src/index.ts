@@ -22,6 +22,17 @@ export interface GenerateOptions {
   coverOnlySeconds?: number | undefined;
   /** Optional seed for reproducible effect shuffle (cycle preset). */
   seed?: number | undefined;
+  /**
+   * Max output video bitrate ceiling in kbit/s for the final bounded encode.
+   * Default: 600 (compact social-video format). Validated as a positive integer
+   * at the CLI boundary; programmatic callers supply a TypeScript number.
+   */
+  maxBitrateKbps?: number | undefined;
+  /**
+   * libx264 CRF for the final bounded encode. Default: 28.
+   * Lower = better quality / larger file. Only applies to the final assembly pass.
+   */
+  crf?: number | undefined;
 }
 
 /** Result from a successful generateVideo call. */
@@ -77,6 +88,8 @@ export async function generateVideo(opts: GenerateOptions): Promise<GenerateResu
     fps: 30,
     seed: opts.seed,
     coverOnlySeconds,
+    maxBitrateKbps: opts.maxBitrateKbps,
+    crf: opts.crf,
   };
 
   const plan = preset.buildPlan(ctx);

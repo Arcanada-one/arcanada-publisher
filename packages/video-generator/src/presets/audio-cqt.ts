@@ -4,6 +4,7 @@
 
 import type { PresetDef, BuildContext, PresetPlan } from "./types.js";
 import { zoompanPreset } from "./cover-zoompan.js";
+import { boundedVideoArgs } from "./encode-settings.js";
 
 function buildCqtArgs(ctx: BuildContext): string[] {
   const { cover, audio, out, width, height, fps, durationSec } = ctx;
@@ -31,10 +32,10 @@ function buildCqtArgs(ctx: BuildContext): string[] {
     "-map", "1:a",
     "-t", String(durationSec),
     "-r", String(fps),
-    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+    // Bounded H.264 encode (shared helper — yuv420p, bt709, faststart, VBV cap).
+    ...boundedVideoArgs(ctx),
     "-c:a", "aac", "-b:a", "160k",
     "-shortest",
-    "-movflags", "+faststart",
     out,
   ];
 }

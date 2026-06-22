@@ -210,6 +210,7 @@ async function runVideo(args: ParsedArgs): Promise<RunResult> {
     ...(args.preset !== undefined ? { preset: args.preset } : {}),
     ...(args.coverSeconds !== undefined ? { coverOnlySeconds: args.coverSeconds } : {}),
     ...(args.seed !== undefined ? { seed: args.seed } : {}),
+    ...(args.maxBitrateKbps !== undefined ? { maxBitrateKbps: args.maxBitrateKbps } : {}),
   });
 
   return {

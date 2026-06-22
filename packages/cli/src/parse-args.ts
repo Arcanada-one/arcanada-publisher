@@ -63,6 +63,12 @@ export interface ParsedArgs {
   seed: number | undefined;
   /** `video` subcommand: when true, list presets and exit. */
   listPresets: boolean;
+  /**
+   * `video` subcommand: max output video bitrate ceiling in kbit/s.
+   * Validated as a positive integer at parse time. Default: undefined → 600 kbps
+   * compact target inside the encoder. Mirrors GenerateOptions.maxBitrateKbps.
+   */
+  maxBitrateKbps: number | undefined;
 }
 
 /** Flags that take a value; everything else is a boolean switch. */
@@ -87,6 +93,7 @@ const VALUE_FLAGS = new Set([
   "--preset",
   "--cover-seconds",
   "--seed",
+  "--max-bitrate",
 ]);
 
 const BOOL_FLAGS = new Set(["--dry-run", "--list-presets"]);
@@ -124,6 +131,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     coverSeconds: undefined,
     seed: undefined,
     listPresets: false,
+    maxBitrateKbps: undefined,
   };
 
   for (let i = 0; i < rest.length; i++) {
@@ -220,6 +228,16 @@ export function parseArgs(argv: string[]): ParsedArgs {
           throw new CliParseError(`--seed must be an integer, got '${value}'`);
         }
         out.seed = s;
+        break;
+      }
+      case "--max-bitrate": {
+        const kbps = Number.parseInt(value, 10);
+        if (!Number.isInteger(kbps) || kbps <= 0) {
+          throw new CliParseError(
+            `--max-bitrate must be a positive integer (kbit/s), got '${value}'`,
+          );
+        }
+        out.maxBitrateKbps = kbps;
         break;
       }
     }

@@ -173,9 +173,16 @@ else
   xfade_join "$WORK/video-silent.mp4" "${CHUNKS[@]}"
 fi
 
-# Mux full-length audio, trim video to audio
+# Final bounded encode + mux audio (PUB-0028: replaces -c:v copy for size control).
+# Configure via env: MAX_BITRATE_KBPS (default 600) and CRF (default 28).
+MAXK="${MAX_BITRATE_KBPS:-600}"
+CRF_VAL="${CRF:-28}"
 ffmpeg -y -v error -i "$WORK/video-silent.mp4" -i "$AUD" \
-  -map 0:v -map 1:a -c:v copy -c:a aac -b:a 160k -shortest -movflags +faststart "$OUT"
+  -map 0:v -map 1:a \
+  -c:v libx264 -preset veryfast -profile:v high -level 4.0 \
+  -crf "$CRF_VAL" -maxrate "${MAXK}k" -bufsize "$((MAXK * 2))k" \
+  -pix_fmt yuv420p -colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv \
+  -c:a aac -b:a 160k -shortest -movflags +faststart "$OUT"
 
 echo "DONE -> $OUT"
 ffprobe -v error -show_entries format=duration -of csv=p=0 "$OUT" | sed 's/^/final dur: /'

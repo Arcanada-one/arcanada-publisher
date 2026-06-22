@@ -3,6 +3,7 @@
 // Works for both cover-only and cover+audio paths.
 
 import type { PresetDef, BuildContext, PresetPlan } from "./types.js";
+import { boundedVideoArgs } from "./encode-settings.js";
 
 function buildZoompanArgs(ctx: BuildContext): string[] {
   const { cover, audio, out, width, height, fps, durationSec } = ctx;
@@ -24,14 +25,18 @@ function buildZoompanArgs(ctx: BuildContext): string[] {
   args.push("-vf", vf);
   args.push("-t", String(durationSec));
   args.push("-r", String(fps));
-  args.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "20");
-  // Audio mux
+  // Bounded H.264 encode (shared helper — yuv420p, bt709, faststart, VBV cap).
+  // Replaces the per-preset -crf 20 + -movflags +faststart block for consistency.
+  const encodeArgs = boundedVideoArgs(ctx);
+  // Audio mux inserted before encode args so the stream mapping precedes codec flags
   if (audio !== undefined) {
     args.push("-map", "0:v", "-map", "1:a");
+    args.push(...encodeArgs);
     args.push("-c:a", "aac", "-b:a", "160k");
     args.push("-shortest");
+  } else {
+    args.push(...encodeArgs);
   }
-  args.push("-movflags", "+faststart");
   args.push(out);
   return args;
 }

@@ -18,6 +18,7 @@ import {
   substituteEffectParams,
 } from "./cycle-effects.js";
 import type { PresetDef, BuildContext, FfmpegPass, PresetPlan } from "./types.js";
+import { boundedVideoArgs } from "./encode-settings.js";
 
 const INTRO_SEC = 2;
 const SEG_SEC = 3;
@@ -126,25 +127,31 @@ function buildXfadePass(
   };
 }
 
-function buildMuxPass(silentVideo: string, audio: string | undefined, out: string): FfmpegPass {
+/**
+ * Final assembly pass: bounded H.264 re-encode (replaces the prior -c:v copy).
+ * The VBV ceiling (maxrate/bufsize) is enforced once here on the assembled stream,
+ * giving a deterministic file-size guarantee independent of per-segment CRF.
+ * faststart and yuv420p come from boundedVideoArgs (single source of truth).
+ */
+function buildMuxPass(ctx: BuildContext, silentVideo: string, audio: string | undefined, out: string): FfmpegPass {
+  const v = boundedVideoArgs(ctx);
   if (audio === undefined) {
     return {
-      label: "cycle: copy silent video to output (no audio)",
-      args: ["-y", "-v", "error", "-i", silentVideo, "-c", "copy", out],
+      label: "cycle: final bounded encode (no audio)",
+      args: ["-y", "-v", "error", "-i", silentVideo, ...v, out],
     };
   }
   return {
-    label: "cycle: mux audio",
+    label: "cycle: final bounded encode + mux audio",
     args: [
       "-y", "-v", "error",
       "-i", silentVideo,
       "-i", audio,
       "-map", "0:v",
       "-map", "1:a",
-      "-c:v", "copy",
+      ...v,
       "-c:a", "aac", "-b:a", "160k",
       "-shortest",
-      "-movflags", "+faststart",
       out,
     ],
   };
@@ -208,8 +215,8 @@ function buildCyclePlan(ctx: BuildContext): PresetPlan {
   const chunkDurations = Array.from({ length: chunkPaths.length }, () => chunkDur);
   passes.push(buildXfadePass(chunkPaths, silentPath, fps, XF, chunkDurations));
 
-  // Pass 3: mux audio (or copy)
-  passes.push(buildMuxPass(silentPath, ctx.audio, out));
+  // Pass 3: final bounded encode + mux audio (or video-only bounded encode)
+  passes.push(buildMuxPass(ctx, silentPath, ctx.audio, out));
 
   return { passes, workdir };
 }

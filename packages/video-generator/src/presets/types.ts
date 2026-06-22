@@ -20,6 +20,10 @@ export interface BuildContext {
   seed: number | undefined;
   /** Duration for cover-only output (when audio is absent). Default 30. */
   coverOnlySeconds: number;
+  /** Max output video bitrate ceiling in kbit/s. Default 600 (compact). */
+  maxBitrateKbps?: number | undefined;
+  /** libx264 CRF for the final bounded encode. Default 28. */
+  crf?: number | undefined;
 }
 
 /**
