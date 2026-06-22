@@ -52,6 +52,7 @@ arcanada-publisher publish \
 | `--preset <name>` | `cycle` | Visual preset (see `--list-presets`). |
 | `--cover-seconds <n>` | `30` | Duration in seconds for cover-only clips. |
 | `--seed <n>` | — | Integer seed for reproducible effect shuffle (cycle preset). |
+| `--max-bitrate <kbps>` | `600` | Max output bitrate ceiling in kbit/s (VBV cap on final encode). Default 600 kbps (~35 MB for a 7–8 min clip). |
 | `--list-presets` | — | Print available presets and exit. |
 
 ### Programmatic API
@@ -68,9 +69,10 @@ const result = await generateVideo({
   cover: "/path/to/cover.jpg",
   audio: "/path/to/audio.mp3", // optional
   out: "/path/to/out.mp4",
-  preset: "cycle", // optional, default: "cycle"
-  seed: 42,        // optional: reproducible shuffle
-  coverOnlySeconds: 30, // optional: ignored when audio is provided
+  preset: "cycle",       // optional, default: "cycle"
+  seed: 42,              // optional: reproducible shuffle
+  coverOnlySeconds: 30,  // optional: ignored when audio is provided
+  maxBitrateKbps: 600,   // optional: VBV ceiling (default 600 kbps)
 });
 // result: { out, durationSec, hasAudio }
 ```

@@ -15,6 +15,15 @@ All notable changes to `arcanada-publisher` are documented here. The format foll
   extended to accept `.mp4`/`.mov` so generated videos attach via the existing
   `--image` path. 74 unit + integration tests; ffmpeg spawned with arg-array
   (no shell-string interpolation).
+- `--max-bitrate <kbps>` flag for the `video` subcommand (PUB-0028) — the cycle
+  final assembly pass is now a bounded re-encode (`-c:v libx264 -maxrate Nk
+  -bufsize 2Nk`) instead of a lossless copy (`-c:v copy`). Default: 600 kbps
+  (compact social-video target, ≤ ~35 MB for a 7–8 min clip). Configurable via
+  `--max-bitrate` CLI flag or `maxBitrateKbps` programmatic option. Resolves X /
+  Telegram upload rejections on long high-motion clips. VBV ceiling also applied
+  consistently to `zoompan` and `cqt` presets via a shared `boundedVideoArgs()`
+  helper. `dev-tools/video/make-cycle-video.sh` mirrored accordingly
+  (`MAX_BITRATE_KBPS` / `CRF` env vars).
 - `@arcanada/publisher-linkedin` 0.1.0 — LinkedIn adapter ported from
   `Arcanada-one/li-publish@7ddadf8` to native TypeScript + Playwright
   (PUB-0004, Phase 2 of `PUB-0001`). 60 unit tests + 2 gated live smoke
