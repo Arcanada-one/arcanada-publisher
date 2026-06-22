@@ -6,9 +6,27 @@
 //
 // `--image` is repeatable and accumulates into imagePaths[]. Unknown flags
 // fail closed so a typo is loud, not silently dropped.
+//
+// PUB-0027: `video` subcommand added for animated cover video generation.
 
-export type Command = "publish" | "comment" | "edit" | "delete" | "login" | "server";
-const COMMANDS = new Set<Command>(["publish", "comment", "edit", "delete", "login", "server"]);
+export type Command =
+  | "publish"
+  | "comment"
+  | "edit"
+  | "delete"
+  | "login"
+  | "server"
+  | "video";
+
+const COMMANDS = new Set<Command>([
+  "publish",
+  "comment",
+  "edit",
+  "delete",
+  "login",
+  "server",
+  "video",
+]);
 
 export interface ParsedArgs {
   command: Command;
@@ -30,6 +48,21 @@ export interface ParsedArgs {
   title: string | undefined;
   /** VK-specific: wall owner id (negative for communities). */
   ownerId: number | undefined;
+  // ---- video subcommand flags (PUB-0027) ----
+  /** `video` subcommand: cover image path. */
+  cover: string | undefined;
+  /** `video` subcommand: optional audio file path. */
+  audio: string | undefined;
+  /** `video` subcommand: output MP4 path. */
+  videoOut: string | undefined;
+  /** `video` subcommand: preset name (default: cycle). */
+  preset: string | undefined;
+  /** `video` subcommand: cover-only clip duration in seconds (default: 30). */
+  coverSeconds: number | undefined;
+  /** `video` subcommand: optional seed for reproducible shuffle. */
+  seed: number | undefined;
+  /** `video` subcommand: when true, list presets and exit. */
+  listPresets: boolean;
 }
 
 /** Flags that take a value; everything else is a boolean switch. */
@@ -47,7 +80,16 @@ const VALUE_FLAGS = new Set([
   "--subreddit",
   "--title",
   "--owner-id",
+  // video subcommand flags
+  "--cover",
+  "--audio",
+  "--out",
+  "--preset",
+  "--cover-seconds",
+  "--seed",
 ]);
+
+const BOOL_FLAGS = new Set(["--dry-run", "--list-presets"]);
 
 export class CliParseError extends Error {}
 
@@ -75,6 +117,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
     subreddit: undefined,
     title: undefined,
     ownerId: undefined,
+    cover: undefined,
+    audio: undefined,
+    videoOut: undefined,
+    preset: undefined,
+    coverSeconds: undefined,
+    seed: undefined,
+    listPresets: false,
   };
 
   for (let i = 0; i < rest.length; i++) {
@@ -83,7 +132,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
       out.dryRun = true;
       continue;
     }
-    if (!VALUE_FLAGS.has(flag)) {
+    if (flag === "--list-presets") {
+      out.listPresets = true;
+      continue;
+    }
+    if (!VALUE_FLAGS.has(flag) && !BOOL_FLAGS.has(flag)) {
       throw new CliParseError(`unknown flag '${flag}'`);
     }
     const value = rest[++i];
@@ -138,6 +191,35 @@ export function parseArgs(argv: string[]): ParsedArgs {
           throw new CliParseError(`--owner-id must be an integer, got '${value}'`);
         }
         out.ownerId = ownerId;
+        break;
+      }
+      // video subcommand flags
+      case "--cover":
+        out.cover = value;
+        break;
+      case "--audio":
+        out.audio = value;
+        break;
+      case "--out":
+        out.videoOut = value;
+        break;
+      case "--preset":
+        out.preset = value;
+        break;
+      case "--cover-seconds": {
+        const cs = Number.parseInt(value, 10);
+        if (!Number.isInteger(cs) || cs <= 0) {
+          throw new CliParseError(`--cover-seconds must be a positive integer, got '${value}'`);
+        }
+        out.coverSeconds = cs;
+        break;
+      }
+      case "--seed": {
+        const s = Number.parseInt(value, 10);
+        if (!Number.isInteger(s)) {
+          throw new CliParseError(`--seed must be an integer, got '${value}'`);
+        }
+        out.seed = s;
         break;
       }
     }

@@ -1,0 +1,35 @@
+{
+  "name": "@arcanada/publisher-video",
+  "version": "0.1.0-pre.0",
+  "description": "Animated-cover video generator for arcanada-publisher — turns a cover image + optional audio into a polished MP4 for social posts",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --build --noEmit",
+    "test": "vitest run",
+    "lint": "eslint --no-error-on-unmatched-pattern src tests"
+  },
+  "dependencies": {
+    "@arcanada/publisher-core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

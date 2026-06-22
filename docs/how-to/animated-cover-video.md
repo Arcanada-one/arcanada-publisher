@@ -10,6 +10,34 @@ This is pure ffmpeg — no external plugins.
 
 ## Generator
 
+### TypeScript package (canonical entry point — PUB-0027)
+
+The `@arcanada/publisher-video` package is the canonical way to generate post
+videos within the monorepo. See
+[`packages/video-generator/README.md`](../../packages/video-generator/README.md)
+for full usage. Quick reference:
+
+```bash
+# Via the CLI:
+arcanada-publisher video \
+  --cover img/blog/cover.jpg \
+  --audio audio/narration.mp3 \
+  --out out/post-video.mp4 \
+  --preset cycle \
+  --seed 42
+
+# List available presets (zoompan / cqt / cycle):
+arcanada-publisher video --list-presets
+
+# Attach to an X post via the existing --image path:
+arcanada-publisher publish --platform x --text-file post.txt --image out/post-video.mp4
+```
+
+### Bash reference engine
+
+The bash script remains as the documented reference for the `cycle` filtergraph
+logic. The TypeScript `cycle` preset is a direct port.
+
 ```
 dev-tools/video/make-cycle-video.sh <cover> <audio> <out.mp4> [intro_sec] [seg_sec] [seed]
 ```

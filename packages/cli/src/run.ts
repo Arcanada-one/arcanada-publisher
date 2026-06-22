@@ -46,9 +46,12 @@ export async function run(argv: string[]): Promise<RunResult> {
 }
 
 async function dispatch(args: ParsedArgs): Promise<RunResult> {
-  // `server` is platform-agnostic: it starts the loopback API and blocks.
+  // Platform-agnostic commands first.
   if (args.command === "server") {
     return runServer(args);
+  }
+  if (args.command === "video") {
+    return runVideo(args);
   }
 
   if (!args.platform || !isPlatform(args.platform)) {
@@ -174,6 +177,45 @@ async function runServer(args: ParsedArgs): Promise<RunResult> {
     const message = err instanceof Error ? err.message : String(err);
     return { code: ErrorCode.NETWORK_GUARD, message: `server failed to start: ${message}` };
   }
+}
+
+/**
+ * Run the `video` subcommand: generate an animated cover MP4 using
+ * @arcanada/publisher-video. Platform-agnostic; no adapter or login needed.
+ */
+async function runVideo(args: ParsedArgs): Promise<RunResult> {
+  const { generateVideo, listPresets } = await import("@arcanada/publisher-video");
+
+  if (args.listPresets) {
+    const presets = listPresets();
+    const lines = presets
+      .map((p) => `  ${p.name}${p.timelineChanging ? " (timeline-changing)" : ""}: ${p.description}`)
+      .join("\n");
+    // eslint-disable-next-line no-console
+    console.log(`Available presets:\n${lines}`);
+    return { code: ErrorCode.SUCCESS, message: `listed ${presets.length} presets` };
+  }
+
+  if (!args.cover) {
+    return { code: ErrorCode.MISSING_INPUT, message: "video: --cover is required" };
+  }
+  if (!args.videoOut) {
+    return { code: ErrorCode.MISSING_INPUT, message: "video: --out is required" };
+  }
+
+  const result = await generateVideo({
+    cover: args.cover,
+    ...(args.audio !== undefined ? { audio: args.audio } : {}),
+    out: args.videoOut,
+    ...(args.preset !== undefined ? { preset: args.preset } : {}),
+    ...(args.coverSeconds !== undefined ? { coverOnlySeconds: args.coverSeconds } : {}),
+    ...(args.seed !== undefined ? { seed: args.seed } : {}),
+  });
+
+  return {
+    code: ErrorCode.SUCCESS,
+    message: `video generated: ${result.out} (${result.durationSec.toFixed(1)}s, audio=${result.hasAudio})`,
+  };
 }
 
 function readText(args: ParsedArgs): string {

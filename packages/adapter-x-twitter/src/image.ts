@@ -1,11 +1,17 @@
 // Shared image-path validation: NUL-byte reject, existence, regular-file, and
 // extension allowlist. Mirrors the FB/LI adapters' validateImagePath guard.
+//
+// PUB-0027: .mp4 and .mov added to allow the generated cover video to attach via
+// the existing --image path on X. This is an additive, guarded extension —
+// no existing image behavior changes. See docs/how-to/animated-cover-video.md.
 
 import { statSync, existsSync } from "node:fs";
 import { extname, resolve as resolvePath } from "node:path";
 import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
 
-const IMAGE_EXT_ALLOWLIST = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
+// X accepts both images and video through the same composer file input; on a
+// Premium account a long-form post can carry a video (e.g. a cover+audio MP4).
+const IMAGE_EXT_ALLOWLIST = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".mov"]);
 
 export function validateImagePath(rawPath: string): string {
   if (rawPath.includes("\0")) {
