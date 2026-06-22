@@ -157,10 +157,7 @@ describe("T4: cycle audio path keeps 1:a + -shortest + AAC", () => {
 
   it("mux pass maps 1:a when audio present", () => {
     const args = getMuxArgs(makeCtx({ durationSec: 9 }));
-    const mapIndices = args.reduce<number[]>(
-      (acc, v, i) => (v === "-map" ? [...acc, i] : acc),
-      [],
-    );
+    const mapIndices = args.reduce<number[]>((acc, v, i) => (v === "-map" ? [...acc, i] : acc), []);
     const mapVals = mapIndices.map((i) => args[i + 1]);
     expect(mapVals).toContain("1:a");
   });
@@ -187,10 +184,7 @@ describe("T4: cycle audio path keeps 1:a + -shortest + AAC", () => {
   it("cover-only mux pass does NOT map audio", () => {
     const ctx = makeCtx({ audio: undefined, durationSec: 30 });
     const args = getMuxArgs(ctx);
-    const mapIndices = args.reduce<number[]>(
-      (acc, v, i) => (v === "-map" ? [...acc, i] : acc),
-      [],
-    );
+    const mapIndices = args.reduce<number[]>((acc, v, i) => (v === "-map" ? [...acc, i] : acc), []);
     const mapVals = mapIndices.map((i) => args[i + 1]);
     expect(mapVals).not.toContain("1:a");
     expect(args).not.toContain("-shortest");
@@ -223,10 +217,7 @@ describe("T5: zoompan uses bounded encode helper", () => {
   it("still maps 1:a when audio present", () => {
     const plan = zoompanPreset.buildPlan(makeCtx());
     const args = plan.passes.flatMap((p) => p.args);
-    const mapIndices = args.reduce<number[]>(
-      (acc, v, i) => (v === "-map" ? [...acc, i] : acc),
-      [],
-    );
+    const mapIndices = args.reduce<number[]>((acc, v, i) => (v === "-map" ? [...acc, i] : acc), []);
     expect(mapIndices.map((i) => args[i + 1])).toContain("1:a");
   });
 
@@ -239,10 +230,7 @@ describe("T5: zoompan uses bounded encode helper", () => {
   it("cover-only: no 1:a map, no -shortest", () => {
     const plan = zoompanPreset.buildPlan(makeCtx({ audio: undefined }));
     const args = plan.passes.flatMap((p) => p.args);
-    const mapIndices = args.reduce<number[]>(
-      (acc, v, i) => (v === "-map" ? [...acc, i] : acc),
-      [],
-    );
+    const mapIndices = args.reduce<number[]>((acc, v, i) => (v === "-map" ? [...acc, i] : acc), []);
     expect(mapIndices.map((i) => args[i + 1])).not.toContain("1:a");
     expect(args).not.toContain("-shortest");
   });
@@ -266,10 +254,7 @@ describe("T5: cqt uses bounded encode helper", () => {
   it("still maps 1:a when audio present", () => {
     const plan = cqtPreset.buildPlan(makeCtx());
     const args = plan.passes.flatMap((p) => p.args);
-    const mapIndices = args.reduce<number[]>(
-      (acc, v, i) => (v === "-map" ? [...acc, i] : acc),
-      [],
-    );
+    const mapIndices = args.reduce<number[]>((acc, v, i) => (v === "-map" ? [...acc, i] : acc), []);
     expect(mapIndices.map((i) => args[i + 1])).toContain("1:a");
   });
 

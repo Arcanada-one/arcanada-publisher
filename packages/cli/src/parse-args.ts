@@ -9,14 +9,7 @@
 //
 // PUB-0027: `video` subcommand added for animated cover video generation.
 
-export type Command =
-  | "publish"
-  | "comment"
-  | "edit"
-  | "delete"
-  | "login"
-  | "server"
-  | "video";
+export type Command = "publish" | "comment" | "edit" | "delete" | "login" | "server" | "video";
 
 const COMMANDS = new Set<Command>([
   "publish",

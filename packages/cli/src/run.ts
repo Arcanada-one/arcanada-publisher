@@ -189,7 +189,9 @@ async function runVideo(args: ParsedArgs): Promise<RunResult> {
   if (args.listPresets) {
     const presets = listPresets();
     const lines = presets
-      .map((p) => `  ${p.name}${p.timelineChanging ? " (timeline-changing)" : ""}: ${p.description}`)
+      .map(
+        (p) => `  ${p.name}${p.timelineChanging ? " (timeline-changing)" : ""}: ${p.description}`,
+      )
       .join("\n");
     // eslint-disable-next-line no-console
     console.log(`Available presets:\n${lines}`);

@@ -12,11 +12,7 @@
 // fixed EFFECT_POOL (no user input enters filter_complex).
 
 import { join as pathJoin, dirname } from "node:path";
-import {
-  EFFECT_POOL,
-  buildEffectSequence,
-  substituteEffectParams,
-} from "./cycle-effects.js";
+import { EFFECT_POOL, buildEffectSequence, substituteEffectParams } from "./cycle-effects.js";
 import type { PresetDef, BuildContext, FfmpegPass, PresetPlan } from "./types.js";
 import { boundedVideoArgs } from "./encode-settings.js";
 
@@ -38,13 +34,27 @@ function buildIntroPass(ctx: BuildContext, workdir: string, introLen: number): F
   return {
     label: "cycle: intro segment",
     args: [
-      "-y", "-v", "error",
-      "-loop", "1", "-t", String(introLen),
-      "-i", cover,
-      "-vf", vf,
-      "-r", String(fps),
-      "-t", String(introLen),
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+      "-y",
+      "-v",
+      "error",
+      "-loop",
+      "1",
+      "-t",
+      String(introLen),
+      "-i",
+      cover,
+      "-vf",
+      vf,
+      "-r",
+      String(fps),
+      "-t",
+      String(introLen),
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "20",
       pathJoin(workdir, "seg-000.mp4"),
     ],
   };
@@ -63,14 +73,29 @@ function buildEffectPass(
   return {
     label: `cycle: segment ${index}`,
     args: [
-      "-y", "-v", "error",
-      "-loop", "1", "-t", String(segLen),
-      "-i", cover,
-      "-filter_complex", filterComplex,
-      "-map", "[v]",
-      "-r", String(fps),
-      "-t", String(segLen),
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+      "-y",
+      "-v",
+      "error",
+      "-loop",
+      "1",
+      "-t",
+      String(segLen),
+      "-i",
+      cover,
+      "-filter_complex",
+      filterComplex,
+      "-map",
+      "[v]",
+      "-r",
+      String(fps),
+      "-t",
+      String(segLen),
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "21",
       pathJoin(workdir, `seg-${numStr}.mp4`),
     ],
   };
@@ -116,12 +141,22 @@ function buildXfadePass(
   return {
     label: `xfade: chain ${inputPaths.length} → ${outputPath}`,
     args: [
-      "-y", "-v", "error",
+      "-y",
+      "-v",
+      "error",
       ...inputArgs,
-      "-filter_complex", fcParts.join(";"),
-      "-map", `[x${n - 1}]`,
-      "-r", String(fps),
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+      "-filter_complex",
+      fcParts.join(";"),
+      "-map",
+      `[x${n - 1}]`,
+      "-r",
+      String(fps),
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "21",
       outputPath,
     ],
   };
@@ -133,7 +168,12 @@ function buildXfadePass(
  * giving a deterministic file-size guarantee independent of per-segment CRF.
  * faststart and yuv420p come from boundedVideoArgs (single source of truth).
  */
-function buildMuxPass(ctx: BuildContext, silentVideo: string, audio: string | undefined, out: string): FfmpegPass {
+function buildMuxPass(
+  ctx: BuildContext,
+  silentVideo: string,
+  audio: string | undefined,
+  out: string,
+): FfmpegPass {
   const v = boundedVideoArgs(ctx);
   if (audio === undefined) {
     return {
@@ -144,13 +184,22 @@ function buildMuxPass(ctx: BuildContext, silentVideo: string, audio: string | un
   return {
     label: "cycle: final bounded encode + mux audio",
     args: [
-      "-y", "-v", "error",
-      "-i", silentVideo,
-      "-i", audio,
-      "-map", "0:v",
-      "-map", "1:a",
+      "-y",
+      "-v",
+      "error",
+      "-i",
+      silentVideo,
+      "-i",
+      audio,
+      "-map",
+      "0:v",
+      "-map",
+      "1:a",
       ...v,
-      "-c:a", "aac", "-b:a", "160k",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "160k",
       "-shortest",
       out,
     ],
