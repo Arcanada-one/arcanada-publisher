@@ -324,10 +324,7 @@ export function publishedTextMatchFragment(text: string | undefined): string {
 async function resolveJustPublishedHref(page: Page, publishedText?: string): Promise<string> {
   const fragment = publishedTextMatchFragment(publishedText);
   if (fragment !== "") {
-    const article = page
-      .locator('[role="article"]')
-      .filter({ hasText: fragment })
-      .first();
+    const article = page.locator('[role="article"]').filter({ hasText: fragment }).first();
     try {
       await article.waitFor({ state: "visible", timeout: 10_000 });
       return await article

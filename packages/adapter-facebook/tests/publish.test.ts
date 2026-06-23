@@ -3,11 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ErrorCode, ProfileManager } from "@arcanada/publisher-core";
-import {
-  publish,
-  publishedTextMatchFragment,
-  type PublishStepRecorder,
-} from "../src/publish.js";
+import { publish, publishedTextMatchFragment, type PublishStepRecorder } from "../src/publish.js";
 import { typeMultiline } from "../src/input.js";
 
 function makeProfiles(): ProfileManager {

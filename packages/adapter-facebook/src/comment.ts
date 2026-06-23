@@ -69,9 +69,7 @@ export async function comment(
 async function runCommentFlow(page: Page, input: CommentInput): Promise<CommentResult> {
   return withScreenshotOnFail(page, "comment", async () => {
     await page.goto(input.parentPostUrl);
-    const composer = page
-      .getByRole("textbox", { name: selectors.commentComposer })
-      .first();
+    const composer = page.getByRole("textbox", { name: selectors.commentComposer }).first();
     await composer.waitFor({ state: "visible", timeout: 10_000 });
     await composer.click();
     // R6: a multi-line first comment (CTA links + TG cross-link) must use
@@ -241,9 +239,7 @@ const defaultReplaceSteps: ReplaceCommentRecorder = {
   },
 
   async addNewComment(page: Page, input: ReplaceCommentInput): Promise<string> {
-    const composer = page
-      .getByRole("textbox", { name: selectors.commentComposer })
-      .first();
+    const composer = page.getByRole("textbox", { name: selectors.commentComposer }).first();
     await composer.waitFor({ state: "visible", timeout: 10_000 });
     await composer.click();
     // R6: multi-line comment via Shift+Enter, final Enter submits.
