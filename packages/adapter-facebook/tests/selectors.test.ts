@@ -29,6 +29,21 @@ describe("selectors — RU/EN composer & action regex", () => {
     expect(matchesExact("editedMarker", "Не отредактировано")).toBe(false);
   });
 
+  it("commentComposer matches every observed first-comment textbox label (PUB-0030)", () => {
+    // Feed-post variant (original, was already covered)
+    expect(selectors.commentComposer.test("Напишите комментарий…")).toBe(true);
+    expect(selectors.commentComposer.test("Write a comment…")).toBe(true);
+    // Profile-post permalink variant — the regression: a fresh publish lands on
+    // the profile post whose composer is labelled «Комментировать как <name>».
+    expect(selectors.commentComposer.test("Комментировать как Pavel Valentov")).toBe(true);
+    expect(selectors.commentComposer.test("Comment as Pavel Valentov")).toBe(true);
+    expect(selectors.commentComposer.test("Прокомментировать")).toBe(true);
+    expect(selectors.commentComposer.test("Add a comment…")).toBe(true);
+    // Must NOT match unrelated UI
+    expect(selectors.commentComposer.test("Опубликовать")).toBe(false);
+    expect(selectors.commentComposer.test("Что у вас нового, Pavel?")).toBe(false);
+  });
+
   it("isCaptchaBlob detects RU/EN security-check signals", () => {
     expect(isCaptchaBlob("Пройдите проверку безопасности, чтобы продолжить")).toBe(true);
     expect(isCaptchaBlob("Please complete the security check")).toBe(true);

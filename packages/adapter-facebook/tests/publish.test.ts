@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ErrorCode, ProfileManager } from "@arcanada/publisher-core";
-import { publish, type PublishStepRecorder } from "../src/publish.js";
+import { publish, publishedTextMatchFragment, type PublishStepRecorder } from "../src/publish.js";
 import { typeMultiline } from "../src/input.js";
 
 function makeProfiles(): ProfileManager {
@@ -81,12 +81,15 @@ function fakePage(): never {
 function makeRecorder(): PublishStepRecorder & {
   order: string[];
   uploadedImages: string[];
+  submitTextSeen: (string | undefined)[];
 } {
   const order: string[] = [];
   const uploadedImages: string[] = [];
+  const submitTextSeen: (string | undefined)[] = [];
   return {
     order,
     uploadedImages,
+    submitTextSeen,
     openComposer: vi.fn(async () => {
       order.push("openComposer");
     }),
@@ -101,8 +104,9 @@ function makeRecorder(): PublishStepRecorder & {
       order.push("preSubmitSnapshot");
       return { hasText: true, hasImage: true };
     }),
-    submitAndConfirm: vi.fn(async () => {
+    submitAndConfirm: vi.fn(async (_page, publishedText?: string) => {
       order.push("submitAndConfirm");
+      submitTextSeen.push(publishedText);
       return "https://www.facebook.com/100012345/posts/777";
     }),
     postVerify: vi.fn(async () => {
@@ -261,6 +265,42 @@ describe("facebook input — R6 Shift+Enter multiline (no raw \\n submit)", () =
     await typeMultiline(page, "single line", { submit: false });
     expect(typed).toEqual(["single line"]);
     expect(presses).not.toContain("Shift+Enter");
+  });
+});
+
+describe("PUB-0030 — publishedTextMatchFragment (just-published disambiguation)", () => {
+  it("returns the first non-empty (title) line, trimmed and capped at 40, for a title-first body", () => {
+    const body = "Angry Robot Deals: как агенты вернули к жизни проект\n\nПервый абзац…";
+    const fragment = publishedTextMatchFragment(body);
+    expect(fragment).toHaveLength(40);
+    expect(fragment).toBe(body.slice(0, 40));
+    expect("Angry Robot Deals: как агенты вернули к жизни".startsWith(fragment)).toBe(true);
+  });
+
+  it("skips leading blank lines and returns the first real line", () => {
+    expect(publishedTextMatchFragment("\n\n  Real title  \nbody")).toBe("Real title");
+  });
+
+  it("caps the fragment at 40 chars (cheap, truncation-resilient match)", () => {
+    const longTitle = "x".repeat(100);
+    expect(publishedTextMatchFragment(longTitle)).toHaveLength(40);
+  });
+
+  it("returns empty string for undefined / empty / whitespace-only input", () => {
+    expect(publishedTextMatchFragment(undefined)).toBe("");
+    expect(publishedTextMatchFragment("")).toBe("");
+    expect(publishedTextMatchFragment("   \n  \n ")).toBe("");
+  });
+});
+
+describe("PUB-0030 — publish forwards the body to submitAndConfirm", () => {
+  it("submitAndConfirm receives input.text so it can disambiguate the /me feed", async () => {
+    const rec = makeRecorder();
+    await publish(
+      { text: "Title line\nbody", imagePaths: [makeImage()], profile: FAKE_PROFILE },
+      { profileManager: makeProfiles(), page: fakePage(), __recorder: rec },
+    );
+    expect(rec.submitTextSeen).toEqual(["Title line\nbody"]);
   });
 });
 
