@@ -22,7 +22,11 @@ import {
 } from "@arcanada/publisher-core";
 
 import { login as loginImpl, type LoginContext } from "./login.js";
-import { publish as publishImpl, type PublishOptions } from "./publish.js";
+import {
+  publish as publishImpl,
+  type PublishOptions,
+  type AbortedPublishResult,
+} from "./publish.js";
 import {
   comment as commentImpl,
   editComment as editCommentImpl,
@@ -56,7 +60,33 @@ export class LinkedInAdapter extends BaseAdapter {
   }
 
   async publish(input: PublishInput): Promise<PublishResult> {
-    return publishImpl(input, this.opts.publishOptions);
+    const result = await publishImpl(input, this.opts.publishOptions);
+    // The Adapter contract returns a real PublishResult. The abort dry-run is a
+    // LinkedIn-specific verification surface exposed via `publishDryRunNoPost`,
+    // NOT this contract method — so a normal publish() never yields an abort.
+    if ((result as AbortedPublishResult).aborted) {
+      throw new Error(
+        "publish(): unexpected aborted result — use publishDryRunNoPost() for the no-post dry-run",
+      );
+    }
+    return result as PublishResult;
+  }
+
+  /**
+   * No-publish live verification (PUB-0031/PUB-0032): run the full composer flow
+   * against the real LinkedIn UI and ABORT before clicking «Post». NOTHING is
+   * published. Returns whether media attached (the scoped <video> preview for a
+   * video). LinkedIn-specific — not part of the generic Adapter contract.
+   */
+  async publishDryRunNoPost(input: PublishInput): Promise<AbortedPublishResult> {
+    const result = await publishImpl(input, {
+      ...this.opts.publishOptions,
+      abortBeforePost: true,
+    });
+    if (!(result as AbortedPublishResult).aborted) {
+      throw new Error("publishDryRunNoPost(): flow did not abort before posting");
+    }
+    return result as AbortedPublishResult;
   }
 
   async comment(input: CommentInput): Promise<CommentResult> {
@@ -92,3 +122,5 @@ export { classifyLiError, mapLiError } from "./errors.js";
 export type { LiErrorType } from "./errors.js";
 export type { LinkedInEditInput } from "./edit.js";
 export type { EditCommentInput } from "./comment.js";
+export { isVideoPath, isAbortedPublish } from "./publish.js";
+export type { AbortedPublishResult } from "./publish.js";

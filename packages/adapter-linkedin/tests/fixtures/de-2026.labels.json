@@ -1,0 +1,12 @@
+{
+  "source": "synthetic",
+  "capturedAt": "2026-06-24",
+  "locale": "de-DE",
+  "note": "Synthetic stand-in mirroring the German labels observed live during CONTENT-0060 (PUB-0031/PUB-0032). Replace with a real capture per fixtures/README.md.",
+  "controls": {
+    "postControlMenu": ["Mehr Aktionen", "Steuerungsmenü öffnen"],
+    "deleteMenuItem": ["Beitrag löschen", "Löschen"],
+    "confirmDelete": ["Löschen"],
+    "commentBox": ["Kommentar hinzufügen", "Kommentar schreiben"]
+  }
+}

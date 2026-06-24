@@ -105,6 +105,64 @@ describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
     expect(verify).toHaveBeenCalledTimes(1);
   });
 
+  it("abortBeforePost: runs the full flow, attaches media, returns aborted WITHOUT posting", async () => {
+    // No-publish dry-run. The fake page records whether the POST_RE shadow-click
+    // ever fired; it must NOT (the flow aborts after text-fill). __verifyPostVideo
+    // must also never run (no publish → no post to verify).
+    const verify = vi.fn(async () => true);
+    let postClicked = false;
+    const vid = makeVideo();
+    const page = {
+      goto: async () => {},
+      getByRole: () => ({
+        first: () => ({
+          waitFor: async () => {},
+          isVisible: async () => true,
+          count: async () => 1,
+          click: async () => {},
+        }),
+      }),
+      locator: () => ({
+        first: () => ({
+          waitFor: async () => {},
+          isVisible: async () => true,
+          count: async () => 1,
+          click: async () => {},
+        }),
+      }),
+      isClosed: () => false,
+      waitForTimeout: async () => {},
+      keyboard: { press: async () => {}, insertText: async () => {} },
+      waitForResponse: async () => null,
+      evaluate: async (source: string) => {
+        if (source.includes("hit.click()")) {
+          // Distinguish the POST click from add-media / next-done by the POST regex.
+          if (source.includes("Veröffentlichen") || source.includes("Опубликовать")) {
+            postClicked = true;
+          }
+          return true;
+        }
+        if (source.includes("scopeSels")) return 1; // scoped video attached
+        if (source.includes("offsetParent")) return [ACTIVITY_URL];
+        return 0;
+      },
+    } as unknown as never;
+
+    const res = await publish(
+      { text: "dry-run no post", imagePath: vid, profile: "p1" },
+      {
+        profileManager: makeProfiles(),
+        page,
+        abortBeforePost: true,
+        __verifyPostVideo: verify,
+      },
+    );
+    expect(res).toMatchObject({ aborted: true, mediaAttached: true });
+    expect(res.attachments).toEqual([{ kind: "video", src: vid }]);
+    expect(postClicked).toBe(false); // never clicked Post
+    expect(verify).not.toHaveBeenCalled(); // no post → no verify
+  });
+
   it("does NOT run the video oracle for an image-only publish", async () => {
     const verify = vi.fn(async () => false);
     const dir = mkdtempSync(join(tmpdir(), "pub-0031-img-"));

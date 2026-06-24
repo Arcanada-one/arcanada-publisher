@@ -31,6 +31,19 @@ All notable changes to `arcanada-publisher` are documented here. The format foll
   cases. See `packages/adapter-linkedin/CHANGELOG.md` for the per-package
   history.
 
+### Added
+
+- **PUB-0031/PUB-0032 — no-publish verification.** Three layers to verify the
+  LinkedIn adapter without posting/deleting/commenting on a real account:
+  (1) unit tests (offline); (2) label fixtures
+  (`tests/fixtures/*.labels.json` + `tests/dom-fixtures.test.ts`) asserting
+  captured real-UI control labels match the production selector regexes; (3) an
+  abort-before-post dry-run — `LinkedInAdapter.publishDryRunNoPost()` /
+  `PublishOptions.abortBeforePost` runs the full composer flow against the live UI
+  (attaches media, waits for the scoped `<video>` preview, types text) and aborts
+  before «Post». Gated live smoke probes `LI_DRYRUN_PROBE=1` (P1 video, P2
+  text-only) never publish. How-to: `docs/how-to/verify-linkedin-without-publishing.md`.
+
 ### Fixed
 
 - **PUB-0031** — LinkedIn video publish is now fail-closed. The composer-side

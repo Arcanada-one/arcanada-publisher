@@ -1,0 +1,12 @@
+{
+  "source": "synthetic",
+  "capturedAt": "2026-06-24",
+  "locale": "en-US",
+  "note": "Synthetic stand-in for the English 2026 UI labels. Replace with a real capture per fixtures/README.md.",
+  "controls": {
+    "postControlMenu": ["Open control menu", "More actions"],
+    "deleteMenuItem": ["Delete post", "Delete"],
+    "confirmDelete": ["Delete"],
+    "commentBox": ["Add a comment", "Write a comment"]
+  }
+}

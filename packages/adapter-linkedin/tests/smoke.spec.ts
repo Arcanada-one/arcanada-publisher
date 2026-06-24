@@ -14,6 +14,11 @@ import { describe, it, expect } from "vitest";
 import { LinkedInAdapter, ACTIVITY_URN_RE } from "../src/index.js";
 
 const LIVE = process.env["LI_LIVE_SMOKE"] === "1";
+// No-publish live probes (PUB-0031/PUB-0032 §"test without posting"): these open
+// the REAL LinkedIn UI but never post/delete/comment — a lighter, safer gate than
+// LI_LIVE_SMOKE so the operator can verify selectors on the live DOM with zero
+// side effects.
+const DRYRUN = process.env["LI_DRYRUN_PROBE"] === "1";
 const PROFILE = process.env["PUB_PROFILE"] ?? "pavel-personal";
 const SMOKE_TEXT = `plan-smoke ${new Date().toISOString()} (PUB-0004)`;
 
@@ -116,6 +121,49 @@ describe("smoke — live LinkedIn publish cycle (gated LI_LIVE_SMOKE=1)", () => 
       expect(deleteResult.deleted).toBe(true);
     },
     15 * 60 * 1000,
+  );
+
+  // --- No-publish live probes (LI_DRYRUN_PROBE=1) — verify WITHOUT posting -----
+
+  it.skipIf(!DRYRUN)(
+    "P1 (PUB-0031): abort-before-post dry-run — composer populates + video attaches, NOTHING posted",
+    async () => {
+      // Operator runs:
+      //   1. copy a ≤~35MB .mp4 onto the OS clipboard as a POSIX-file (§6.4)
+      //   2. LI_DRYRUN_PROBE=1 PUB_PROFILE=default \
+      //        pnpm --filter @arcanada/publisher-linkedin test:smoke
+      // The headed browser opens the composer, attaches the video, waits for the
+      // SCOPED <video> preview, types text — then ABORTS before «Post». No post.
+      const videoPath = process.env["PUB_SMOKE_VIDEO"];
+      if (!videoPath) {
+        throw new Error("P1 requires PUB_SMOKE_VIDEO env (absolute path to a ≤~35MB .mp4)");
+      }
+      const adapter = new LinkedInAdapter({ publishOptions: { headed: true } });
+      const res = await adapter.publishDryRunNoPost({
+        text: `${SMOKE_TEXT} [DRY-RUN — will NOT post]`,
+        imagePath: videoPath,
+        profile: PROFILE,
+      });
+      expect(res.aborted).toBe(true);
+      expect(res.mediaAttached).toBe(true); // scoped <video> detected in composer
+      expect(res.attachments).toEqual([{ kind: "video", src: videoPath }]);
+    },
+    20 * 60 * 1000,
+  );
+
+  it.skipIf(!DRYRUN)(
+    "P2 (PUB-0031): text-only abort-before-post dry-run — composer opens + text types, NOTHING posted",
+    async () => {
+      const adapter = new LinkedInAdapter({ publishOptions: { headed: true } });
+      const res = await adapter.publishDryRunNoPost({
+        text: `${SMOKE_TEXT} [DRY-RUN text-only — will NOT post]`,
+        profile: PROFILE,
+      });
+      expect(res.aborted).toBe(true);
+      expect(res.mediaAttached).toBe(true); // no media required → trivially true
+      expect(res.attachments).toEqual([]);
+    },
+    10 * 60 * 1000,
   );
 
   it("smoke gate is visible in Vitest output even when skipped", () => {

@@ -63,6 +63,29 @@ export function isVideoPath(path: string): boolean {
   return VIDEO_EXT.has(extname(path).toLowerCase());
 }
 
+/**
+ * No-publish dry-run result (PublishOptions.abortBeforePost). The composer flow
+ * ran end-to-end against the live UI and aborted before clicking «Post», so
+ * nothing was published — `aborted` is always true and there is no `postUrl`.
+ * `mediaAttached` reflects whether the scoped media preview was detected (the
+ * PUB-0031 signal): for a video it means a `<video>` rendered INSIDE the composer
+ * (not page-wide), proving the attach path works without publishing.
+ */
+export interface AbortedPublishResult {
+  ok: true;
+  platform: "linkedin";
+  aborted: true;
+  mediaAttached: boolean;
+  attachments: { kind: "image" | "video"; src: string }[];
+}
+
+/** Type guard: distinguish the abort-before-post dry-run from a real publish. */
+export function isAbortedPublish(
+  r: PublishResult | AbortedPublishResult,
+): r is AbortedPublishResult {
+  return (r as AbortedPublishResult).aborted === true;
+}
+
 /** PUB-0031: attachment descriptor with the correct kind (video vs image). */
 function attachmentsFor(paths: string[]): { kind: "image" | "video"; src: string }[] {
   return paths.map((src) => ({ kind: isVideoPath(src) ? "video" : "image", src }));
@@ -83,12 +106,23 @@ export interface PublishOptions {
    * `verify_mismatch` (fail-closed) rather than report a false success.
    */
   __verifyPostVideo?: (page: Page, postUrl: string) => Promise<boolean>;
+  /**
+   * No-publish live verification (PUB-0031/PUB-0032 §"test without posting"): run
+   * the FULL composer flow against the real LinkedIn UI — open the composer,
+   * attach the media, wait for the SCOPED video/image preview, type the text —
+   * then ABORT immediately before clicking «Post». NOTHING is published. The
+   * returned result has `aborted: true` and `postUrl: ""`. This exercises every
+   * selector + the scoped-video detection on the live DOM with zero side effects,
+   * closing the "fake DOM ≠ real DOM" gap that unit tests cannot. Mutually useful
+   * with a headed browser so the operator can watch the composer populate.
+   */
+  abortBeforePost?: boolean;
 }
 
 export async function publish(
   input: PublishInput,
   options: PublishOptions = {},
-): Promise<PublishResult> {
+): Promise<PublishResult | AbortedPublishResult> {
   if (!input?.text || input.text.trim() === "") {
     throw new AdapterError(ErrorCode.MISSING_INPUT, "publish: 'text' is required");
   }
@@ -139,7 +173,7 @@ async function runPublishFlow(
   input: PublishInput,
   imagePaths: string[],
   options: PublishOptions,
-): Promise<PublishResult> {
+): Promise<PublishResult | AbortedPublishResult> {
   return withScreenshotOnFail(page, "publish", async () => {
     await page.goto(LINKEDIN_FEED);
 
@@ -239,6 +273,8 @@ async function runPublishFlow(
     //   4. type the text.
     // We use the clipboard, never a file chooser (§6.4). The «Add media» click
     // does spawn a native file dialog too, but we ignore it and paste instead.
+    // `mediaAttached` is reported by the abortBeforePost dry-run (PUB-0031 signal).
+    let mediaAttached = imagePaths.length === 0;
     if (imagePaths.length > 0) {
       const hasVideo = imagePaths.some(isVideoPath);
 
@@ -290,6 +326,7 @@ async function runPublishFlow(
           extra: { stage: hasVideo ? "video_paste_no_preview" : "image_paste_no_preview" },
         });
       }
+      mediaAttached = true;
 
       // 3. Return to the composer: click «Next»/«Done» via shadow-walk DOM click
       //    (multi-locale). For a video the button is disabled until transcoding
@@ -311,6 +348,22 @@ async function runPublishFlow(
     // Fill text AFTER media (operator rule §6.4: media-before-text).
     await editor.click();
     await page.keyboard.insertText(input.text);
+
+    // No-publish dry-run (PublishOptions.abortBeforePost): the composer is now
+    // fully populated — media attached + text typed — and we are ONE click away
+    // from publishing. Abort here so NOTHING goes out. This is the highest-fidelity
+    // verification possible without posting: every selector resolved on the live
+    // DOM and (for video) the scoped <video> preview was detected. Returns the
+    // aborted result; the «Post» click below is never reached.
+    if (options.abortBeforePost) {
+      return {
+        ok: true,
+        platform: "linkedin",
+        aborted: true,
+        mediaAttached,
+        attachments: attachmentsFor(imagePaths),
+      } satisfies AbortedPublishResult;
+    }
 
     // PUB-0031: the «Post» button is inside the interop-outlet shadow root too,
     // so a Playwright pointer-click is intercepted — click it via shadow-walk
