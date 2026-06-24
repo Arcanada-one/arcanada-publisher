@@ -9,6 +9,38 @@ Every social post (Facebook, LinkedIn, X/Twitter, VKontakte, Reddit — everythi
 
 The canonical TG post lives in `@valentovtypes` (`Valentov Types Letters`, public channel, ID `-1003819390976`). URL pattern: `https://t.me/valentovtypes/<msg_id>`.
 
+## TG post structure (canonical two-message shape)
+
+A Telegram channel post for a blog article is **two messages**, modelled on the
+reference post (article A6, `@valentovtypes` msg 166/167). Reproduce this shape
+exactly — do not improvise from memory. Before publishing, `forwardMessage` the
+previous cycle post into the test channel and copy its structure.
+
+**Message 1 — video + caption teaser:**
+- Animated-cover video (`dev-tools/video/make-cycle-video.sh`, length = the
+  article narration, channel-language voice).
+- Caption (≤1024 UTF-16 units): the **article title** + ~3 SHORT summary
+  paragraphs + a closing line of the form "Narration is in this video; full text
+  below 👇". This is a teaser, not the full body.
+
+**Message 2 — long-read text (article retold inside Telegram):**
+- A self-contained retelling of the article (~2000 chars) so the reader does not
+  have to leave the channel — 4 sense-blocks, each opening with a micro-heading
+  (the first phrase of the paragraph acts as a mini-title).
+- It is a **retelling**, neither a verbatim copy of the article nor a short teaser.
+- Ends with the article link **as an embedded hyperlink at the very end** — a
+  Telegram `text_link` entity (send with `parse_mode=HTML` and
+  `<a href="https://arcanada.ai/<lang>/blog/<slug>">…</a>`): the visible anchor
+  phrase reads "Read the full article on arcanada.ai" and the URL is hidden
+  behind it, resolving to the channel-language article (RU channel → `/ru/blog/...`).
+  NOT a bare text line, NOT a visible URL in the body.
+
+**TG link placement — exception to the first-comment rule.** The "links go in the
+first comment" convention (§ below) is for FB / LinkedIn / X. For a self-contained
+TG long-read post, the article link lives **at the end of Message 2**, NOT in a
+separate first comment. The TG post is itself the canonical full version, so its
+own link does not need a comment.
+
 ## Why
 
 - Telegram channel is the only platform where the post is published **in full** — no 3000-utf16 truncation (LinkedIn), no platform-specific compression. Hero + body parts + finale + reply-thread.

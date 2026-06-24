@@ -77,15 +77,21 @@ describe("linkedin R1 — multi-image collection + per-element validation", () =
   });
 });
 
-/** Minimal fake page sufficient for the dry-run short-circuit (startPost visible). */
+/** Minimal fake page sufficient for the dry-run short-circuit (startPost visible).
+ *  PUB-0031: the publish flow now probes the composer trigger by CSS first
+ *  (`page.locator(...)`) before falling back to `getByRole`, so the fake page
+ *  must expose `locator` too. Both resolve to a locator that reports visible. */
 function fakeStartablePage(): never {
   const visibleLocator = {
     first: () => visibleLocator,
     waitFor: async () => {},
+    isVisible: async () => true,
+    count: async () => 1,
   };
   return {
     goto: async () => {},
     getByRole: () => visibleLocator,
+    locator: () => visibleLocator,
     isClosed: () => false,
   } as unknown as never;
 }

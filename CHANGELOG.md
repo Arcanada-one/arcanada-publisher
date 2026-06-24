@@ -6,6 +6,7 @@ All notable changes to `arcanada-publisher` are documented here. The format foll
 
 ### Added
 
+- `docs/how-to/blog-audio-narration.md` — recipe for generating RU (Silero) + EN (Kokoro) blog narration. Documents the mandatory **normalize-don't-strip** rule for RU text (numbers->words via `num2words`, Latin->Cyrillic transliteration, stress markers with `+` before the stressed vowel), the md5 method for verifying a stress marker without listening, the fragile sidecar-tunnel workflow (sequential RU/EN, resumable, keepalive), `MAX_CHUNK_CHARS=600`, and the **mandatory Cloudflare cache purge** after overwriting an R2 audio asset. Mirrored as a rule in `skills/publishing/SKILL.md` § Blog audio narration.
 - `@arcanada/publisher-video` 0.1.0-pre.0 — new `packages/video-generator`
   package. Turns a cover image + optional audio into a polished MP4 for social
   posts using only ffmpeg built-in filters (no plugins). Provides ≥3 presets
@@ -32,6 +33,22 @@ All notable changes to `arcanada-publisher` are documented here. The format foll
 
 ### Fixed
 
+- **PUB-0031** — LinkedIn video publish is now fail-closed. The composer-side
+  attach check counted `<video>` elements page-wide, so a stray feed/profile
+  video produced a false positive and the post published text-only while
+  reporting success. Video detection is now scoped to the composer / media-editor
+  subtree (`scopedVideoCountJs`, shadow-aware), and a mandatory post-publish
+  re-verify (`__verifyPostVideo`, default re-fetches the live post page and polls
+  for a `<video>` player) throws `VERIFY_FAILED` instead of returning ok when the
+  attach silently dropped. The page-walk helpers were extracted to
+  `src/dom-shadow.ts` (shared with delete/comment).
+- **PUB-0032** — LinkedIn delete + comment selector drift on the 2026 UI. The
+  post control-menu, delete menu-item, confirm button, and comment composer now
+  match multi-locale labels (added DE/FI alongside RU/EN) and fall back to a
+  shadow-walk DOM `.click()` (delete) or a structural CSS hook (comment composer)
+  when the localized accessible-name locator misses. The delete read-before-delete
+  oracle falls back to a body-wide read guarded by a structural activity-URN probe
+  when the article container class drifts.
 - **INFRA-0259** — LinkedIn composer shadow-DOM image intercept closed
   structurally in `@arcanada/publisher-linkedin` by bypassing the «Add a
   photo» button click and calling `setInputFiles` on the hidden

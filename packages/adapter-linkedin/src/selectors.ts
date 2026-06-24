@@ -6,32 +6,85 @@
 // directly; setInputFiles on the hidden input[type=file] elides the shadow-DOM
 // intercept that broke the legacy click path.
 
+// PUB-0031: prefer language-agnostic HTML/CSS hooks over localized text.
+// LinkedIn ships its UI in the account's display language (we have seen RU, EN,
+// and Finnish), so matching on visible button TEXT is fragile. The stable hooks
+// below are class/attribute selectors that do not change with locale; the text
+// regexes are kept only as a last-resort fallback and now include Finnish.
+export const cssSelectors = {
+  // Feed "Start a post" trigger — stable component class, locale-independent.
+  startPostButton:
+    "button.share-box-feed-entry__trigger, .share-box-feed-entry__top-bar button, button.artdeco-button[class*='share-box']",
+  // Composer dialog — share-creation modal.
+  composerDialog: "div[role='dialog'] .share-creation-state, div.share-box, div[data-test-modal]",
+  // Quill rich-text editor inside the composer.
+  editor: "div.ql-editor[contenteditable='true'], div[role='textbox'][contenteditable='true']",
+  // Primary publish action — stable component class.
+  postButton: "button.share-actions__primary-action, button[class*='share-actions__primary']",
+  // Hidden native file input(s) for media (image + video share the same input).
+  fileInput: "input[type='file']",
+  // PUB-0032: comment composer — structural fallback when the localized
+  // accessible-name match misses (e.g. DE «Kommentar hinzufügen»). LinkedIn
+  // renders the comment box as a Quill contenteditable inside a comments box
+  // wrapper; these class/attribute hooks are locale-independent.
+  commentEditor:
+    "div.comments-comment-box__form .ql-editor[contenteditable='true'], div[class*='comments-comment-box'] div[role='textbox'][contenteditable='true'], div.ql-editor[contenteditable='true'][data-placeholder]",
+} as const;
+
 export const selectors = {
-  startPostButton: /^(Начать публикацию|Создать публикацию|Start a post|Create a post)/,
-  composerDialog: /^(Создать пост|Создать публикацию|Create a post|Create post)/,
+  // Finnish added (Aloita julkaisu / Luo julkaisu) alongside RU/EN. These are
+  // FALLBACK only — cssSelectors above are tried first (see publish.ts/login.ts).
+  startPostButton:
+    /^(Начать публикацию|Создать публикацию|Start a post|Create a post|Aloita julkaisu|Luo julkaisu)/,
+  composerDialog: /^(Создать пост|Создать публикацию|Create a post|Create post|Luo julkaisu|Luo postaus)/,
   editor:
-    /^(Текстовое поле для написания контента|Редактор для создания текста|Text editor for creating content|What do you want to talk about\?|О чём вы хотите рассказать\?)/,
-  postButton: /^(Опубликовать|Post)$/,
-  doneButton: /^(Готово|Done|Далее|Next)$/,
-  saveButton: /^(Сохранить|Save)$/,
+    /^(Текстовое поле для написания контента|Редактор для создания текста|Text editor for creating content|What do you want to talk about\?|О чём вы хотите рассказать\?|Mistä haluat puhua\?)/,
+  postButton: /^(Опубликовать|Post|Julkaise)$/,
+  doneButton: /^(Готово|Done|Далее|Next|Valmis|Seuraava)$/,
+  saveButton: /^(Сохранить|Save|Tallenna)$/,
+  // PUB-0032: widened with the German label «Kommentar hinzufügen» (the live
+  // 2026 composer on a DE-locale account did not match the prior set → comment
+  // composer timed out). Finnish «Lisää kommentti» added alongside.
   commentBox:
-    /^(Добавить комментарий|Написать комментарий|Add a comment|Write a comment|Текстовое поле комментария|Comment text field)/,
-  editPostActionRu: /^(Открыть меню|Действия|Параметры)/,
-  editPostActionEn: /^(Open control menu|Open options menu|More)/,
-  editPostMenuItem: /^(Редактировать публикацию|Редактировать пост|Edit post)$/,
+    /^(Добавить комментарий|Написать комментарий|Add a comment|Write a comment|Kommentar hinzufügen|Kommentar schreiben|Lisää kommentti|Текстовое поле комментария|Comment text field)/,
+  editPostActionRu: /^(Открыть меню|Действия|Параметры|Открыть панель управления|Дополнительно)/,
+  // PUB-0032: the post control-menu («...») drifted/localized. Added DE «Mehr
+  // Aktionen / Steuerungsmenü öffnen» and FI «Lisää toimintoja» so the delete +
+  // comment flows find the kebab regardless of UI language.
+  editPostActionEn:
+    /^(Open control menu|Open options menu|More actions|More|Mehr Aktionen|Steuerungsmenü öffnen|Lisää toimintoja)/,
+  editPostMenuItem: /^(Редактировать публикацию|Редактировать пост|Edit post|Beitrag bearbeiten)$/,
   // R10: LinkedIn tolerates in-place comment edit (unlike Facebook). The kebab
   // on a comment carries a per-author aria-label; `Edit` opens the inline editor
   // and `Save changes` (not `Save`) commits it.
   commentOptionsMenu: /(View more options for|Открыть дополнительные действия|Ещё действия)/,
   commentEditMenuItem: /^(Изменить|Редактировать|Edit)$/,
   commentSaveChanges: /^(Сохранить изменения|Save changes)$/,
-  deleteMenuItem: /^(Удалить публикацию|Удалить пост|Удалить|Delete post|Delete)$/,
-  confirmDelete: /^(Удалить|Delete)$/,
+  // PUB-0032: DE «Beitrag löschen / Löschen» + FI «Poista» added.
+  deleteMenuItem:
+    /^(Удалить публикацию|Удалить пост|Удалить|Delete post|Delete|Beitrag löschen|Löschen|Poista julkaisu|Poista)$/,
+  confirmDelete: /^(Удалить|Delete|Löschen|Poista)$/,
   loginEmail: /^(Email or phone|Эл\.? адрес или номер телефона)$/,
   captchaIndicator:
     /(captcha|verifications|подтвердите, что вы человек|verify you are human|security check|проверка безопасности)/i,
   rateLimitIndicator:
     /(временно (?:заблокирован|приостановлен)|temporarily (?:restricted|blocked)|too many requests)/i,
+} as const;
+
+// PUB-0032: JS-regex-literal SOURCE strings for the shadow-walk DOM-click path
+// (src/dom-shadow.ts → shadowClickButtonJs). The post control-menu, the Delete
+// menu-item, and the Delete confirm button can sit behind the interop-outlet
+// shadow root, where a Playwright pointer-click is intercepted — the same reason
+// publish.ts clicks via the shadow walker. These mirror the `selectors` regexes
+// above but as literal sources embeddable in a `page.evaluate(...)` string. Keep
+// the alternations in sync with `selectors.editPostAction*` / `deleteMenuItem` /
+// `confirmDelete`.
+export const shadowClickPatterns = {
+  postControlMenu:
+    "/(Open control menu|Open options menu|More actions|More|Mehr Aktionen|Steuerungsmenü öffnen|Lisää toimintoja|Открыть меню|Действия|Параметры|Открыть панель управления|Дополнительно)/i",
+  deleteMenuItem:
+    "/^(Delete post|Delete|Beitrag löschen|Löschen|Poista julkaisu|Poista|Удалить публикацию|Удалить пост|Удалить)$/i",
+  confirmDelete: "/^(Delete|Löschen|Poista|Удалить)$/i",
 } as const;
 
 export type SelectorKey = keyof typeof selectors;

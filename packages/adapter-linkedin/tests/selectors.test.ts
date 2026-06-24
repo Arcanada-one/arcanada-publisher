@@ -1,5 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { selectors, matchesExact, isCaptchaBlob } from "../src/selectors.js";
+import {
+  selectors,
+  matchesExact,
+  isCaptchaBlob,
+  shadowClickPatterns,
+} from "../src/selectors.js";
+
+/** Compile a JS-regex-literal source string (e.g. "/^x$/i") to a RegExp. */
+function compileSource(src: string): RegExp {
+  const m = /^\/(.*)\/([a-z]*)$/s.exec(src);
+  if (!m) throw new Error(`not a regex literal source: ${src}`);
+  return new RegExp(m[1], m[2]);
+}
 
 describe("selectors — RU/EN composer & action regex", () => {
   it("startPostButton matches Russian + English labels", () => {
@@ -38,6 +50,48 @@ describe("selectors — RU/EN composer & action regex", () => {
     expect(selectors.commentBox.test("Добавить комментарий")).toBe(true);
     expect(selectors.commentBox.test("Add a comment")).toBe(true);
     expect(selectors.commentBox.test("Текстовое поле комментария")).toBe(true);
+  });
+
+  // PUB-0032: the live 2026 DE-locale comment composer is «Kommentar hinzufügen»
+  // — the prior set missed it and the first-comment never posted.
+  it("commentBox matches the German + Finnish comment labels (PUB-0032)", () => {
+    expect(selectors.commentBox.test("Kommentar hinzufügen")).toBe(true);
+    expect(selectors.commentBox.test("Kommentar schreiben")).toBe(true);
+    expect(selectors.commentBox.test("Lisää kommentti")).toBe(true);
+  });
+
+  it("post control-menu matches DE/FI labels via editPostAction* (PUB-0032)", () => {
+    expect(selectors.editPostActionEn.test("Mehr Aktionen")).toBe(true);
+    expect(selectors.editPostActionEn.test("Steuerungsmenü öffnen")).toBe(true);
+    expect(selectors.editPostActionEn.test("Lisää toimintoja")).toBe(true);
+    expect(selectors.editPostActionEn.test("More actions")).toBe(true);
+  });
+
+  it("deleteMenuItem + confirmDelete match DE/FI labels (PUB-0032)", () => {
+    expect(matchesExact("deleteMenuItem", "Beitrag löschen")).toBe(true);
+    expect(matchesExact("deleteMenuItem", "Löschen")).toBe(true);
+    expect(matchesExact("deleteMenuItem", "Poista")).toBe(true);
+    expect(matchesExact("confirmDelete", "Löschen")).toBe(true);
+    expect(matchesExact("confirmDelete", "Poista")).toBe(true);
+  });
+
+  // PUB-0032: shadow-walk DOM-click pattern SOURCES must stay in sync with the
+  // Playwright-locator regexes and cover the same multi-locale labels.
+  it("shadowClickPatterns cover multi-locale control-menu / delete / confirm", () => {
+    const ctl = compileSource(shadowClickPatterns.postControlMenu);
+    expect(ctl.test("Mehr Aktionen")).toBe(true);
+    expect(ctl.test("Open control menu")).toBe(true);
+    expect(ctl.test("Открыть меню")).toBe(true);
+
+    const del = compileSource(shadowClickPatterns.deleteMenuItem);
+    expect(del.test("Löschen")).toBe(true);
+    expect(del.test("Delete post")).toBe(true);
+    expect(del.test("Удалить")).toBe(true);
+    expect(del.test("Do not delete")).toBe(false);
+
+    const confirm = compileSource(shadowClickPatterns.confirmDelete);
+    expect(confirm.test("Löschen")).toBe(true);
+    expect(confirm.test("Delete")).toBe(true);
   });
 
   it("isCaptchaBlob detects RU/EN security-check signals", () => {

@@ -8,7 +8,7 @@ import {
   type LoginOptions,
 } from "@arcanada/publisher-core";
 import { launchSession } from "./context.js";
-import { selectors } from "./selectors.js";
+import { cssSelectors, selectors } from "./selectors.js";
 
 const LOGIN_POLL_INTERVAL_MS = 5_000;
 const LOGIN_POLL_ITERATIONS = 60;
@@ -38,11 +38,27 @@ export async function login(options: LoginOptions, ctx: LoginContext = {}): Prom
   const session = await launchSession({ profileDir, headed: true });
   try {
     await session.page.goto(LINKEDIN_HOME);
-    const startPost = session.page.getByRole("button", { name: selectors.startPostButton }).first();
+    // PUB-0031: language-agnostic "logged-in" detection. We DO NOT key off the
+    // localized button text (the UI can be in any display language — RU/EN/FI/…).
+    // Instead: we are logged in once the page settles on the feed (URL is NOT a
+    // /login or /checkpoint route) AND the composer trigger is present by its
+    // stable component CSS class. A localized-text match is kept only as a
+    // best-effort fallback.
+    const startPostCss = session.page.locator(cssSelectors.startPostButton).first();
+    const startPostText = session.page
+      .getByRole("button", { name: selectors.startPostButton })
+      .first();
     for (let i = 0; i < LOGIN_POLL_ITERATIONS; i++) {
       try {
-        if (await startPost.isVisible()) {
-          return;
+        const url = session.page.url();
+        const onAuthWall = /\/(login|checkpoint|uas\/login|authwall)/.test(url);
+        if (!onAuthWall) {
+          if (await startPostCss.isVisible().catch(() => false)) {
+            return;
+          }
+          if (await startPostText.isVisible().catch(() => false)) {
+            return;
+          }
         }
       } catch {
         // intermediate evaluation errors are non-fatal — page may still be loading

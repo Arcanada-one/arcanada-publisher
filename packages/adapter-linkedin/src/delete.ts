@@ -13,8 +13,9 @@ import {
   type DeleteInput,
   type DeleteResult,
 } from "@arcanada/publisher-core";
-import { selectors } from "./selectors.js";
+import { selectors, shadowClickPatterns } from "./selectors.js";
 import { launchSession, withScreenshotOnFail } from "./context.js";
+import { shadowClickButtonJs, shadowFindActivityUrnJs } from "./dom-shadow.js";
 
 const LINKEDIN_HOSTNAME = "www.linkedin.com";
 
@@ -89,27 +90,97 @@ async function runDeleteFlow(
 
 async function defaultReadContent(page: Page, input: DeleteInput): Promise<string> {
   await page.goto(input.targetUrl);
+  // PUB-0032: the post container selector `[data-urn*="urn:li:activity"],
+  // article` drifted on the 2026 UI (locator.waitFor timed out). Try the
+  // structural locator first; if it does not render, fall back to a body-wide
+  // innerText read so the read-before-delete oracle still has text to match
+  // (the oracle compares `expectedContent` against this — a superset is safe,
+  // a miss is not). A shadow-aware probe confirms the activity container exists
+  // before we commit to the body-wide read.
   const article = page.locator('[data-urn*="urn:li:activity"], article').first();
-  await article.waitFor({ state: "visible", timeout: 10_000 });
-  return (await article.innerText()) ?? "";
+  try {
+    await article.waitFor({ state: "visible", timeout: 10_000 });
+    return (await article.innerText()) ?? "";
+  } catch {
+    // Structural fallback: confirm the activity URN is present somewhere in the
+    // (possibly shadow-nested) DOM, then read the whole document body. This keeps
+    // the read-before-delete guard intact when the article wrapper class drifts.
+    const urn = (await page.evaluate(shadowFindActivityUrnJs())) as string;
+    if (!urn) {
+      throw new AdapterError(
+        ErrorCode.VERIFY_FAILED,
+        "delete: post container not found — cannot run read-before-delete oracle",
+        { targetUrl: input.targetUrl, liErrorType: "verify_mismatch" },
+      );
+    }
+    const body = page.locator("body").first();
+    await body.waitFor({ state: "visible", timeout: 5_000 });
+    return (await body.innerText()) ?? "";
+  }
 }
 
 async function defaultPerformDelete(page: Page, _input: DeleteInput): Promise<void> {
-  const control = page
-    .getByRole("button", { name: selectors.editPostActionRu })
-    .or(page.getByRole("button", { name: selectors.editPostActionEn }))
-    .first();
-  await control.waitFor({ state: "visible", timeout: 10_000 });
-  await control.click();
+  // PUB-0032: the «...» control-menu → Delete → confirm choreography drifted on
+  // the 2026 UI (the kebab aria-label localized and the menu may sit behind the
+  // interop-outlet shadow root, where a Playwright pointer-click is intercepted).
+  // Each step tries the role/aria locator first (fast, structural) and falls back
+  // to a shadow-walk DOM `.click()` with multi-locale text matching when the
+  // locator does not resolve.
+  await clickWithShadowFallback(
+    page,
+    page
+      .getByRole("button", { name: selectors.editPostActionRu })
+      .or(page.getByRole("button", { name: selectors.editPostActionEn }))
+      .first(),
+    shadowClickPatterns.postControlMenu,
+    "delete_control_menu",
+  );
 
-  const deleteItem = page.getByRole("menuitem", { name: selectors.deleteMenuItem }).first();
-  await deleteItem.waitFor({ state: "visible", timeout: 5_000 });
-  await deleteItem.click();
+  await clickWithShadowFallback(
+    page,
+    page.getByRole("menuitem", { name: selectors.deleteMenuItem }).first(),
+    shadowClickPatterns.deleteMenuItem,
+    "delete_menu_item",
+  );
 
-  const confirm = page.getByRole("button", { name: selectors.confirmDelete, exact: true });
-  await confirm.first().waitFor({ state: "visible", timeout: 5_000 });
-  await confirm.first().click();
+  await clickWithShadowFallback(
+    page,
+    page.getByRole("button", { name: selectors.confirmDelete, exact: true }).first(),
+    shadowClickPatterns.confirmDelete,
+    "delete_confirm",
+  );
   await page.waitForTimeout(3_000);
+}
+
+/**
+ * PUB-0032: click a control via its Playwright locator, falling back to a
+ * shadow-walk DOM `.click()` (multi-locale text match) when the locator does not
+ * become visible within a short window. Throws `composer_not_found`-class error
+ * if neither path lands the click, so the caller never silently no-ops.
+ */
+async function clickWithShadowFallback(
+  page: Page,
+  locator: ReturnType<Page["locator"]>,
+  shadowPatternSrc: string,
+  stage: string,
+): Promise<void> {
+  try {
+    await locator.waitFor({ state: "visible", timeout: 6_000 });
+    await locator.click();
+    return;
+  } catch {
+    // fall through to the shadow-walk DOM click
+  }
+  for (let i = 0; i < 20; i++) {
+    const clicked = (await page.evaluate(shadowClickButtonJs(shadowPatternSrc))) as boolean;
+    if (clicked) return;
+    await page.waitForTimeout(500);
+  }
+  throw new AdapterError(
+    ErrorCode.PUBLISH_BUTTON_ABSENT,
+    `delete: control not found at stage '${stage}' (locator + shadow-walk both failed)`,
+    { liErrorType: "composer_not_found", stage },
+  );
 }
 
 function assertTargetHost(targetUrl: string): void {

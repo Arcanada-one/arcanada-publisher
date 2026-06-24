@@ -30,6 +30,11 @@ playwright-report/
 test-results/
 trace.zip
 screenshot-*.png
+# Adapter screenshot-on-fail output (withScreenshotOnFail → packages/*/artifacts/)
+packages/*/artifacts/
+
+# Datarim local task state (snapshots / stage files) — not part of the package
+datarim/
 
 # Logs
 *.log

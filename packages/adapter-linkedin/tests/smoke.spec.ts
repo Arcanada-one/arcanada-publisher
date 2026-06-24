@@ -64,6 +64,60 @@ describe("smoke — live LinkedIn publish cycle (gated LI_LIVE_SMOKE=1)", () => 
     15 * 60 * 1000,
   );
 
+  it.skipIf(!LIVE)(
+    "S3: publish text+VIDEO → fail-closed video verify (PUB-0031)",
+    async () => {
+      // Requires PUB_SMOKE_VIDEO (absolute path to a ≤~35MB .mp4 placed on the
+      // OS clipboard as a POSIX-file before publish, per §6.4). On success the
+      // live post page MUST render a <video> player; the publish() oracle throws
+      // VERIFY_FAILED (fail-closed) if the attach silently dropped to text-only.
+      const videoPath = process.env["PUB_SMOKE_VIDEO"];
+      if (!videoPath) {
+        throw new Error("S3 requires PUB_SMOKE_VIDEO env (absolute path to a ≤~35MB .mp4)");
+      }
+      const adapter = new LinkedInAdapter();
+      const publishResult = await adapter.publish({
+        text: `${SMOKE_TEXT} [with video] (PUB-0031)`,
+        imagePath: videoPath,
+        profile: PROFILE,
+      });
+      expect(publishResult.ok).toBe(true);
+      expect(publishResult.postUrl).toMatch(ACTIVITY_URN_RE);
+      expect(publishResult.attachments).toEqual([{ kind: "video", src: videoPath }]);
+    },
+    20 * 60 * 1000,
+  );
+
+  it.skipIf(!LIVE)(
+    "S4: comment then delete a throwaway post (PUB-0032 selector drift)",
+    async () => {
+      // Publishes a disposable text post, posts a first-comment on it (exercises
+      // the drift-tolerant comment composer resolver), then deletes it
+      // (exercises the control-menu shadow-walk + multi-locale delete selectors).
+      const adapter = new LinkedInAdapter();
+      const text = `${SMOKE_TEXT} [throwaway for PUB-0032]`;
+      const publishResult = await adapter.publish({ text, profile: PROFILE });
+      expect(publishResult.ok).toBe(true);
+
+      const commentResult = await adapter.comment({
+        parentPostUrl: publishResult.postUrl,
+        text: "PUB-0032 selector-drift smoke comment",
+        profile: PROFILE,
+      });
+      expect(commentResult.ok).toBe(true);
+      expect(commentResult.commentId).toBeTruthy();
+
+      const deleteResult = await adapter.delete({
+        targetUrl: publishResult.postUrl,
+        kind: "post",
+        expectedContent: text,
+        profile: PROFILE,
+      });
+      expect(deleteResult.deleted).toBe(true);
+    },
+    15 * 60 * 1000,
+  );
+
   it("smoke gate is visible in Vitest output even when skipped", () => {
     if (!LIVE) {
       // eslint-disable-next-line no-console

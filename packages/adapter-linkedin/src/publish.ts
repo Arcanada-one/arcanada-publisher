@@ -26,12 +26,21 @@ import {
   type PublishInput,
   type PublishResult,
 } from "@arcanada/publisher-core";
-import { selectors } from "./selectors.js";
+import { cssSelectors, selectors } from "./selectors.js";
 import { launchSession, withScreenshotOnFail } from "./context.js";
 import { ACTIVITY_URN_RE, extractActivityUrn, pickFirstActivityHref } from "./url-extraction.js";
 import { classifyLiError, mapLiError } from "./errors.js";
+import { shadowClickButtonJs, scopedVideoCountJs, shadowCountJs } from "./dom-shadow.js";
 
-const IMAGE_EXT_ALLOWLIST = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
+// PUB-0031: .mp4 and .mov added so the generated cover+narration video attaches
+// via the same --image path on LinkedIn, mirroring the X adapter (PUB-0027).
+// LinkedIn's «Add media» control accepts both images and video through the same
+// file chooser; the difference is downstream — LinkedIn transcodes video and
+// generates a preview thumbnail, so the «Next/Done» affordance appears much later
+// than for a still image (see VIDEO_PROCESS_* below). Additive, guarded: existing
+// image behaviour is unchanged.
+const IMAGE_EXT_ALLOWLIST = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".mov"]);
+const VIDEO_EXT = new Set([".mp4", ".mov"]);
 const LINKEDIN_FEED = "https://www.linkedin.com/feed/";
 const RECENT_ACTIVITY = "https://www.linkedin.com/in/me/recent-activity/all/";
 const POST_BODY_LIMIT = 3000;
@@ -49,6 +58,16 @@ export function collectImagePaths(input: PublishInput): string[] {
   return [];
 }
 
+/** PUB-0031: a path is a video attachment iff its extension is .mp4 / .mov. */
+export function isVideoPath(path: string): boolean {
+  return VIDEO_EXT.has(extname(path).toLowerCase());
+}
+
+/** PUB-0031: attachment descriptor with the correct kind (video vs image). */
+function attachmentsFor(paths: string[]): { kind: "image" | "video"; src: string }[] {
+  return paths.map((src) => ({ kind: isVideoPath(src) ? "video" : "image", src }));
+}
+
 export interface PublishOptions {
   headed?: boolean;
   profileManager?: ProfileManager;
@@ -56,6 +75,14 @@ export interface PublishOptions {
   page?: Page;
   /** Skip browser teardown — used by callers that own the session. */
   skipTeardown?: boolean;
+  /**
+   * PUB-0031 test seam: assert that the just-published post at `postUrl` carries
+   * a real `<video>` player. Defaults to {@link defaultVerifyPostVideo}, which
+   * re-fetches the live post page and polls for a `<video>`, distinguishing
+   * "still transcoding" from "no video". Returning `false` makes `publish` throw
+   * `verify_mismatch` (fail-closed) rather than report a false success.
+   */
+  __verifyPostVideo?: (page: Page, postUrl: string) => Promise<boolean>;
 }
 
 export async function publish(
@@ -82,7 +109,7 @@ export async function publish(
       platform: "linkedin",
       account: "dry-run",
       postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:0/",
-      attachments: safeImagePaths.map((src) => ({ kind: "image" as const, src })),
+      attachments: attachmentsFor(safeImagePaths),
       commentIds: [],
     });
   }
@@ -91,7 +118,7 @@ export async function publish(
   const profileDir = profiles.ensureProfileExists("linkedin", input.profile);
 
   if (options.page) {
-    return runPublishFlow(options.page, input, safeImagePaths);
+    return runPublishFlow(options.page, input, safeImagePaths, options);
   }
 
   const session = await launchSession({
@@ -99,7 +126,7 @@ export async function publish(
     ...(options.headed !== undefined ? { headed: options.headed } : {}),
   });
   try {
-    return await runPublishFlow(session.page, input, safeImagePaths);
+    return await runPublishFlow(session.page, input, safeImagePaths, options);
   } finally {
     if (!options.skipTeardown) {
       await session.close();
@@ -111,17 +138,29 @@ async function runPublishFlow(
   page: Page,
   input: PublishInput,
   imagePaths: string[],
+  options: PublishOptions,
 ): Promise<PublishResult> {
   return withScreenshotOnFail(page, "publish", async () => {
     await page.goto(LINKEDIN_FEED);
 
-    const startPost = page.getByRole("button", { name: selectors.startPostButton }).first();
+    // PUB-0031: language-agnostic composer trigger. Try the stable component
+    // CSS class first (locale-independent), fall back to the localized button
+    // text only if the class hook drifts. Either locator landing means we are
+    // logged in and on the feed.
+    const startPostCss = page.locator(cssSelectors.startPostButton).first();
+    const startPostText = page.getByRole("button", { name: selectors.startPostButton }).first();
+    let startPost = startPostCss;
     try {
-      await startPost.waitFor({ state: "visible", timeout: 10_000 });
-    } catch (cause) {
-      const blob = await safeContent(page);
-      const klass = classifyLiError(blob);
-      throw mapLiError(klass === "unknown" ? "not_logged_in" : klass, { cause });
+      await startPostCss.waitFor({ state: "visible", timeout: 10_000 });
+    } catch {
+      try {
+        await startPostText.waitFor({ state: "visible", timeout: 10_000 });
+        startPost = startPostText;
+      } catch (cause) {
+        const blob = await safeContent(page);
+        const klass = classifyLiError(blob);
+        throw mapLiError(klass === "unknown" ? "not_logged_in" : klass, { cause });
+      }
     }
 
     if (input.dryRun) {
@@ -130,153 +169,234 @@ async function runPublishFlow(
         platform: "linkedin",
         account: "dry-run",
         postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:0/",
-        attachments: imagePaths.map((src) => ({ kind: "image" as const, src })),
+        attachments: attachmentsFor(imagePaths),
         commentIds: [],
       });
     }
 
-    await startPost.click();
-    const dialog = page
-      .getByRole("dialog")
-      .filter({ has: page.getByText(selectors.composerDialog) })
-      .first();
-    await dialog.waitFor({ state: "visible", timeout: 15_000 });
-
-    const editor = dialog.getByRole("textbox", { name: selectors.editor }).first();
-
-    // LinkedIn ordering: attach media FIRST, then fill text. Filling text first
-    // collapses the «Add media» affordance and the in-page file chooser never
-    // appears (operator rule, 2026-06-17). Text is inserted after the image
-    // cascade completes (see below).
-    if (imagePaths.length > 0) {
-      // R1 multi-image: the «Add media» native file chooser accepts a
-      // multi-selection, so the whole batch uploads in a single setFiles call —
-      // the «Add media → upload → Next» cascade runs once for all images.
-      //
-      // CONTENT-0051 fix: LinkedIn 2026 composer lives inside an open shadow
-      // root (<div id="interop-outlet">). The «Add media» button is the only
-      // image trigger now (aria-label="Add media", no «Add a photo» anymore).
-      // Clicking it opens a NATIVE OS file chooser, not an in-page
-      // input[type=file] — so setInputFiles on a dialog-scoped locator fails
-      // (the element doesn't exist before the click, and the click itself is
-      // pointer-event-intercepted from light DOM).
-      //
-      // Strategy: register a filechooser handler via Promise.all, click «Add
-      // media» via shadow-walking JS (DOM .click() from inside the shadow tree
-      // works), then setFiles on the chooser. After upload, click «Next» /
-      // «Done» — also via shadow walk because pointer events are intercepted.
-      // We pass the JS as a string to evaluate() to avoid pulling DOM lib types
-      // into the node-side TS compile target.
-      const clickAddMediaJs = `(function(){
-        function walk(root, visit) {
-          visit(root);
-          const els = root.querySelectorAll ? root.querySelectorAll('*') : [];
-          for (const el of els) if (el.shadowRoot) walk(el.shadowRoot, visit);
-        }
-        let hit = null;
-        walk(document, function(r){
-          if (hit) return;
-          const btns = r.querySelectorAll('button, [role=button]');
-          for (const b of btns) {
-            const lbl = (b.getAttribute('aria-label') || '').trim();
-            const txt = (b.innerText || '').trim();
-            const vis = b.offsetWidth + b.offsetHeight > 0;
-            if (!vis) continue;
-            if (/^(Add media|Добавить медиа)$/i.test(lbl) || /^(Add media|Добавить медиа)$/i.test(txt)) {
-              hit = b; return;
-            }
-          }
-        });
-        if (!hit) return { ok: false };
-        hit.click();
-        return { ok: true };
-      })()`;
-      const clickNextDoneJs = `(function(){
-        function walk(root, visit) {
-          visit(root);
-          const els = root.querySelectorAll ? root.querySelectorAll('*') : [];
-          for (const el of els) if (el.shadowRoot) walk(el.shadowRoot, visit);
-        }
-        let hit = null;
-        walk(document, function(r){
-          if (hit) return;
-          const btns = r.querySelectorAll('button, [role=button]');
-          for (const b of btns) {
-            const lbl = (b.getAttribute('aria-label') || '').trim();
-            const txt = (b.innerText || '').trim();
-            const vis = b.offsetWidth + b.offsetHeight > 0;
-            if (!vis || b.disabled) continue;
-            if (/^(Next|Далее|Done|Готово|Save|Сохранить)$/i.test(lbl) || /^(Next|Далее|Done|Готово|Save|Сохранить)$/i.test(txt)) {
-              hit = b; return;
-            }
-          }
-        });
-        if (!hit) return false;
-        hit.click();
-        return true;
-      })()`;
-
-      const [chooser, clickResult] = await Promise.all([
-        page.waitForEvent("filechooser", { timeout: 15_000 }),
-        page.evaluate(clickAddMediaJs) as Promise<{ ok: boolean }>,
-      ]);
-      if (!clickResult.ok) {
-        throw mapLiError("composer_not_found", {
-          extra: { stage: "add_media_button" },
-        });
-      }
-      // R1: hand the whole batch to the chooser (LinkedIn's media picker is
-      // multi-select); each image lands as a separate attachment.
-      await chooser.setFiles(imagePaths);
-      await page.waitForTimeout(3_500);
-      let done = false;
-      for (let i = 0; i < 40; i++) {
-        done = (await page.evaluate(clickNextDoneJs)) as boolean;
-        if (done) break;
-        await page.waitForTimeout(500);
-      }
-      if (!done) {
-        throw mapLiError("composer_not_found", {
-          extra: { stage: "image_done_button" },
-        });
-      }
-      await page.waitForTimeout(2_500);
+    // PUB-0031 (verified live 2026-06: mixed EN/DE composer): the feed share-box
+    // exposes dedicated «Video» / «Foto/Photo» entry buttons that open the media
+    // flow AND fire the native filechooser directly. The OLD flow clicked the
+    // generic «Start a post» trigger first and then looked for an «Add media»
+    // button INSIDE the composer — that button does not exist in the current
+    // composer, so the filechooser never fired (timeout). The reliable order is:
+    //   - media post: click the feed «Video»/«Foto» entry → filechooser → setFiles
+    //     (this opens the composer with the media already attached; the editor
+    //      and Post button are located AFTERWARDS).
+    //   - text-only post: click «Start a post» to open the composer, then type.
+    // So we only click `startPost` up front for the text-only case.
+    if (imagePaths.length === 0) {
+      await startPost.click();
     }
 
-    // Fill text AFTER media (operator rule, 2026-06-17): image-first ordering
-    // is mandatory on LinkedIn — see the comment above the image cascade.
+    // PUB-0031: open the composer first (text-only AND media posts), then attach
+    // media by CLIPBOARD PASTE — NOT a file chooser. The publisher policy
+    // (docs/explanation/social-links-and-comments-policy.md §6.4) is explicit:
+    // "Prefer pasting over the file-picker … the clipboard is the only reliable
+    // attach path and it requires media-before-text." The file-chooser /
+    // setInputFiles path is unreliable (host paths rejected, fires no event in
+    // the 2026 composer) and is therefore NOT used. The caller places the media
+    // file on the OS clipboard as a POSIX-file reference before invoking publish;
+    // we paste it into the open composer with Ctrl/Cmd+V, wait for the upload to
+    // settle, then type the text.
+    // INFRA-0259 / PUB-0031: the composer lives inside an open shadow root
+    // (<div id="interop-outlet">), so a Playwright pointer-click on buttons
+    // inside it is intercepted ("interop-outlet intercepts pointer events").
+    // The reliable click is a DOM `.click()` issued from INSIDE the shadow tree
+    // via evaluate(); `shadowClickButtonJs` (src/dom-shadow.ts — shared with the
+    // delete/comment flows per PUB-0032) walks shadow roots and matches a control
+    // by accessible name / text (locale-tolerant). Used for «Add media», «Next/
+    // Done», and the final «Post» — NOT for media attach (media is pasted from
+    // the clipboard, never a file chooser, per §6.4). Returns false if no
+    // enabled match is found, so callers can poll.
+    const shadowClickJs = shadowClickButtonJs;
+    const ADD_MEDIA_RE =
+      "/^(Add media|Medien hinzufügen|Добавить медиа|Lisää mediaa|Video|Photo|Foto|Bild)$/i";
+    const NEXT_DONE_RE = "/^(Next|Done|Weiter|Fertig|Далее|Готово|Seuraava|Valmis)$/i";
+    const POST_RE = "/^(Post|Posten|Veröffentlichen|Опубликовать|Julkaise|Teilen)$/i";
+
+    await startPost.click();
+
+    // Locate the Quill editor in the open composer. CSS hook first
+    // (locale-independent), localized textbox name as fallback.
+    const editorCss = page.locator(cssSelectors.editor).first();
+    const editor =
+      (await editorCss.count()) > 0
+        ? editorCss
+        : page.getByRole("textbox", { name: selectors.editor }).first();
+    await editor.waitFor({ state: "visible", timeout: 15_000 });
+
+    // Media FIRST via clipboard paste (operator rule §6.4: media-before-text).
+    //
+    // PUB-0031 (verified live 2026-06): a Cmd/Ctrl+V into the Quill `.ql-editor`
+    // pastes the clipboard as TEXT, not media — the video never attaches and the
+    // Post button stays disabled. The working sequence is:
+    //   1. click «Add media» → opens the media sub-modal ("Select files to begin
+    //      / Share images or a single video"),
+    //   2. Cmd/Ctrl+V there → LinkedIn ingests the clipboard POSIX-file as media
+    //      (a <video> preview appears and transcoding begins),
+    //   3. click «Next/Done» to return to the composer with the media attached,
+    //   4. type the text.
+    // We use the clipboard, never a file chooser (§6.4). The «Add media» click
+    // does spawn a native file dialog too, but we ignore it and paste instead.
+    if (imagePaths.length > 0) {
+      const hasVideo = imagePaths.some(isVideoPath);
+
+      // 1. Open the media sub-modal via «Add media» (shadow-walk DOM click).
+      let opened = false;
+      for (let i = 0; i < 30; i++) {
+        opened = (await page.evaluate(shadowClickJs(ADD_MEDIA_RE))) as boolean;
+        if (opened) break;
+        await page.waitForTimeout(500);
+      }
+      if (!opened) {
+        throw mapLiError("composer_not_found", { extra: { stage: "add_media_button" } });
+      }
+      await page.waitForTimeout(2_000);
+
+      // 2. Paste the clipboard media into the media sub-modal. ControlOrMeta is
+      //    platform-neutral (Cmd on macOS, Ctrl elsewhere).
+      await page.keyboard.press("ControlOrMeta+v");
+      // Wait for ingest: a <video> (or <img> for a still) preview appears. Video
+      // transcodes server-side, much longer than an image — bounded poll.
+      await page.waitForTimeout(hasVideo ? 6_000 : 3_000);
+      // PUB-0031 fail-closed video detection: the OLD detector matched `video`
+      // ANYWHERE on the page (`page.locator("video, ...")`), so a stray feed/
+      // profile <video> produced a FALSE positive — the post then published
+      // text-only on a non-existent attachment. We now count ONLY <video>
+      // elements that descend from a composer / media-editor scope via
+      // `scopedVideoCountJs` (shadow-aware). For images we keep the page-level
+      // blob/preview hooks (still images do not false-positive the same way and
+      // there is no scoped image equivalent in the 2026 composer).
+      let attached = false;
+      const maxPolls = hasVideo ? 360 : 40; // video ≤180s, image ≤20s
+      const imagePreviewSel =
+        "img[src^='blob:'], img[src*='media'], [data-test-media-preview], .share-images";
+      for (let i = 0; i < maxPolls; i++) {
+        if (hasVideo) {
+          const n = (await page.evaluate(scopedVideoCountJs())) as number;
+          if (n > 0) {
+            attached = true;
+            break;
+          }
+        } else if ((await page.locator(imagePreviewSel).count()) > 0) {
+          attached = true;
+          break;
+        }
+        await page.waitForTimeout(500);
+      }
+      if (!attached) {
+        throw mapLiError("composer_not_found", {
+          extra: { stage: hasVideo ? "video_paste_no_preview" : "image_paste_no_preview" },
+        });
+      }
+
+      // 3. Return to the composer: click «Next»/«Done» via shadow-walk DOM click
+      //    (multi-locale). For a video the button is disabled until transcoding
+      //    settles; shadowClickJs skips disabled buttons, so we just poll.
+      let advanced = false;
+      for (let i = 0; i < (hasVideo ? 360 : 40); i++) {
+        advanced = (await page.evaluate(shadowClickJs(NEXT_DONE_RE))) as boolean;
+        if (advanced) break;
+        await page.waitForTimeout(500);
+      }
+      // Some image flows drop straight back to the composer with no Next button —
+      // that is fine; only fail for video, where the step is mandatory.
+      if (!advanced && hasVideo) {
+        throw mapLiError("composer_not_found", { extra: { stage: "video_next_button" } });
+      }
+      await page.waitForTimeout(hasVideo ? 4_000 : 2_500);
+    }
+
+    // Fill text AFTER media (operator rule §6.4: media-before-text).
     await editor.click();
     await page.keyboard.insertText(input.text);
 
-    const postBtn = page.getByRole("button", { name: selectors.postButton, exact: true });
-    if ((await postBtn.count()) === 0) {
-      throw mapLiError("composer_not_found");
-    }
-    if (await postBtn.first().isDisabled()) {
-      throw mapLiError("publish_button_disabled");
-    }
+    // PUB-0031: the «Post» button is inside the interop-outlet shadow root too,
+    // so a Playwright pointer-click is intercepted — click it via shadow-walk
+    // DOM click (shadowClickJs skips disabled buttons, so a disabled Post simply
+    // yields false and we keep polling). For a video the button stays disabled
+    // until LinkedIn finishes finalising the upload, so poll a generous window.
     // R7: the share-creation API call is the publish confirmation; the DOM toast
-    // caches and lies. We race the click against the network response and fall
-    // back to a timed settle if the API path drifts (best-effort confirmation).
+    // caches and lies. We race the (polled) click against the network response.
+    const publishingVideo = imagePaths.some(isVideoPath);
+    const postMaxPolls = publishingVideo ? 120 : 20; // ~60s / ~10s @ 500ms
+    let posted = false;
+    const clickPost = async (): Promise<void> => {
+      for (let i = 0; i < postMaxPolls; i++) {
+        posted = (await page.evaluate(shadowClickJs(POST_RE))) as boolean;
+        if (posted) return;
+        await page.waitForTimeout(500);
+      }
+    };
     await Promise.all([
       page
-        .waitForResponse((r) => r.url().includes(LINKEDIN_SHARE_API), { timeout: 15_000 })
+        .waitForResponse((r) => r.url().includes(LINKEDIN_SHARE_API), {
+          timeout: publishingVideo ? 30_000 : 15_000,
+        })
         .catch(() => null),
-      postBtn.first().click(),
+      clickPost(),
     ]);
-    await page.waitForTimeout(6_000);
+    if (!posted) {
+      throw mapLiError("publish_button_disabled");
+    }
+    await page.waitForTimeout(publishingVideo ? 9_000 : 6_000);
 
     const postUrl = await extractPublishedUrl(page);
+
+    // PUB-0031 fail-closed post-publish re-verify: when we attached a video, the
+    // composer-side check (scopedVideoCountJs above) can still be fooled if the
+    // upload silently dropped between «Next» and «Post». The authoritative oracle
+    // is the LIVE post page — re-fetch it and assert it renders a <video> player.
+    // LinkedIn transcodes asynchronously and lazy-renders the player, so the
+    // verifier polls a bounded window and only throws when the post genuinely
+    // carries no video (distinguishing «no video» from «still transcoding» by
+    // exhausting the bounded retry). Reported success now implies a verified
+    // video — never a text-only post on a "video" publish (§6.2/§6.3).
+    if (imagePaths.some(isVideoPath)) {
+      const verify = options.__verifyPostVideo ?? defaultVerifyPostVideo;
+      const hasVideo = await verify(page, postUrl);
+      if (!hasVideo) {
+        throw mapLiError("verify_mismatch", {
+          message: "published post does not render a <video> player (video attach silently dropped)",
+          extra: { postUrl, stage: "post_publish_video_reverify" },
+        });
+      }
+    }
 
     return PublishResultSchema.parse({
       ok: true,
       platform: "linkedin",
       account: extractAccountFromActivityUrl(postUrl),
       postUrl,
-      attachments: imagePaths.map((src) => ({ kind: "image" as const, src })),
+      attachments: attachmentsFor(imagePaths),
       commentIds: [],
     });
   });
+}
+
+/**
+ * PUB-0031 default post-publish video oracle: re-fetch the live post page and
+ * poll for a `<video>` player inside the post (shadow-aware). Returns true as
+ * soon as one appears; false after a bounded wait (≈90s, generous enough to
+ * cover LinkedIn's async transcode + lazy player render). Distinguishes "still
+ * transcoding" (keeps polling) from "no video" (poll exhausts → false → caller
+ * fails closed). Injectable via `PublishOptions.__verifyPostVideo` for tests.
+ */
+async function defaultVerifyPostVideo(page: Page, postUrl: string): Promise<boolean> {
+  await page.goto(postUrl, { waitUntil: "domcontentloaded" });
+  // The player container hooks LinkedIn uses for native video. We count <video>
+  // anywhere in the post page here (NOT scoped to a composer) because on the live
+  // post page the only <video> is the post's own player — there is no composer.
+  // A bare `video` plus the known player wrappers covers lazy-render variants.
+  const POST_VIDEO_SEL =
+    "video, [data-test-native-video], .video-js, [class*='video-player'], [data-vjs-player]";
+  for (let i = 0; i < 180; i++) {
+    const n = (await page.evaluate(shadowCountJs(POST_VIDEO_SEL))) as number;
+    if (n > 0) return true;
+    await page.waitForTimeout(500);
+  }
+  return false;
 }
 
 /**

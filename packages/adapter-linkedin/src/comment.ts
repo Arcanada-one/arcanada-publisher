@@ -20,7 +20,7 @@ import {
   type CommentResult,
 } from "@arcanada/publisher-core";
 import { launchSession, withScreenshotOnFail } from "./context.js";
-import { selectors } from "./selectors.js";
+import { cssSelectors, selectors } from "./selectors.js";
 import { ACTIVITY_URN_RE, extractActivityId } from "./url-extraction.js";
 
 const LINKEDIN_HOSTNAME = "www.linkedin.com";
@@ -76,8 +76,7 @@ export async function comment(
 async function runCommentFlow(page: Page, input: CommentInput): Promise<CommentResult> {
   return withScreenshotOnFail(page, "comment", async () => {
     await page.goto(input.parentPostUrl);
-    const editor = page.getByRole("textbox", { name: selectors.commentBox }).first();
-    await editor.waitFor({ state: "visible", timeout: 10_000 });
+    const editor = await resolveCommentEditor(page);
     await editor.click();
     await page.keyboard.insertText(input.text);
     // Ctrl+Enter is LinkedIn's canonical submit shortcut — bypasses the
@@ -114,6 +113,27 @@ async function runCommentFlow(page: Page, input: CommentInput): Promise<CommentR
       parentPostUrl: input.parentPostUrl,
     });
   });
+}
+
+/**
+ * PUB-0032: resolve the comment composer textbox tolerant to UI drift. The 2026
+ * LinkedIn UI localizes the accessible name (e.g. DE «Kommentar hinzufügen»),
+ * which the prior `getByRole("textbox", { name: commentBox })` did not match →
+ * the composer timed out and the first-comment never posted. We try the
+ * (now-widened, multi-locale) accessible-name locator first, then fall back to a
+ * locale-independent structural CSS hook (`cssSelectors.commentEditor`). Throws
+ * if neither resolves so the caller never silently types into nothing.
+ */
+async function resolveCommentEditor(page: Page): Promise<ReturnType<Page["locator"]>> {
+  const byName = page.getByRole("textbox", { name: selectors.commentBox }).first();
+  try {
+    await byName.waitFor({ state: "visible", timeout: 8_000 });
+    return byName;
+  } catch {
+    const byCss = page.locator(cssSelectors.commentEditor).first();
+    await byCss.waitFor({ state: "visible", timeout: 8_000 });
+    return byCss;
+  }
 }
 
 function assertParentActivityUrl(parentPostUrl: string): void {
@@ -263,7 +283,8 @@ const defaultEditCommentSteps: EditCommentRecorder = {
   },
 
   async replaceText(page: Page, text: string): Promise<void> {
-    const editor = page.getByRole("textbox", { name: selectors.commentBox }).first();
+    // PUB-0032: same drift-tolerant resolver as the publish-comment flow.
+    const editor = await resolveCommentEditor(page);
     await editor.click();
     await page.keyboard.press("Control+A");
     await page.keyboard.press("Delete");

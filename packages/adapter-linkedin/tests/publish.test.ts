@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AdapterError, ErrorCode, ProfileManager } from "@arcanada/publisher-core";
-import { publish } from "../src/publish.js";
+import { publish, isVideoPath } from "../src/publish.js";
 
 const FAKE_PROFILE = "vitest-fake-profile";
 
@@ -65,6 +65,24 @@ describe("publish — input validation (pre-Playwright)", () => {
     await expect(
       publish({ text: "ok", imagePath: bad, profile: FAKE_PROFILE }),
     ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
+  });
+
+  // PUB-0031: LinkedIn now accepts the generated cover+narration video via the
+  // same --image path (mirrors X / PUB-0027). .mp4 / .mov must pass validation
+  // and be reported as a `video` attachment; a still image stays `image`.
+  it("accepts a .mp4 video path and reports it as a video attachment", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pub-0031-mp4-"));
+    const vid = join(dir, "cover.mp4");
+    writeFileSync(vid, Buffer.from([0x00, 0x00, 0x00, 0x18])); // mp4-ish header
+    const res = await publish({ text: "ok", imagePath: vid, profile: FAKE_PROFILE, dryRun: true });
+    expect(res.attachments).toEqual([{ kind: "video", src: vid }]);
+  });
+
+  it("classifies extensions via isVideoPath", () => {
+    expect(isVideoPath("/x/cover.mp4")).toBe(true);
+    expect(isVideoPath("/x/cover.MOV")).toBe(true);
+    expect(isVideoPath("/x/cover.jpg")).toBe(false);
+    expect(isVideoPath("/x/cover.png")).toBe(false);
   });
 
   it("propagates NO_PROFILE when profile dir does not exist on disk", async () => {
