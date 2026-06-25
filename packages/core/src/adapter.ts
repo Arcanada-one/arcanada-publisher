@@ -15,6 +15,12 @@ export interface PublishInput {
   imagePaths?: string[];
   profile: string;
   dryRun?: boolean;
+  /**
+   * PUB-0033: opt-in X Premium long-form mode. When true, the X adapter gates
+   * the body on the 25 000 UTF-16-unit Premium ceiling instead of the free-tier
+   * 280 limit. Ignored by adapters without a tiered length limit.
+   */
+  premium?: boolean;
 }
 
 export interface CommentInput {

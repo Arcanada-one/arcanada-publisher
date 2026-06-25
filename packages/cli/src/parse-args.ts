@@ -41,6 +41,13 @@ export interface ParsedArgs {
   title: string | undefined;
   /** VK-specific: wall owner id (negative for communities). */
   ownerId: number | undefined;
+  /** X-specific (PUB-0033): opt-in Premium long-form mode (25 000-char limit). */
+  premium: boolean;
+  /**
+   * PUB-0033: run the browser headed (visible) instead of headless. Large video
+   * uploads settle far more reliably in a headed context; default stays headless.
+   */
+  headed: boolean;
   // ---- video subcommand flags (PUB-0027) ----
   /** `video` subcommand: cover image path. */
   cover: string | undefined;
@@ -89,7 +96,7 @@ const VALUE_FLAGS = new Set([
   "--max-bitrate",
 ]);
 
-const BOOL_FLAGS = new Set(["--dry-run", "--list-presets"]);
+const BOOL_FLAGS = new Set(["--dry-run", "--list-presets", "--premium", "--headed"]);
 
 export class CliParseError extends Error {}
 
@@ -117,6 +124,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     subreddit: undefined,
     title: undefined,
     ownerId: undefined,
+    premium: false,
+    headed: false,
     cover: undefined,
     audio: undefined,
     videoOut: undefined,
@@ -135,6 +144,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
     if (flag === "--list-presets") {
       out.listPresets = true;
+      continue;
+    }
+    if (flag === "--premium") {
+      out.premium = true;
+      continue;
+    }
+    if (flag === "--headed") {
+      out.headed = true;
       continue;
     }
     if (!VALUE_FLAGS.has(flag) && !BOOL_FLAGS.has(flag)) {

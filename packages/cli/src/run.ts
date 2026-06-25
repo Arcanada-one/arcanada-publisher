@@ -143,6 +143,7 @@ async function runPublish(
     imagePaths: args.images,
     profile,
     dryRun: args.dryRun,
+    ...(args.premium ? { premium: true } : {}),
     ...(args.subreddit !== undefined ? { subreddit: args.subreddit } : {}),
     ...(args.title !== undefined ? { title: args.title } : {}),
     ...(args.ownerId !== undefined ? { ownerId: args.ownerId } : {}),

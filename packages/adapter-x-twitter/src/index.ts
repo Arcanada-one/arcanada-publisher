@@ -67,7 +67,13 @@ export class XAdapter extends BaseAdapter {
   }
 }
 
-export { utf16Length, withinTweetLimit, X_MAX_UTF16_UNITS } from "./counter.js";
+export {
+  utf16Length,
+  withinTweetLimit,
+  tweetLimit,
+  X_MAX_UTF16_UNITS,
+  X_MAX_UTF16_UNITS_PREMIUM,
+} from "./counter.js";
 export { selectors, isRateLimited, RATE_LIMIT_INDICATOR } from "./selectors.js";
 export { collectImagePath } from "./publish.js";
 export type { PublishStepRecorder } from "./publish.js";

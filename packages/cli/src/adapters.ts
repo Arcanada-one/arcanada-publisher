@@ -17,7 +17,14 @@ export function makeAdapter(platform: Platform, args: ParsedArgs): Adapter {
     case "linkedin":
       return new LinkedInAdapter();
     case "x":
-      return new XAdapter();
+      // PUB-0033: --headed runs a visible browser so large video uploads settle
+      // reliably; default (no flag) keeps the headless behaviour.
+      return args.headed
+        ? new XAdapter({
+            publishOptions: { headed: true },
+            commentOptions: { headed: true },
+          })
+        : new XAdapter();
     case "reddit":
       return new RedditAdapter({ accessToken: requireToken("REDDIT_ACCESS_TOKEN", args) });
     case "vkontakte":

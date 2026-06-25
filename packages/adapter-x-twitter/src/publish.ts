@@ -1,6 +1,7 @@
 // X (Twitter) publish flow encoding the manual publish mechanics:
 // - R1 image-mandatory: a tweet without an image is a defect.
-// - 280 UTF-16 unit limit (counter.ts) — over-limit is rejected pre-flight.
+// - UTF-16 unit limit (counter.ts) — over-limit is rejected pre-flight.
+//   Default 280 (free tier); premium=true raises it to 25 000 (PUB-0033).
 // - R7 network confirm: the CreateTweet GraphQL 200 is the publish oracle.
 // - R12 rate-limit: a "temporarily limited" notice → graceful stop (no retry,
 //   no circumvention) mapped to ErrorCode.RATE_LIMIT.
@@ -17,7 +18,7 @@ import {
   type PublishInput,
   type PublishResult,
 } from "@arcanada/publisher-core";
-import { withinTweetLimit, utf16Length, X_MAX_UTF16_UNITS } from "./counter.js";
+import { withinTweetLimit, utf16Length, tweetLimit } from "./counter.js";
 import { selectors, isRateLimited } from "./selectors.js";
 import { validateImagePath } from "./image.js";
 import { launchSession, withScreenshotOnFail } from "./context.js";
@@ -58,12 +59,15 @@ export async function publish(
   if (!input?.text || input.text.trim() === "") {
     throw new AdapterError(ErrorCode.MISSING_INPUT, "publish: 'text' is required");
   }
-  // 280 UTF-16 unit pre-flight guard.
-  if (!withinTweetLimit(input.text)) {
+  // UTF-16 unit pre-flight guard. PUB-0033: premium=true raises the ceiling to
+  // the 25 000-unit X Premium long-form limit; default stays the free-tier 280.
+  const premium = input.premium === true;
+  const limit = tweetLimit(premium);
+  if (!withinTweetLimit(input.text, premium)) {
     throw new AdapterError(
       ErrorCode.INVALID_ARGS,
-      `publish: tweet exceeds ${X_MAX_UTF16_UNITS} UTF-16 units (got ${utf16Length(input.text)})`,
-      { length: utf16Length(input.text), limit: X_MAX_UTF16_UNITS },
+      `publish: tweet exceeds ${limit} UTF-16 units (got ${utf16Length(input.text)})`,
+      { length: utf16Length(input.text), limit },
     );
   }
   // R1: a tweet MUST carry an image (an image-less tweet is a publish defect).
@@ -158,7 +162,18 @@ const defaultSteps: PublishStepRecorder = {
   async uploadImage(page: Page, imagePath: string): Promise<void> {
     const fileInput = page.locator(selectors.fileInput).first();
     await fileInput.setInputFiles(imagePath);
-    await page.waitForTimeout(3_000);
+    // PUB-0033: a large video (tens of MB) takes longer to attach than the old
+    // fixed 3 s wait. Wait for the attachment preview to appear (the composer
+    // always keeps decorative progressbar rings, so we do NOT gate on those —
+    // gating on "progressbar hidden" never settles). A short settle then lets X
+    // begin server-side processing; the true readiness gate (post button
+    // enabled) is enforced in submitAndConfirm.
+    await page
+      .locator(selectors.attachedMedia)
+      .first()
+      .waitFor({ state: "visible", timeout: 120_000 })
+      .catch(() => {});
+    await page.waitForTimeout(2_000);
   },
 
   async typeTweet(page: Page, text: string): Promise<void> {
@@ -171,10 +186,22 @@ const defaultSteps: PublishStepRecorder = {
     const inline = page.locator(selectors.tweetButtonInline).first();
     const modal = page.locator(selectors.tweetButton).first();
     const button = (await inline.count()) > 0 ? inline : modal;
-    // R7: CreateTweet 200 is the confirmation — the DOM is unreliable.
+    // PUB-0033: the real readiness gate. After a large-video upload X keeps the
+    // post button disabled (aria-disabled="true") until server-side processing
+    // finishes; clicking a disabled button is a no-op that strands
+    // waitForResponse. Poll until the button is enabled before clicking, with a
+    // generous ceiling for video transcoding.
+    await page
+      .locator(`${selectors.tweetButtonInline}:not([aria-disabled="true"])`)
+      .or(page.locator(`${selectors.tweetButton}:not([aria-disabled="true"])`))
+      .first()
+      .waitFor({ state: "visible", timeout: 180_000 })
+      .catch(() => {});
+    // R7: CreateTweet 200 is the confirmation — the DOM is unreliable. The
+    // ceiling is generous so a large-video compose still confirms in one shot.
     const [response] = await Promise.all([
       page.waitForResponse((r) => r.url().includes(CREATE_TWEET_API) && r.status() === 200, {
-        timeout: 20_000,
+        timeout: 45_000,
       }),
       button.click(),
     ]);

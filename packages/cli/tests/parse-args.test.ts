@@ -10,6 +10,20 @@ describe("cli parse-args (V-AC-11 flag contract)", () => {
     expect(a.dryRun).toBe(true);
   });
 
+  it("PUB-0033: --premium defaults to false and flips to true when present", () => {
+    const off = parseArgs(["publish", "--platform", "x", "--text-file", "f"]);
+    expect(off.premium).toBe(false);
+    const on = parseArgs(["publish", "--platform", "x", "--text-file", "f", "--premium"]);
+    expect(on.premium).toBe(true);
+  });
+
+  it("PUB-0033: --headed defaults to false and flips to true when present", () => {
+    const off = parseArgs(["publish", "--platform", "x", "--text-file", "f"]);
+    expect(off.headed).toBe(false);
+    const on = parseArgs(["publish", "--platform", "x", "--text-file", "f", "--headed"]);
+    expect(on.headed).toBe(true);
+  });
+
   it("--image is repeatable and accumulates into images[]", () => {
     const a = parseArgs([
       "publish",

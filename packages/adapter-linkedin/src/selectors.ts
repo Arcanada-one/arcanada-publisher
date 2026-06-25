@@ -12,15 +12,25 @@
 // below are class/attribute selectors that do not change with locale; the text
 // regexes are kept only as a last-resort fallback and now include Finnish.
 export const cssSelectors = {
-  // Feed "Start a post" trigger — stable component class, locale-independent.
+  // PUB-0033: the 2026 LinkedIn feed obfuscates component class names, so the
+  // old `share-box-feed-entry__trigger` class no longer matches and the trigger
+  // is now a <div role-less> element, not a <button>. With the UI pinned to
+  // en-US (context.ts), the stable hook is the `aria-label="Start a post"`
+  // attribute. Keep the legacy class selectors as a fallback for older UIs.
   startPostButton:
-    "button.share-box-feed-entry__trigger, .share-box-feed-entry__top-bar button, button.artdeco-button[class*='share-box']",
-  // Composer dialog — share-creation modal.
-  composerDialog: "div[role='dialog'] .share-creation-state, div.share-box, div[data-test-modal]",
+    "[aria-label='Start a post'], button.share-box-feed-entry__trigger, .share-box-feed-entry__top-bar button, button.artdeco-button[class*='share-box']",
+  // Composer dialog — share-creation modal. data-test-modal is still stable in
+  // the 2026 UI.
+  composerDialog: "div[data-test-modal], div[role='dialog'] .share-creation-state, div.share-box",
   // Quill rich-text editor inside the composer.
   editor: "div.ql-editor[contenteditable='true'], div[role='textbox'][contenteditable='true']",
-  // Primary publish action — stable component class.
+  // Primary publish action — `share-actions__primary-action` is still present in
+  // the 2026 composer.
   postButton: "button.share-actions__primary-action, button[class*='share-actions__primary']",
+  // PUB-0033: the composer media affordance is now an aria-labelled «Add media»
+  // button (en-US pinned). Used to open the media picker / file input.
+  addMediaButton:
+    "div[data-test-modal] button[aria-label='Add media'], button[aria-label='Add media']",
   // Hidden native file input(s) for media (image + video share the same input).
   fileInput: "input[type='file']",
   // PUB-0032: comment composer — structural fallback when the localized
@@ -36,7 +46,8 @@ export const selectors = {
   // FALLBACK only — cssSelectors above are tried first (see publish.ts/login.ts).
   startPostButton:
     /^(Начать публикацию|Создать публикацию|Start a post|Create a post|Aloita julkaisu|Luo julkaisu)/,
-  composerDialog: /^(Создать пост|Создать публикацию|Create a post|Create post|Luo julkaisu|Luo postaus)/,
+  composerDialog:
+    /^(Создать пост|Создать публикацию|Create a post|Create post|Luo julkaisu|Luo postaus)/,
   editor:
     /^(Текстовое поле для написания контента|Редактор для создания текста|Text editor for creating content|What do you want to talk about\?|О чём вы хотите рассказать\?|Mistä haluat puhua\?)/,
   postButton: /^(Опубликовать|Post|Julkaise)$/,
@@ -65,8 +76,14 @@ export const selectors = {
     /^(Удалить публикацию|Удалить пост|Удалить|Delete post|Delete|Beitrag löschen|Löschen|Poista julkaisu|Poista)$/,
   confirmDelete: /^(Удалить|Delete|Löschen|Poista)$/,
   loginEmail: /^(Email or phone|Эл\.? адрес или номер телефона)$/,
+  // PUB-0033: the bare token `verifications` was a false-positive magnet — it
+  // appears in the ordinary logged-in feed (profile "Verifications" section,
+  // verified-account badges in the right-rail recommendations), so a full-page
+  // content read classified a healthy feed as a captcha and failed the publish
+  // closed. Only real challenge phrases gate now; the verified-badge string was
+  // never a genuine security-check indicator.
   captchaIndicator:
-    /(captcha|verifications|подтвердите, что вы человек|verify you are human|security check|проверка безопасности)/i,
+    /(captcha|подтвердите,? что вы человек|verify you are (?:a )?human|security check|проверка безопасности|перейдите по ссылке для проверки)/i,
   rateLimitIndicator:
     /(временно (?:заблокирован|приостановлен)|temporarily (?:restricted|blocked)|too many requests)/i,
 } as const;

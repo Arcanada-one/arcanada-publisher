@@ -85,15 +85,49 @@ async function runDeleteFlow(
   });
 }
 
-async function defaultReadContent(page: Page, input: DeleteInput): Promise<string> {
-  await page.goto(input.targetUrl);
-  const tweet = page.locator('[data-testid="tweetText"], article').first();
-  await tweet.waitFor({ state: "visible", timeout: 10_000 });
-  return (await tweet.innerText()) ?? "";
+/**
+ * PUB-0033: extract the numeric status id from an X status URL
+ * (https://x.com/<handle>/status/<id>) so the oracle can target the EXACT
+ * tweet, not whichever article renders first.
+ */
+export function statusIdFromUrl(targetUrl: string): string | null {
+  const m = /\/status\/(\d+)/.exec(targetUrl);
+  return m ? m[1] : null;
 }
 
-async function defaultPerformDelete(page: Page, _input: DeleteInput): Promise<void> {
-  const caret = page.locator(selectors.caret).first();
+/**
+ * PUB-0033: locate the article element for the target tweet on a permalink
+ * page. A reply permalink renders the PARENT post first, so `.first()` reads the
+ * wrong tweet — the read-before-delete oracle then mismatches (fail-closed) or,
+ * worse, the caret/Delete acts on the parent. Match the article that contains an
+ * anchor to the target status id; fall back to `.first()` only when the id is
+ * unknown (e.g. a non-status URL) so existing single-tweet behaviour is kept.
+ */
+export function locateTargetArticle(page: Page, input: DeleteInput) {
+  const id = statusIdFromUrl(input.targetUrl);
+  if (id) {
+    return page.locator(`article:has(a[href*="/status/${id}"])`).first();
+  }
+  return page.locator("article").first();
+}
+
+async function defaultReadContent(page: Page, input: DeleteInput): Promise<string> {
+  await page.goto(input.targetUrl);
+  const article = locateTargetArticle(page, input);
+  await article.waitFor({ state: "visible", timeout: 10_000 });
+  // Prefer the body text node; fall back to the whole article when absent.
+  const body = article.locator('[data-testid="tweetText"]').first();
+  if ((await body.count()) > 0) {
+    return (await body.innerText()) ?? "";
+  }
+  return (await article.innerText()) ?? "";
+}
+
+async function defaultPerformDelete(page: Page, input: DeleteInput): Promise<void> {
+  // PUB-0033: open the caret WITHIN the target article so a reply permalink
+  // does not act on the parent post's menu.
+  const article = locateTargetArticle(page, input);
+  const caret = article.locator(selectors.caret).first();
   await caret.waitFor({ state: "visible", timeout: 10_000 });
   await caret.click();
   const deleteItem = page.getByRole("menuitem", { name: /^(Delete|Удалить)$/ }).first();

@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AdapterError, ErrorCode, ProfileManager } from "@arcanada/publisher-core";
-import { del } from "../src/delete.js";
+import { del, statusIdFromUrl, locateTargetArticle } from "../src/delete.js";
 
 function makeProfiles(): ProfileManager {
   const root = mkdtempSync(join(tmpdir(), "pub-0017-x-del-"));
@@ -67,5 +67,49 @@ describe("x delete — read-before-delete (R13 / V-AC-9)", () => {
         { profileManager: makeProfiles(), page: { dummy: true } as never },
       ),
     ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
+  });
+});
+
+describe("PUB-0033 — target the EXACT tweet on a reply permalink (thread bug)", () => {
+  it("statusIdFromUrl extracts the numeric id", () => {
+    expect(statusIdFromUrl("https://x.com/VeritasArcanaAI/status/2070279076003057839")).toBe(
+      "2070279076003057839",
+    );
+    expect(statusIdFromUrl("https://x.com/foo/status/777?s=20")).toBe("777");
+    expect(statusIdFromUrl("https://x.com/home")).toBeNull();
+  });
+
+  it("locateTargetArticle scopes to the article anchoring the target status id", () => {
+    const calls: string[] = [];
+    const fakePage = {
+      locator(sel: string) {
+        calls.push(sel);
+        return { first: () => ({ __sel: sel }) };
+      },
+    } as never;
+    locateTargetArticle(fakePage, {
+      targetUrl: "https://x.com/VeritasArcanaAI/status/2070279076003057839",
+      kind: "comment",
+      expectedContent: "Full write-up",
+      profile: "p1",
+    });
+    expect(calls[0]).toBe('article:has(a[href*="/status/2070279076003057839"])');
+  });
+
+  it("locateTargetArticle falls back to plain article when the URL has no status id", () => {
+    const calls: string[] = [];
+    const fakePage = {
+      locator(sel: string) {
+        calls.push(sel);
+        return { first: () => ({ __sel: sel }) };
+      },
+    } as never;
+    locateTargetArticle(fakePage, {
+      targetUrl: "https://x.com/VeritasArcanaAI",
+      kind: "post",
+      expectedContent: "x",
+      profile: "p1",
+    });
+    expect(calls[0]).toBe("article");
   });
 });

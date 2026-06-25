@@ -43,6 +43,33 @@ describe("x publish — input guards (R1 image-mandatory + 280 limit)", () => {
     ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
   });
 
+  it("PUB-0033: a 1500-unit body is rejected WITHOUT premium (free-tier 280 guard)", async () => {
+    await expect(
+      publish({ text: "a".repeat(1500), imagePaths: [makeImage()], profile: FAKE_PROFILE }),
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
+  });
+
+  it("PUB-0033: premium=true lets a 1500-unit body through to publish", async () => {
+    const rec = passingRecorder();
+    const res = await publish(
+      { text: "a".repeat(1500), imagePaths: [makeImage()], profile: FAKE_PROFILE, premium: true },
+      { profileManager: makeProfiles(), page: { dummy: true } as never, __recorder: rec },
+    );
+    expect(res.ok).toBe(true);
+    expect(rec.submitAndConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("PUB-0033: premium=true still rejects a body over the 25 000 premium ceiling", async () => {
+    await expect(
+      publish({
+        text: "a".repeat(25_001),
+        imagePaths: [makeImage()],
+        profile: FAKE_PROFILE,
+        premium: true,
+      }),
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
+  });
+
   it("R1: rejects a tweet with NO image with MISSING_INPUT", async () => {
     await expect(
       publish({ text: "ok", profile: FAKE_PROFILE }, { profileManager: makeProfiles() }),

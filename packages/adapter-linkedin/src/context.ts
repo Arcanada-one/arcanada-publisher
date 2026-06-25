@@ -47,10 +47,17 @@ export function artifactFilename(stage: string, ext: "png" | "txt" = "png"): str
 
 /** Launch a persistent Chromium context for a given profile dir. */
 export async function launchSession(options: LaunchOptions): Promise<BrowserSession> {
+  // PUB-0033: force the LinkedIn UI to English. LinkedIn renders its chrome in
+  // the account/session display language (we have seen RU, EN, DE, FI), which
+  // forces every selector to carry a multi-locale text alternation and still
+  // drifts. Pinning locale + Accept-Language to en-US makes the UI deterministic
+  // so the composer/post selectors only need the English labels.
   const context = await chromium.launchPersistentContext(options.profileDir, {
     headless: !(options.headed ?? false),
     viewport: options.viewport ?? { width: 1280, height: 800 },
-    args: ["--disable-blink-features=AutomationControlled"],
+    locale: "en-US",
+    extraHTTPHeaders: { "Accept-Language": "en-US,en;q=0.9" },
+    args: ["--disable-blink-features=AutomationControlled", "--lang=en-US"],
   });
   const page = context.pages()[0] ?? (await context.newPage());
   return {

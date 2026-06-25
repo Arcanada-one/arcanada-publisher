@@ -9,6 +9,14 @@ export const selectors = {
   tweetButton: '[data-testid="tweetButton"]',
   /** Hidden image file input (accept image/jpeg…). */
   fileInput: '[data-testid="fileInput"]',
+  /**
+   * PUB-0033: media-upload progress indicator. X renders a progressbar while an
+   * attachment (image or — slowly — a video) uploads; it disappears once the
+   * media is fully attached and the post button re-enables.
+   */
+  mediaProgress: '[role="progressbar"], [data-testid="progressBar"]',
+  /** PUB-0033: attached-media preview (present once a video/image settles). */
+  attachedMedia: '[data-testid="attachments"], [data-testid="tweetPhoto"], video',
   /** Per-tweet caret → Delete menu. */
   caret: '[data-testid="caret"]',
   /** Logged-in signal: the compose button in the side nav. */

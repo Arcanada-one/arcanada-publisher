@@ -1,10 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  selectors,
-  matchesExact,
-  isCaptchaBlob,
-  shadowClickPatterns,
-} from "../src/selectors.js";
+import { selectors, matchesExact, isCaptchaBlob, shadowClickPatterns } from "../src/selectors.js";
 
 /** Compile a JS-regex-literal source string (e.g. "/^x$/i") to a RegExp. */
 function compileSource(src: string): RegExp {
@@ -99,5 +94,15 @@ describe("selectors — RU/EN composer & action regex", () => {
     expect(isCaptchaBlob("Please verify you are human")).toBe(true);
     expect(isCaptchaBlob("Security check required to continue")).toBe(true);
     expect(isCaptchaBlob("Welcome back to LinkedIn")).toBe(false);
+  });
+
+  it("PUB-0033: does NOT flag the ordinary feed as a captcha (false-positive fix)", () => {
+    // The verified-badge / profile "Verifications" strings appear on a healthy
+    // logged-in feed — they must not be read as a security check.
+    expect(isCaptchaBlob("Verifications")).toBe(false);
+    expect(isCaptchaBlob("Pavel Valentov · Verified · Founder and CEO")).toBe(false);
+    expect(isCaptchaBlob("Add to your feed — Verifications on your profile")).toBe(false);
+    // A genuine challenge still trips it.
+    expect(isCaptchaBlob("Please complete this captcha to continue")).toBe(true);
   });
 });
