@@ -41,12 +41,12 @@ links are part of the contract.
 
 ## 3. Per-platform table
 
-| Platform     | Post language | Blog link in comment (lang) | Cross-links in comment        | Body site link |
-|--------------|---------------|-----------------------------|-------------------------------|----------------|
-| **Facebook** | RU            | RU blog version             | Twitter (EN) + Telegram (RU)  | not allowed    |
-| **LinkedIn** | EN            | EN blog version             | Twitter (EN) + Telegram (RU)  | not allowed    |
-| **Twitter/X**| EN            | EN blog version             | Telegram (RU)                 | allowed in body|
-| **Telegram** | RU            | RU blog version             | —                             | allowed in body|
+| Platform      | Post language | Blog link in comment (lang) | Cross-links in comment       | Body site link  |
+| ------------- | ------------- | --------------------------- | ---------------------------- | --------------- |
+| **Facebook**  | RU            | RU blog version             | Twitter (EN) + Telegram (RU) | not allowed     |
+| **LinkedIn**  | EN            | EN blog version             | Twitter (EN) + Telegram (RU) | not allowed     |
+| **Twitter/X** | EN            | EN blog version             | Telegram (RU)                | allowed in body |
+| **Telegram**  | RU            | RU blog version             | —                            | allowed in body |
 
 For a Datarim article, add `https://datarim.club` to every platform's first comment (rule 2).
 
@@ -115,15 +115,23 @@ have not re-verified against the live account.
 ### 6.4 Composer media+text order — video first, then text, then verify (all browser composers)
 
 When attaching media to a post through a browser composer (X, Facebook, LinkedIn), follow
-this fixed order. It is the operator-confirmed sequence and avoids the failure modes below:
+this fixed order. It is the operator-confirmed sequence and avoids the failure modes below.
 
-1. **Paste the video from the clipboard first.** Put the file on the clipboard
-   (`osascript -e 'set the clipboard to (POSIX file "/path/video.mp4")'` on macOS), click
-   the composer field, paste (`Cmd+V`), and **wait for the upload to finish**
-   (the composer shows a progress indicator that ends in a "done/ready" state, typically
-   8–16 s for a multi-MB clip). Do **not** type text while the upload is still running.
-   Prefer pasting over the file-picker: the in-app file-upload path may reject host
-   filesystem paths, and pasting has no small per-file size cap.
+> **MANDATORY — clipboard only, never the file-picker (operator rule, reaffirmed 2026-06-26).**
+> ALL media (image OR video) AND the post text are attached **through the OS clipboard
+> (paste)** — media first, then text. The native file-picker / `setInputFiles` /
+> "Upload from computer" path MUST NOT be used for media: host filesystem paths are
+> rejected, the dialog is invisible to automation, and it is unreliable. This is not a
+> preference — it is the only sanctioned attach method. If you catch yourself reaching for
+> a file chooser, stop and switch back to clipboard paste.
+
+1. **Paste the media (video or image) from the clipboard first.** Put the file on the
+   clipboard (`osascript -e 'set the clipboard to (POSIX file "/path/media.mp4")'` on
+   macOS), open the composer's media target, paste (`Cmd/Ctrl+V`), and **wait for the
+   upload to finish** (the composer shows a progress indicator that ends in a "done/ready"
+   state, typically 8–16 s for a multi-MB clip). Do **not** type text while the upload is
+   still running. NEVER use the file-picker / `setInputFiles`: the in-app file-upload path
+   rejects host filesystem paths and is invisible to automation.
 2. **Then paste the text** into the same composer field. Use video, not a static image,
    when a video deliverable exists for the article (cover + narration MP4).
 
@@ -136,6 +144,7 @@ this fixed order. It is the operator-confirmed sequence and avoids the failure m
    > (always: video → wait → text) BEFORE touching the composer. If text was already pasted into
    > an empty composer, **close/clear it and restart media-first** rather than retrofitting the
    > video around the text.
+
 3. **Then verify before the irreversible click** (§6.1): scroll the composer top-to-bottom
    and confirm both the **media is still attached** (preview present, upload "done") **and**
    the **full text is present** (starts with the article title; not truncated; within the
@@ -158,6 +167,60 @@ When driving multiple platforms in a browser session, keep tab handling clean:
   click/type/paste/navigate must target the new tab. Do not leave the previous platform's
   tab open and do not issue actions against a stale tab id; mixing tabs is a common cause of
   actions silently landing in the wrong place or failing.
+
+### 6.6 LinkedIn video uploads AFTER «Post» — wait for the upload bar, then a few seconds more
+
+LinkedIn does **not** finish the video upload before publishing. The composer shows a `<video>`
+preview right after the clipboard paste (this is **not** proof the video is uploaded), but the
+actual server-side upload runs **in the background after you click «Post»** — a progress bar
+appears («Uploading… / Ladataan… keep this page open until the upload completes — N%»).
+
+- **Do NOT close the window / tear down the browser context until the upload bar reaches 100%
+  AND a few more seconds elapse** (the finalisation keeps spinning briefly after the bar fills).
+  Tearing down early publishes the post **text-only with no video** (real incident: the first
+  Show-Me LinkedIn post went out video-less because the context closed mid-upload).
+- After the bar clears + grace pause, re-fetch the published post and assert `video` is present
+  (`page.locator("video").count() > 0`). If zero → delete + repost (LinkedIn cannot add media to
+  an existing post; `edit` does not change media).
+- This is the mirror image of X, where the video must finish **before** Post (the Post button
+  stays disabled until the upload settles). LinkedIn: wait **after** Post. X: wait **before** Post.
+
+### 6.7 Editing a comment — target the EDIT editor, verify the change before Save
+
+When you Edit an existing comment in a browser, LinkedIn renders **two** contenteditable boxes on
+the page: the empty «Add a comment» box (for a _new_ comment) and the _edit_ box that already holds
+the existing comment text. `locator(...).first()` grabs the **empty new-comment box** — typing
+there leaves the edited comment unchanged, so «Save changes» stays disabled and a click saves
+nothing.
+
+- **Select the edit box by content, not position:** iterate the contenteditable boxes and pick the
+  one whose current text already contains the comment being edited (not the empty one, not `.first()`).
+- **Type the change** (keyboard) into that box — a clipboard paste may not fire the editor's
+  onChange, leaving «Save changes» disabled.
+- **Re-read that exact box and confirm it now contains the intended final text BEFORE clicking
+  Save.** Operator rule: "before clicking Save, first verify what you are changing." Only then poll
+  «Save changes / Tallenna muutokset» until enabled and click it.
+- Reveal a comment's options kebab by a **real mouse-move over the comment header row** (the kebab is
+  lazily rendered on hover, not present in the DOM otherwise); its aria-label is locale-dependent
+  («…options for …'s comment» / «Katso lisää vaihtoehtoja … kommentille»).
+- **All cross-links go in ONE comment** — when adding a link (e.g. X) to a comment that already has
+  others, **edit** that comment; do not post a second comment.
+
+### 6.8 Identify the target post/comment by ID, never by `.first()` position
+
+A permalink page or feed renders **multiple** posts/comments (the target **plus** recommended /
+sibling / parent items). `div[role="article"].first()` (FB), the first `<article>` (X reply
+permalink → the **parent** renders first), or the first card in a feed is frequently **someone
+else's content**. Always pick the element whose **own id matches the target**:
+
+- **Facebook:** `div[role="article"]` whose inner `a[href*="/posts/"]` contains the `pfbid` from the
+  URL (observed 8 articles on a permalink page; the real post was #5, #0 was an unrelated
+  recommended post).
+- **X:** `article:has(a[href*="/status/<id>"])` — a reply permalink renders the parent first.
+- **LinkedIn:** `div[data-urn="<urn>"]`.
+
+This guards both the read-before-delete oracle and any "did it publish?" verification. Strip FB
+tracking params (`?__cft__[0]=…&__tn__=…`) to get the canonical `…/posts/<pfbid>` permalink.
 
 ## 7. Article ↔ social back-link block (the blog page links out to the posts)
 

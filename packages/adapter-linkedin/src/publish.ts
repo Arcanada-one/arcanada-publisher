@@ -175,7 +175,15 @@ async function runPublishFlow(
   options: PublishOptions,
 ): Promise<PublishResult | AbortedPublishResult> {
   return withScreenshotOnFail(page, "publish", async () => {
-    await page.goto(LINKEDIN_FEED);
+    // PUB-0033: hard-load the feed so any composer left open by a prior failed
+    // run is gone — a lingering empty composer would otherwise swallow the
+    // trigger click and the post would publish empty (or the trigger would miss).
+    // `waitForTimeout` is guarded so the unit-test fake page (which mocks only a
+    // subset of the Page API) does not trip on the settle.
+    await page.goto(LINKEDIN_FEED, { waitUntil: "domcontentloaded" });
+    if (typeof page.waitForTimeout === "function") {
+      await page.waitForTimeout(1_500);
+    }
 
     // PUB-0031: language-agnostic composer trigger. Try the stable component
     // CSS class first (locale-independent), fall back to the localized button
@@ -244,9 +252,9 @@ async function runPublishFlow(
     // the clipboard, never a file chooser, per §6.4). Returns false if no
     // enabled match is found, so callers can poll.
     const shadowClickJs = shadowClickButtonJs;
-    const ADD_MEDIA_RE =
-      "/^(Add media|Medien hinzufügen|Добавить медиа|Lisää mediaa|Video|Photo|Foto|Bild)$/i";
-    const NEXT_DONE_RE = "/^(Next|Done|Weiter|Fertig|Далее|Готово|Seuraava|Valmis)$/i";
+    // PUB-0033: «Add media» and «Next/Done» are no longer clicked — media is
+    // pasted directly into the editor (no sub-modal, no advance step). Only the
+    // final «Post» is driven via the shadow-walk click.
     const POST_RE = "/^(Post|Posten|Veröffentlichen|Опубликовать|Julkaise|Teilen)$/i";
 
     await startPost.click();
@@ -259,39 +267,30 @@ async function runPublishFlow(
         ? editorCss
         : page.getByRole("textbox", { name: selectors.editor }).first();
     await editor.waitFor({ state: "visible", timeout: 15_000 });
+    // PUB-0033 (verified live 2026-06-26): the composer needs a moment to finish
+    // initialising after it becomes visible — a paste issued immediately lands
+    // nowhere and the media never attaches. A short settle before the first paste
+    // makes the attach deterministic.
+    await page.waitForTimeout(3_000);
 
     // Media FIRST via clipboard paste (operator rule §6.4: media-before-text).
-    //
-    // PUB-0031 (verified live 2026-06): a Cmd/Ctrl+V into the Quill `.ql-editor`
-    // pastes the clipboard as TEXT, not media — the video never attaches and the
-    // Post button stays disabled. The working sequence is:
-    //   1. click «Add media» → opens the media sub-modal ("Select files to begin
-    //      / Share images or a single video"),
-    //   2. Cmd/Ctrl+V there → LinkedIn ingests the clipboard POSIX-file as media
-    //      (a <video> preview appears and transcoding begins),
-    //   3. click «Next/Done» to return to the composer with the media attached,
-    //   4. type the text.
-    // We use the clipboard, never a file chooser (§6.4). The «Add media» click
-    // does spawn a native file dialog too, but we ignore it and paste instead.
-    // `mediaAttached` is reported by the abortBeforePost dry-run (PUB-0031 signal).
+    // PUB-0033: paste media DIRECTLY into the composer editor (see the block
+    // below) — never click «Add media» (it opens the native OS file-picker in the
+    // 2026 UI) and never use a file chooser. `mediaAttached` is reported by the
+    // abortBeforePost dry-run (PUB-0031 signal).
     let mediaAttached = imagePaths.length === 0;
     if (imagePaths.length > 0) {
       const hasVideo = imagePaths.some(isVideoPath);
 
-      // 1. Open the media sub-modal via «Add media» (shadow-walk DOM click).
-      let opened = false;
-      for (let i = 0; i < 30; i++) {
-        opened = (await page.evaluate(shadowClickJs(ADD_MEDIA_RE))) as boolean;
-        if (opened) break;
-        await page.waitForTimeout(500);
-      }
-      if (!opened) {
-        throw mapLiError("composer_not_found", { extra: { stage: "add_media_button" } });
-      }
-      await page.waitForTimeout(2_000);
-
-      // 2. Paste the clipboard media into the media sub-modal. ControlOrMeta is
-      //    platform-neutral (Cmd on macOS, Ctrl elsewhere).
+      // PUB-0033 (verified live 2026-06-26): paste the clipboard media DIRECTLY
+      // into the composer editor — do NOT click «Add media». In the 2026 UI the
+      // «Add media» button opens the NATIVE OS file-picker (a Finder dialog that
+      // is invisible to automation and violates the clipboard-only rule §6.4),
+      // and the subsequent Cmd/Ctrl+V lands nowhere → media never attaches. A
+      // direct paste into the focused `.ql-editor` ingests the clipboard POSIX
+      // file as media (a <video>/<img> preview appears, Post enables) with no
+      // picker. ControlOrMeta is platform-neutral (Cmd on macOS, Ctrl elsewhere).
+      await editor.click();
       await page.keyboard.press("ControlOrMeta+v");
       // Wait for ingest: a <video> (or <img> for a still) preview appears. Video
       // transcodes server-side, much longer than an image — bounded poll.
@@ -328,20 +327,12 @@ async function runPublishFlow(
       }
       mediaAttached = true;
 
-      // 3. Return to the composer: click «Next»/«Done» via shadow-walk DOM click
-      //    (multi-locale). For a video the button is disabled until transcoding
-      //    settles; shadowClickJs skips disabled buttons, so we just poll.
-      let advanced = false;
-      for (let i = 0; i < (hasVideo ? 360 : 40); i++) {
-        advanced = (await page.evaluate(shadowClickJs(NEXT_DONE_RE))) as boolean;
-        if (advanced) break;
-        await page.waitForTimeout(500);
-      }
-      // Some image flows drop straight back to the composer with no Next button —
-      // that is fine; only fail for video, where the step is mandatory.
-      if (!advanced && hasVideo) {
-        throw mapLiError("composer_not_found", { extra: { stage: "video_next_button" } });
-      }
+      // PUB-0033: with the direct-paste-into-editor flow the media lands straight
+      // in the composer — there is NO media sub-modal and therefore NO «Next»/
+      // «Done» step to advance through (the legacy Add-media path opened a
+      // sub-modal that needed it). Clicking a stray «Next»/«Done» here used to
+      // hit an unrelated control and reset the composer to empty. We just let the
+      // upload settle in place; for a video, give the transcode a moment.
       await page.waitForTimeout(hasVideo ? 4_000 : 2_500);
     }
 
@@ -411,7 +402,8 @@ async function runPublishFlow(
       const hasVideo = await verify(page, postUrl);
       if (!hasVideo) {
         throw mapLiError("verify_mismatch", {
-          message: "published post does not render a <video> player (video attach silently dropped)",
+          message:
+            "published post does not render a <video> player (video attach silently dropped)",
           extra: { postUrl, stage: "post_publish_video_reverify" },
         });
       }

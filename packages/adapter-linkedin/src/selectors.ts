@@ -14,11 +14,14 @@
 export const cssSelectors = {
   // PUB-0033: the 2026 LinkedIn feed obfuscates component class names, so the
   // old `share-box-feed-entry__trigger` class no longer matches and the trigger
-  // is now a <div role-less> element, not a <button>. With the UI pinned to
-  // en-US (context.ts), the stable hook is the `aria-label="Start a post"`
-  // attribute. Keep the legacy class selectors as a fallback for older UIs.
+  // is now a <div role-less> element, not a <button>. The ONLY stable hook left
+  // is the aria-label — but the LinkedIn FEED can be served in a different
+  // display language than the account setting (an en-US account still saw a
+  // Finnish feed from an edge cache), so we match the aria-label across every
+  // locale we have observed (EN/RU/DE/FI). Legacy class selectors stay as a
+  // final fallback for older UIs.
   startPostButton:
-    "[aria-label='Start a post'], button.share-box-feed-entry__trigger, .share-box-feed-entry__top-bar button, button.artdeco-button[class*='share-box']",
+    "[aria-label='Start a post'], [aria-label='Создать публикацию'], [aria-label='Начать публикацию'], [aria-label='Aloita julkaisu'], [aria-label='Beitrag beginnen'], button.share-box-feed-entry__trigger, .share-box-feed-entry__top-bar button, button.artdeco-button[class*='share-box']",
   // Composer dialog — share-creation modal. data-test-modal is still stable in
   // the 2026 UI.
   composerDialog: "div[data-test-modal], div[role='dialog'] .share-creation-state, div.share-box",
@@ -27,10 +30,11 @@ export const cssSelectors = {
   // Primary publish action — `share-actions__primary-action` is still present in
   // the 2026 composer.
   postButton: "button.share-actions__primary-action, button[class*='share-actions__primary']",
-  // PUB-0033: the composer media affordance is now an aria-labelled «Add media»
-  // button (en-US pinned). Used to open the media picker / file input.
+  // PUB-0033: the composer media affordance is an aria-labelled «Add media»
+  // button. Cross-locale aria-label (EN/RU/DE/FI) for the same feed-language
+  // mismatch reason as the start-post trigger.
   addMediaButton:
-    "div[data-test-modal] button[aria-label='Add media'], button[aria-label='Add media']",
+    "div[data-test-modal] button[aria-label='Add media'], button[aria-label='Add media'], button[aria-label='Добавить медиафайлы'], button[aria-label='Добавить медиа'], button[aria-label='Lisää mediaa'], button[aria-label='Medien hinzufügen']",
   // Hidden native file input(s) for media (image + video share the same input).
   fileInput: "input[type='file']",
   // PUB-0032: comment composer — structural fallback when the localized
