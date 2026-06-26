@@ -3,7 +3,7 @@
 A blog post with the audio player needs one MP3 per voice: 5 RU voices (Silero)
 plus 1 EN voice (`af_heart`, Kokoro). The generator lives in the **landing repo**
 (`Projects/Arcanada Ecosystem/code/landing/ops/gen-blog-audio.py`), not in this
-Publisher repo — but the *rules* for preparing the narration text are a publishing
+Publisher repo — but the _rules_ for preparing the narration text are a publishing
 concern and are mirrored in `skills/publishing/SKILL.md` § "Blog audio narration —
 TTS text prep". This page is the operational recipe.
 
@@ -30,7 +30,7 @@ So a narrative post needs a normalization pass before TTS:
    `второй`→`втор+ой`, `месяц`→`м+есяц`, `уже`(adverb)→`уж+е`. Keep a stress
    dictionary and grow it as listening reveals more (ordinals, homographs, names).
 
-4. **Pauses** — Silero renders an em/en dash (— / –) as a *long* pause; replace
+4. **Pauses** — Silero renders an em/en dash (— / –) as a _long_ pause; replace
    with a hyphen `-` for a short break (measured ~1.30 s dash vs ~1.16 s hyphen).
    A dotted filename like `CLAUDE.md` voiced as «...точка эм-дэ» puts a heavy pause
    on «точка» — drop it: «Клод эм-дэ».

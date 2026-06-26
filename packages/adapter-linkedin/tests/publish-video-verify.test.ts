@@ -28,8 +28,7 @@ function makeVideo(): string {
   return file;
 }
 
-const ACTIVITY_URL =
-  "https://www.linkedin.com/feed/update/urn:li:activity:7462962260978642944/";
+const ACTIVITY_URL = "https://www.linkedin.com/feed/update/urn:li:activity:7462962260978642944/";
 
 /**
  * Fake Playwright page that walks the video publish flow to a successful URL

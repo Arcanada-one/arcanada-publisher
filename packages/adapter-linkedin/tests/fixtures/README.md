@@ -38,12 +38,18 @@ drift we want CI to catch.
 In a logged-in session, with the composer / post menu open, run in devtools:
 
 ```js
-copy(JSON.stringify({
-  postControlMenu: [...document.querySelectorAll('button[aria-label]')]
-    .map(b => b.getAttribute('aria-label'))
-    .filter(l => /menu|aktion|action|меню/i.test(l)),
-  // …repeat for the Delete item, Confirm button, comment box…
-}, null, 2));
+copy(
+  JSON.stringify(
+    {
+      postControlMenu: [...document.querySelectorAll("button[aria-label]")]
+        .map((b) => b.getAttribute("aria-label"))
+        .filter((l) => /menu|aktion|action|меню/i.test(l)),
+      // …repeat for the Delete item, Confirm button, comment box…
+    },
+    null,
+    2,
+  ),
+);
 ```
 
 Save as e.g. `de-2026.labels.json` with `"source": "real"` and the locale. No

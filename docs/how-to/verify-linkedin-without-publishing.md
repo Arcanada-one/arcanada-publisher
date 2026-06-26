@@ -53,7 +53,7 @@ LI_DRYRUN_PROBE=1 PUB_PROFILE=default \
 ```
 
 - **P1** asserts the video attaches (`mediaAttached: true` ⇒ a `<video>` rendered
-  *inside the composer*, proving the scoped detection works on the live DOM) and
+  _inside the composer_, proving the scoped detection works on the live DOM) and
   returns `aborted: true` — never posted.
 - **P2** does the same text-only.
 

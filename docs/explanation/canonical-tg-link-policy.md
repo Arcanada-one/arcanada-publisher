@@ -17,6 +17,7 @@ exactly — do not improvise from memory. Before publishing, `forwardMessage` th
 previous cycle post into the test channel and copy its structure.
 
 **Message 1 — video + caption teaser:**
+
 - Animated-cover video (`dev-tools/video/make-cycle-video.sh`, length = the
   article narration, channel-language voice).
 - Caption (≤1024 UTF-16 units): the **article title** + ~3 SHORT summary
@@ -24,6 +25,7 @@ previous cycle post into the test channel and copy its structure.
   below 👇". This is a teaser, not the full body.
 
 **Message 2 — long-read text (article retold inside Telegram):**
+
 - A self-contained retelling of the article (~2000 chars) so the reader does not
   have to leave the channel — 4 sense-blocks, each opening with a micro-heading
   (the first phrase of the paragraph acts as a mini-title).
