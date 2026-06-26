@@ -9,6 +9,23 @@ This is the single source of truth for **where links go** when a blog article is
 social platforms. It governs the post body, the mandatory first comment, the per-platform language,
 and the Twitter/X video attachment.
 
+## 0. Publishing order (FIXED — TG, then X, then FB/LI/VK)
+
+Platforms are published in a **fixed sequence**, never in parallel and never in an arbitrary order:
+
+1. **Site** (RU + EN) — capture both blog URLs.
+2. **Telegram** (RU canonical) — capture `t.me/valentovtypes/<msg_id>`.
+3. **X / Twitter** (EN premium full-article) — capture `x.com/<handle>/status/<id>`.
+4. **Facebook / LinkedIn / VKontakte** — in any order among themselves, all **after** X.
+
+**Why this exact order is mandatory.** The FB / LinkedIn / VK first comments MUST cross-link **both**
+the canonical **Telegram (RU)** post **and** the **X (EN)** post (§3). Those two URLs only exist once
+TG and X are already live. Therefore TG and X are published **first**, and **X is published before
+FB/LI/VK**, not alongside them. Publishing FB/LI/VK before X forces a second back-fill pass to add the
+X link to their comments — the recurring "missing X link in the FB/LI comment" regression. Do not
+reorder: TG → X → FB/LI/VK is the contract. See also
+[`canonical-tg-link-policy.md`](./canonical-tg-link-policy.md) § Publishing order.
+
 ## 1. Post body — no site link (except Telegram and X)
 
 - The **article body MUST NOT contain a link to the site** (`arcanada.ai` / `datarim.club` / any
@@ -59,16 +76,20 @@ For a Datarim article, add `https://datarim.club` to every platform's first comm
   from the cover image + that audio (ffmpeg) and attach it to the tweet together with the article.
 - The blog link in the X first comment points to the **EN** blog version; also cross-link Telegram (RU).
 
-## 5. Verification checklist (per publish)
+## 5. Verification checklist (per publish — in publishing order §0)
 
-- [ ] TG canonical published, URL captured (per `canonical-tg-link-policy.md`)
+- [ ] Order respected: **TG → X → FB/LI/VK** (X published before FB/LI/VK so its link exists for their comments)
+- [ ] TG canonical published **first**, URL captured (per `canonical-tg-link-policy.md`)
+- [ ] X body = full EN article; MP4 attached when EN audio exists; published **before** FB/LI/VK; first comment = EN blog + (Datarim site) + TG(RU)
 - [ ] FB body posted, body grep'd for **0** `https://` site links; first comment = RU blog + (Datarim site) + X(EN) + TG(RU)
 - [ ] LinkedIn body posted (EN), first comment = EN blog + (Datarim site) + X(EN) + TG(RU)
-- [ ] X body = full EN article; MP4 attached when EN audio exists; first comment = EN blog + (Datarim site) + TG(RU)
+- [ ] VK body posted, first comment = RU blog + (Datarim site) + X(EN) + TG(RU)
 - [ ] Telegram body (RU) may carry the site link inline
 - [ ] First comment is **author-owned** on every platform
 - [ ] Real permalink captured for each post — do **not** trust the publisher's returned URL (FB/LinkedIn
       return a non-canonical URL; confirm against the live account before writing it back / commenting)
+- [ ] **Article `social` back-link block (§7) added on the site for RU+EN and redeployed — this is the
+      closing gate; the publish task is NOT done until every social permalink renders on both languages.**
 
 ## 6. Verification gates around irreversible actions (X/Twitter, applies to all platforms)
 
@@ -222,10 +243,16 @@ else's content**. Always pick the element whose **own id matches the target**:
 This guards both the read-before-delete oracle and any "did it publish?" verification. Strip FB
 tracking params (`?__cft__[0]=…&__tn__=…`) to get the canonical `…/posts/<pfbid>` permalink.
 
-## 7. Article ↔ social back-link block (the blog page links out to the posts)
+## 7. Article ↔ social back-link block (the blog page links out to the posts) — CLOSING GATE
 
 Cross-posting is **bidirectional**. After the social posts exist, the blog article page itself MUST
 link out to them — otherwise the published article shows no path to its own social posts.
+
+> **This block is a hard closing gate.** The publish task does **not** close (no `/dr-archive`, no
+> "done") until the `social` back-link block is present on the article for **both RU and EN**, points
+> at the **real** permalinks of every social post, and is verified live (HTTP 200, all links render on
+> each language version). A live article with social posts but no/incomplete `social` block is an
+> **incomplete publish**, identical in severity to a missing first comment.
 
 - The article source carries a `social` block with the real permalinks:
   `social: { telegram, x, linkedin, facebook }` (strip tracking params — keep the canonical

@@ -51,16 +51,37 @@ own link does not need a comment.
 
 ## How the publishing pipeline applies it
 
+**The platform order is fixed (see § Publishing order below): site → TG → X → FB / LI / VK.**
+
 1. Publish **site first** (RU + EN where applicable). Capture URLs.
 2. Publish **TG** as canonical: hero photo + multipart text (`[1/N]` per `feedback_telegram_split_policy`) + finale photo. **For articles that have a blog-audio (TTS) version, also attach the audio file to the same TG post** — Telegram accepts image + audio together in one post (a `sendMediaGroup` with a photo `InputMediaPhoto` and an audio `InputMediaAudio`, or `sendPhoto` followed by `sendAudio` in the same thread). This is NOT a problem and MUST be done so the reader gets the listenable version without leaving Telegram. Capture `t.me/valentovtypes/<msg_id>` of the hero (first message of the thread) → this is the **canonical URL**.
-3. Publish **FB / LI / X / VK** with compressed/full text in the body.
-4. **Immediately after each social publish**, add a first comment with at minimum:
+3. Publish **X** (premium full-article EN post) next, **before** FB / LI / VK. Capture `x.com/<handle>/status/<id>` → this is the **canonical EN URL**. X is published before FB/LI/VK precisely so that the X(EN) link already exists when the FB/LI/VK first comments are written (their first comments cross-link both TG(RU) and X(EN) — see § Publishing order).
+4. Publish **FB / LI / VK** with compressed/full text in the body.
+5. **Immediately after each social publish**, add a first comment with at minimum:
    ```
    Канонический пост (полная версия с картинками): https://t.me/valentovtypes/<msg_id>
    Статья на сайте: https://arcanada.one/<lang>/blog/<slug>
    [+ optional ecosystem project links per post topic]
    ```
-5. If the post body declares «no links» as a rhetorical move (sci-fi posts, manifesto-style), the first comment **still** contains the TG canonical — treat it as attribution / sourcing, not as «links reinforcing claims».
+6. If the post body declares «no links» as a rhetorical move (sci-fi posts, manifesto-style), the first comment **still** contains the TG canonical — treat it as attribution / sourcing, not as «links reinforcing claims».
+
+## Publishing order (fixed)
+
+The platforms are published in a **fixed sequence**, not in parallel and not in an
+arbitrary order:
+
+1. **Site** (RU + EN) — capture both blog URLs.
+2. **Telegram** (RU canonical) — capture `t.me/valentovtypes/<msg_id>`.
+3. **X / Twitter** (EN premium full-article) — capture `x.com/<handle>/status/<id>`.
+4. **Facebook / LinkedIn / VKontakte** — in any order among themselves.
+
+**Why this exact order.** The FB / LinkedIn / VK first comments MUST cross-link
+**both** the canonical Telegram (RU) post **and** the X (EN) post (per
+[`social-links-and-comments-policy.md`](./social-links-and-comments-policy.md) §3).
+Those two URLs only exist once TG and X are already live — so TG and X are
+published **first**, and X is published **before** FB/LI/VK, not alongside them.
+Publishing FB/LI/VK before X would force a second pass to back-fill the X link into
+their comments (the recurring "missing X link in the FB/LI comment" regression).
 
 ## Adapter implementation
 
@@ -80,11 +101,12 @@ For legacy `fb-publish` / `li-publish` shell scripts: the operator chains `fb-pu
 
 ## Verification
 
-Per-publish smoke checklist:
+Per-publish smoke checklist (run in publishing order — TG, then X, then FB/LI/VK):
 
-- [ ] TG canonical published, URL captured
+- [ ] TG canonical published **first**, URL captured
 - [ ] If the article has a blog-audio version, the audio file is attached to the TG post (image + audio in one post — allowed and required)
+- [ ] X (EN premium full-article) published **before** FB/LI/VK, URL captured
 - [ ] FB body posted, body grep'd for 0 `https://` links
-- [ ] FB first comment grep'd for `t.me/valentovtypes/`
-- [ ] Repeat for LI / X / VK
+- [ ] FB first comment grep'd for **both** `t.me/valentovtypes/` (TG/RU) **and** `x.com/.../status/` (X/EN)
+- [ ] Repeat for LI / VK (LinkedIn + VK first comments also carry both TG(RU) + X(EN))
 - [ ] First comment is **author-owned**, not a random reader's
