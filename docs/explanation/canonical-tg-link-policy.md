@@ -52,7 +52,7 @@ own link does not need a comment.
 ## How the publishing pipeline applies it
 
 1. Publish **site first** (RU + EN where applicable). Capture URLs.
-2. Publish **TG** as canonical: hero photo + multipart text (`[1/N]` per `feedback_telegram_split_policy`) + finale photo. Capture `t.me/valentovtypes/<msg_id>` of the hero (first message of the thread) → this is the **canonical URL**.
+2. Publish **TG** as canonical: hero photo + multipart text (`[1/N]` per `feedback_telegram_split_policy`) + finale photo. **For articles that have a blog-audio (TTS) version, also attach the audio file to the same TG post** — Telegram accepts image + audio together in one post (a `sendMediaGroup` with a photo `InputMediaPhoto` and an audio `InputMediaAudio`, or `sendPhoto` followed by `sendAudio` in the same thread). This is NOT a problem and MUST be done so the reader gets the listenable version without leaving Telegram. Capture `t.me/valentovtypes/<msg_id>` of the hero (first message of the thread) → this is the **canonical URL**.
 3. Publish **FB / LI / X / VK** with compressed/full text in the body.
 4. **Immediately after each social publish**, add a first comment with at minimum:
    ```
@@ -83,6 +83,7 @@ For legacy `fb-publish` / `li-publish` shell scripts: the operator chains `fb-pu
 Per-publish smoke checklist:
 
 - [ ] TG canonical published, URL captured
+- [ ] If the article has a blog-audio version, the audio file is attached to the TG post (image + audio in one post — allowed and required)
 - [ ] FB body posted, body grep'd for 0 `https://` links
 - [ ] FB first comment grep'd for `t.me/valentovtypes/`
 - [ ] Repeat for LI / X / VK

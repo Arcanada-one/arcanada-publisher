@@ -255,7 +255,12 @@ const defaultSteps: PublishStepRecorder = {
     const nextBtn = page.getByRole("button", { name: selectors.nextButton, exact: true });
     if ((await nextBtn.count()) > 0 && (await nextBtn.first().isVisible())) {
       await nextBtn.first().click();
-      await page.waitForTimeout(1_500);
+      // FB's two-step composer renders the publish/back screen asynchronously;
+      // a fixed pause races the render. Wait for the publish button to appear.
+      await publishBtn
+        .first()
+        .waitFor({ state: "visible", timeout: 10_000 })
+        .catch(() => undefined);
     }
     if ((await publishBtn.count()) === 0) {
       throw mapFbError("composer_not_found");
