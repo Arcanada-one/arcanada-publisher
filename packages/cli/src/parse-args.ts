@@ -69,6 +69,18 @@ export interface ParsedArgs {
    * compact target inside the encoder. Mirrors GenerateOptions.maxBitrateKbps.
    */
   maxBitrateKbps: number | undefined;
+  /**
+   * `video` subcommand: disable the bottom audio-amplitude strip (cycle preset).
+   * Default false → the strip is drawn (house style). `--no-waveform` flips it.
+   */
+  noWaveform: boolean;
+  /** `video` subcommand: amplitude-strip height in px. Default undefined → 180. */
+  waveformHeight: number | undefined;
+  /**
+   * `video` subcommand: amplitude-strip gradient colours as "LEFT,RIGHT" hex
+   * (e.g. "0xFFD24C,0xE03B5A"). Default undefined → gold→crimson house style.
+   */
+  waveformColors: string | undefined;
 }
 
 /** Flags that take a value; everything else is a boolean switch. */
@@ -94,9 +106,17 @@ const VALUE_FLAGS = new Set([
   "--cover-seconds",
   "--seed",
   "--max-bitrate",
+  "--waveform-height",
+  "--waveform-colors",
 ]);
 
-const BOOL_FLAGS = new Set(["--dry-run", "--list-presets", "--premium", "--headed"]);
+const BOOL_FLAGS = new Set([
+  "--dry-run",
+  "--list-presets",
+  "--premium",
+  "--headed",
+  "--no-waveform",
+]);
 
 export class CliParseError extends Error {}
 
@@ -134,6 +154,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
     seed: undefined,
     listPresets: false,
     maxBitrateKbps: undefined,
+    noWaveform: false,
+    waveformHeight: undefined,
+    waveformColors: undefined,
   };
 
   for (let i = 0; i < rest.length; i++) {
@@ -152,6 +175,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
     if (flag === "--headed") {
       out.headed = true;
+      continue;
+    }
+    if (flag === "--no-waveform") {
+      out.noWaveform = true;
       continue;
     }
     if (!VALUE_FLAGS.has(flag) && !BOOL_FLAGS.has(flag)) {
@@ -253,6 +280,23 @@ export function parseArgs(argv: string[]): ParsedArgs {
           );
         }
         out.maxBitrateKbps = kbps;
+        break;
+      }
+      case "--waveform-height": {
+        const h = Number.parseInt(value, 10);
+        if (!Number.isInteger(h) || h <= 0) {
+          throw new CliParseError(`--waveform-height must be a positive integer, got '${value}'`);
+        }
+        out.waveformHeight = h;
+        break;
+      }
+      case "--waveform-colors": {
+        if (!/^(0x|#)[0-9A-Fa-f]{6},(0x|#)[0-9A-Fa-f]{6}$/.test(value)) {
+          throw new CliParseError(
+            `--waveform-colors must be "LEFT,RIGHT" hex (e.g. 0xFFD24C,0xE03B5A), got '${value}'`,
+          );
+        }
+        out.waveformColors = value;
         break;
       }
     }

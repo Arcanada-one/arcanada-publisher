@@ -134,4 +134,55 @@ describe("cli parse-args (V-AC-11 flag contract)", () => {
       parseArgs(["publish", "--platform", "vkontakte", "--text-file", "f", "--owner-id", "abc"]),
     ).toThrow(CliParseError);
   });
+
+  it("video: --no-waveform defaults false and flips true when present", () => {
+    const off = parseArgs(["video", "--cover", "c.jpg", "--out", "o.mp4"]);
+    expect(off.noWaveform).toBe(false);
+    const on = parseArgs(["video", "--cover", "c.jpg", "--out", "o.mp4", "--no-waveform"]);
+    expect(on.noWaveform).toBe(true);
+  });
+
+  it("video: --waveform-height parses a positive integer", () => {
+    const a = parseArgs([
+      "video",
+      "--cover",
+      "c.jpg",
+      "--out",
+      "o.mp4",
+      "--waveform-height",
+      "100",
+    ]);
+    expect(a.waveformHeight).toBe(100);
+  });
+
+  it("video: --waveform-height rejects zero / non-numeric", () => {
+    expect(() =>
+      parseArgs(["video", "--cover", "c.jpg", "--out", "o.mp4", "--waveform-height", "0"]),
+    ).toThrow(CliParseError);
+    expect(() =>
+      parseArgs(["video", "--cover", "c.jpg", "--out", "o.mp4", "--waveform-height", "tall"]),
+    ).toThrow(CliParseError);
+  });
+
+  it("video: --waveform-colors accepts a LEFT,RIGHT hex pair", () => {
+    const a = parseArgs([
+      "video",
+      "--cover",
+      "c.jpg",
+      "--out",
+      "o.mp4",
+      "--waveform-colors",
+      "0xFFD24C,0xE03B5A",
+    ]);
+    expect(a.waveformColors).toBe("0xFFD24C,0xE03B5A");
+  });
+
+  it("video: --waveform-colors rejects non-hex / single colour", () => {
+    expect(() =>
+      parseArgs(["video", "--cover", "c.jpg", "--out", "o.mp4", "--waveform-colors", "red,blue"]),
+    ).toThrow(CliParseError);
+    expect(() =>
+      parseArgs(["video", "--cover", "c.jpg", "--out", "o.mp4", "--waveform-colors", "0xFFD24C"]),
+    ).toThrow(CliParseError);
+  });
 });

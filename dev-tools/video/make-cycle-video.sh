@@ -177,12 +177,49 @@ fi
 # Configure via env: MAX_BITRATE_KBPS (default 600) and CRF (default 28).
 MAXK="${MAX_BITRATE_KBPS:-600}"
 CRF_VAL="${CRF:-28}"
-ffmpeg -y -v error -i "$WORK/video-silent.mp4" -i "$AUD" \
-  -map 0:v -map 1:a \
-  -c:v libx264 -preset veryfast -profile:v high -level 4.0 \
-  -crf "$CRF_VAL" -maxrate "${MAXK}k" -bufsize "$((MAXK * 2))k" \
-  -pix_fmt yuv420p -colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv \
-  -c:a aac -b:a 160k -shortest -movflags +faststart "$OUT"
+
+# Bottom audio-amplitude strip (house style, operator-approved 2026-06-28):
+# a showwaves oscilloscope filled with a horizontal gold->crimson gradient,
+# overlaid on the bottom edge ON TOP of the cycle animation. This is an
+# ADDITION to the cycle video, never a bare-waveform video (forbidden as the
+# whole post). Disable with WAVEFORM=0. Tune via env:
+#   WAVEFORM_HEIGHT (px, default 180), WAVEFORM_C0 (left hex, default 0xFFD24C),
+#   WAVEFORM_C1 (right hex, default 0xE03B5A).
+WAVEFORM="${WAVEFORM:-1}"
+WF_H="${WAVEFORM_HEIGHT:-180}"
+WF_C0="${WAVEFORM_C0:-0xFFD24C}"
+WF_C1="${WAVEFORM_C1:-0xE03B5A}"
+# Validate env inputs (defence in depth — these reach filter_complex).
+case "$WF_H" in (''|*[!0-9]*) echo "WAVEFORM_HEIGHT must be a positive integer" >&2; exit 2;; esac
+[ "$WF_H" -gt 0 ] || { echo "WAVEFORM_HEIGHT must be a positive integer" >&2; exit 2; }
+for c in "$WF_C0" "$WF_C1"; do
+  case "$c" in
+    0x[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]) : ;;
+    *) echo "WAVEFORM colour '$c' must be 0xRRGGBB" >&2; exit 2 ;;
+  esac
+done
+
+if [ "$WAVEFORM" = "1" ]; then
+  WF_STRIP=$(( WF_H < H ? WF_H : H ))   # clamp to canvas
+  WF_Y=$(( H - WF_STRIP ))
+  WF_FC="[1:a]showwaves=s=${W}x${WF_STRIP}:mode=cline:colors=white:draw=full:rate=${FPS},format=gray[wfmask];"
+  WF_FC+="gradients=s=${W}x${WF_STRIP}:c0=${WF_C0}:c1=${WF_C1}:x0=0:y0=0:x1=${W}:y1=0:d=1:n=2:rate=${FPS}[wfgrad];"
+  WF_FC+="[wfgrad][wfmask]alphamerge[wfwave];"
+  WF_FC+="[0:v][wfwave]overlay=0:${WF_Y}:format=auto,format=yuv420p[vout]"
+  ffmpeg -y -v error -i "$WORK/video-silent.mp4" -i "$AUD" \
+    -filter_complex "$WF_FC" -map "[vout]" -map 1:a \
+    -c:v libx264 -preset veryfast -profile:v high -level 4.0 \
+    -crf "$CRF_VAL" -maxrate "${MAXK}k" -bufsize "$((MAXK * 2))k" \
+    -pix_fmt yuv420p -colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv \
+    -c:a aac -b:a 160k -shortest -movflags +faststart "$OUT"
+else
+  ffmpeg -y -v error -i "$WORK/video-silent.mp4" -i "$AUD" \
+    -map 0:v -map 1:a \
+    -c:v libx264 -preset veryfast -profile:v high -level 4.0 \
+    -crf "$CRF_VAL" -maxrate "${MAXK}k" -bufsize "$((MAXK * 2))k" \
+    -pix_fmt yuv420p -colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv \
+    -c:a aac -b:a 160k -shortest -movflags +faststart "$OUT"
+fi
 
 echo "DONE -> $OUT"
 ffprobe -v error -show_entries format=duration -of csv=p=0 "$OUT" | sed 's/^/final dur: /'

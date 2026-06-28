@@ -1,5 +1,7 @@
 // Types shared across preset builders and the generator orchestrator.
 
+import type { WaveformConfig } from "./waveform.js";
+
 /** Parameters the orchestrator resolves before calling a preset builder. */
 export interface BuildContext {
   /** Absolute path to the cover image (already validated). */
@@ -24,6 +26,13 @@ export interface BuildContext {
   maxBitrateKbps?: number | undefined;
   /** libx264 CRF for the final bounded encode. Default 28. */
   crf?: number | undefined;
+  /**
+   * Bottom audio-amplitude strip (cycle preset). Resolved by the orchestrator
+   * to a full WaveformConfig. When the strip is disabled (or there is no audio)
+   * the cycle preset draws no strip. Default house style: enabled, 180px,
+   * gold→crimson horizontal gradient.
+   */
+  waveform?: WaveformConfig | undefined;
 }
 
 /**

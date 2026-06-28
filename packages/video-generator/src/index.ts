@@ -7,6 +7,7 @@ import { validateCoverPath, validateAudioPath, validateOutputPath } from "./vali
 import { requireFfmpeg, runFfmpeg, probeDuration, probeStreams } from "./ffmpeg.js";
 import { resolve as resolvePreset, describe } from "./presets/index.js";
 import type { BuildContext } from "./presets/types.js";
+import { resolveWaveformConfig, type WaveformConfig } from "./presets/waveform.js";
 
 /** Options for generateVideo. */
 export interface GenerateOptions {
@@ -33,6 +34,13 @@ export interface GenerateOptions {
    * Lower = better quality / larger file. Only applies to the final assembly pass.
    */
   crf?: number | undefined;
+  /**
+   * Bottom audio-amplitude strip (cycle preset only; ignored by other presets
+   * and by cover-only runs that have no audio). A partial object is merged over
+   * the operator-approved house style (enabled, 180px, gold→crimson gradient).
+   * Pass `{ enabled: false }` to suppress the strip. Omit entirely → house style.
+   */
+  waveform?: Partial<WaveformConfig> | undefined;
 }
 
 /** Result from a successful generateVideo call. */
@@ -78,6 +86,10 @@ export async function generateVideo(opts: GenerateOptions): Promise<GenerateResu
   const durationSec = audioAbs !== undefined ? probeDuration(audioAbs) : coverOnlySeconds;
 
   // 5. Build execution plan.
+  // Resolve the waveform strip config (house-style default unless overridden).
+  // Validation (height / hex colours) happens here, fail-fast before any ffmpeg call.
+  const waveform = resolveWaveformConfig(opts.waveform);
+
   const ctx: BuildContext = {
     cover: coverAbs,
     audio: audioAbs,
@@ -90,6 +102,7 @@ export async function generateVideo(opts: GenerateOptions): Promise<GenerateResu
     coverOnlySeconds,
     maxBitrateKbps: opts.maxBitrateKbps,
     crf: opts.crf,
+    waveform,
   };
 
   const plan = preset.buildPlan(ctx);

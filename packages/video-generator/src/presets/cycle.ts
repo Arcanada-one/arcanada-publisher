@@ -15,6 +15,7 @@ import { join as pathJoin, dirname } from "node:path";
 import { EFFECT_POOL, buildEffectSequence, substituteEffectParams } from "./cycle-effects.js";
 import type { PresetDef, BuildContext, FfmpegPass, PresetPlan } from "./types.js";
 import { boundedVideoArgs } from "./encode-settings.js";
+import { buildWaveformFilter } from "./waveform.js";
 
 const INTRO_SEC = 2;
 const SEG_SEC = 3;
@@ -167,6 +168,12 @@ function buildXfadePass(
  * The VBV ceiling (maxrate/bufsize) is enforced once here on the assembled stream,
  * giving a deterministic file-size guarantee independent of per-segment CRF.
  * faststart and yuv420p come from boundedVideoArgs (single source of truth).
+ *
+ * When audio is present AND ctx.waveform is enabled, the bottom audio-amplitude
+ * strip (gradient showwaves) is overlaid in this same pass via filter_complex —
+ * no extra pass, no extra temp file. The strip is drawn ON TOP of the assembled
+ * cycle animation, so the cover stays the hero (this is not a bare-waveform
+ * video, which the publishing policy forbids as the whole post).
  */
 function buildMuxPass(
   ctx: BuildContext,
@@ -176,11 +183,48 @@ function buildMuxPass(
 ): FfmpegPass {
   const v = boundedVideoArgs(ctx);
   if (audio === undefined) {
+    // Cover-only run: no audio → no amplitude strip possible.
     return {
       label: "cycle: final bounded encode (no audio)",
       args: ["-y", "-v", "error", "-i", silentVideo, ...v, out],
     };
   }
+
+  const wantWaveform = ctx.waveform?.enabled === true;
+  if (wantWaveform) {
+    const filterComplex = buildWaveformFilter(
+      ctx.waveform as NonNullable<BuildContext["waveform"]>,
+      ctx.width,
+      ctx.height,
+      ctx.fps,
+    );
+    return {
+      label: "cycle: final bounded encode + mux audio + amplitude strip",
+      args: [
+        "-y",
+        "-v",
+        "error",
+        "-i",
+        silentVideo,
+        "-i",
+        audio,
+        "-filter_complex",
+        filterComplex,
+        "-map",
+        "[vout]",
+        "-map",
+        "1:a",
+        ...v,
+        "-c:a",
+        "aac",
+        "-b:a",
+        "160k",
+        "-shortest",
+        out,
+      ],
+    };
+  }
+
   return {
     label: "cycle: final bounded encode + mux audio",
     args: [

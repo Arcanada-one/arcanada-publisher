@@ -206,6 +206,18 @@ async function runVideo(args: ParsedArgs): Promise<RunResult> {
     return { code: ErrorCode.MISSING_INPUT, message: "video: --out is required" };
   }
 
+  // Assemble the optional waveform-strip override from CLI flags. Omitting the
+  // key entirely keeps the generator's house-style default (enabled, 180px,
+  // gold→crimson). Any flag present produces a partial override object.
+  const waveform: Record<string, unknown> = {};
+  if (args.noWaveform) waveform.enabled = false;
+  if (args.waveformHeight !== undefined) waveform.heightPx = args.waveformHeight;
+  if (args.waveformColors !== undefined) {
+    const [left, right] = args.waveformColors.split(",");
+    waveform.colorLeft = left;
+    waveform.colorRight = right;
+  }
+
   const result = await generateVideo({
     cover: args.cover,
     ...(args.audio !== undefined ? { audio: args.audio } : {}),
@@ -214,6 +226,7 @@ async function runVideo(args: ParsedArgs): Promise<RunResult> {
     ...(args.coverSeconds !== undefined ? { coverOnlySeconds: args.coverSeconds } : {}),
     ...(args.seed !== undefined ? { seed: args.seed } : {}),
     ...(args.maxBitrateKbps !== undefined ? { maxBitrateKbps: args.maxBitrateKbps } : {}),
+    ...(Object.keys(waveform).length > 0 ? { waveform } : {}),
   });
 
   return {

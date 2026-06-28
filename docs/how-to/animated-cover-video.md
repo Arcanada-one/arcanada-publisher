@@ -65,6 +65,37 @@ Internal constants (edit at the top of the script): `XF=0.6` crossfade seconds,
 - **no audio supplied** → the script falls back to a ~30 s clip from the cover
   alone, still with cycling effects.
 
+## Bottom amplitude strip (default-on)
+
+When the video has narration audio, the `cycle` preset draws a **bottom audio-
+amplitude strip** overlaid on the cover animation: a `showwaves` oscilloscope
+filled with a horizontal **gold→crimson** gradient, pinned to the bottom edge.
+It shows the narration amplitude in real time without turning the whole frame
+into a generic visualizer (rule 3). Operator-approved house style (2026-06-28).
+
+Defaults: enabled, **180 px** tall, left `0xFFD24C` (gold) → right `0xE03B5A`
+(crimson). It is drawn in the same final mux pass (no extra pass / temp file),
+and is skipped automatically on a cover-only run (no audio = no amplitude).
+
+Control it via CLI flags on the `video` subcommand:
+
+```bash
+# Default (strip on, house style) — no flag needed:
+arcanada-publisher video --cover c.jpg --audio narration.mp3 --out v.mp4
+
+# Turn the strip off:
+arcanada-publisher video --cover c.jpg --audio narration.mp3 --out v.mp4 --no-waveform
+
+# Custom height + gradient colours ("LEFT,RIGHT" hex):
+arcanada-publisher video --cover c.jpg --audio narration.mp3 --out v.mp4 \
+  --waveform-height 120 --waveform-colors 0x35E0FF,0x4F6BFF
+```
+
+Programmatic (`generateVideo`): pass `waveform: { enabled?, heightPx?, colorLeft?,
+colorRight? }` — a partial object merged over the house-style default; omit it for
+the default. The bash reference engine mirrors this via env vars: `WAVEFORM=0`
+(off), `WAVEFORM_HEIGHT`, `WAVEFORM_C0`, `WAVEFORM_C1`.
+
 ## Rules
 
 1. **Inputs come from the post itself** — the cover is the post's hero cover, the
@@ -72,9 +103,11 @@ Internal constants (edit at the top of the script): `XF=0.6` crossfade seconds,
    always that cover.
 2. **Re-shuffle every run** — do not hard-code an order; let each post get a
    different sequence. Use `seed` only to reproduce a specific result for debugging.
-3. **Never ship a bare audio-waveform visualizer** (`showwaves` / `showcqt` /
-   `showspectrum`) as the post video — it looks generic. The animated-cover cycle
-   is the house style.
+3. **Never ship a _bare_ audio-waveform visualizer as the WHOLE post video** —
+   a full-frame `showwaves` / `showcqt` / `showspectrum` clip looks generic. The
+   animated-cover cycle stays the hero. A **bottom amplitude strip drawn ON TOP of
+   the cycle** is allowed and is now the default (see § Bottom amplitude strip) —
+   the distinction is overlay-strip (good) vs. whole-frame-visualizer (forbidden).
 4. **Per-platform attach** is unchanged:
    - **X (long-form)** and **LinkedIn** take the MP4.
    - **Facebook** feed forces any video into Reels, so on FB use the **static
