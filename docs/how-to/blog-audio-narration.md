@@ -37,8 +37,52 @@ So a narrative post needs a normalization pass before TTS:
 5. **Currency** — `$14` must become «четырнадцать долларов» (emit the word
    "долларов"); collapse any accidental doubling if the source already has it.
 
-EN (Kokoro) needs none of this — it speaks Latin and numbers in English natively.
-Normalize the RU text only.
+EN (Kokoro / F5) needs none of this — it speaks Latin and numbers in English
+natively. Normalize the RU text only.
+
+## Every block is its own sentence — headings and paragraphs
+
+Our posts write headings (and some lead lines / list items) **without a trailing
+period**. Once HTML tags are stripped, a block glues onto the next one and the
+narrator reads them in a single breath. The extractor handles this automatically:
+it wraps `<h1-6>` and `<p>/<li>/<blockquote>` in sentinels **before** `strip_tags`,
+then in Python ensures every block ends a sentence —
+
+- **Headings** get a terminal period **plus a doubled pause** (`. … ` on their own
+  line) so the narrator sets them apart from the body.
+- **Paragraphs / list items** that lack `.!?…` get a closing period appended.
+
+This is engine-independent (both Silero and F5 lengthen the gap on consecutive
+sentence terminators) and applies to RU and EN. Content tasks do **not** need to
+hand-punctuate headings.
+
+**Trap — the title glues onto the lead.** The article's main `<h1>` lives inside
+`<article>` together with the breadcrumb and date. A greedy `<p>(.*?)</p>` regex
+swallows the whole hero block into one "paragraph", so the title runs straight into
+the first body sentence. Fix: extract the `<h1>` **first**, cut everything up to and
+including `</h1>` (hero/nav/date), and replace `<a>` tags with their **text** (do
+not delete the tag's contents — otherwise a CTA like "… at cubrim.com" loses the
+domain and trails off as "… at .").
+
+## Author's cloned voice `pavel` (VOICE-0001)
+
+Besides the stock Silero/Kokoro voices, the player offers the operator's own cloned
+voice, labelled **Pavel**. It is rendered **on-device** (the operator's Mac, not the
+sidecar):
+
+- **RU** — OpenVoice v2 (Silero `xenia` base + tone-color conversion). Fast:
+  ~30–40 s for a whole article. Still needs the RU normalization pass above (the
+  clone runs on top of Silero).
+- **EN** — F5-TTS Base (Apache 2.0), zero-shot from the operator's reference clip.
+  Slow: ~45–50 min/article on Apple MPS (the per-chunk time is uneven; batch it,
+  e.g. overnight). No normalization needed.
+
+Biometry (the speaker embedding + reference WAV and its exact transcript) lives
+**only** in the private `$ARCANADA_VOICE_VAULT` vault — never in the landing repo,
+never on R2. Only the finished MP3 is published. Invoke with `--with-pavel` (adds
+pavel alongside the stock voices) or `--voice pavel` (pavel only). Manifest entry:
+`'<slug>' => ['ru' => ['pavel'], 'en' => ['pavel']]`. The voice label `pavel =>
+'Pavel'` is registered in `templates/audio-player.php`.
 
 ### Verifying a stress marker without ears
 
@@ -110,10 +154,22 @@ Add the post to `pages/blog/audio-manifest.php`:
     'ru' => ['xenia', 'baya', 'kseniya', 'aidar', 'eugene'],
     'en' => ['af_heart'],
 ],
+// or the author's cloned voice only:
+'<slug>' => [
+    'ru' => ['pavel'],
+    'en' => ['pavel'],
+],
 ```
 
 Then `./deploy.sh` and purge the article page URLs. The player builds CDN URLs as
 `{cdn}/blog/{slug}/{lang}-{voice}.mp3` (see `templates/audio-player.php`).
+
+> **Targeted deploy when the post is prod-only.** If the article isn't in your
+> local landing checkout (the local repo lags prod), a full `./deploy.sh` can
+> revert prod content. Instead: upload the MP3 to R2, rsync **only**
+> `pages/blog/audio-manifest.php` and `templates/audio-player.php` (after diffing
+> the prod copies so you don't clobber other posts), then purge just the affected
+> URLs.
 
 ## See also
 
