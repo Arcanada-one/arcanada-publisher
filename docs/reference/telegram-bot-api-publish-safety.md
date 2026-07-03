@@ -6,7 +6,7 @@
 > `message_id` was lost, and the agent then **misattributed a pre-existing
 > foreign message** (a forwarded video from an earlier session) to itself by
 > matching caption text. It reported "smoke passed, publishing to prod" on the
-> strength of structural metrics and the *local source file* — never having
+> strength of structural metrics and the _local source file_ — never having
 > read back what was actually in the channel. A consilium (DevOps + QA +
 > reliability roles) produced the rules below. They apply to every agent that
 > posts to Telegram via the Bot API, and the spirit applies to all platforms.
@@ -110,7 +110,7 @@
     section "Universal rule"): Telegram = one link, the article in the post's
     language; **X (EN) = the EN article + the canonical Telegram (RU) post**,
     each language-labelled; FB/LI/VK = blog (platform language) + Telegram (RU)
-    + X (EN), all in one comment.
+    - X (EN), all in one comment.
 
 ### G. Post title + comment parent (added 2026-07-01, X/FB/LI/VK)
 
@@ -147,7 +147,7 @@
     the wrong content, no `<video>` preview appears, and the run fails with
     `composer_not_found` (exit 5) - which reads as 'UI drift' but is really a
     clipboard race. Set the clipboard (`osascript -e 'set the clipboard to
-    (POSIX file "...")'`) immediately before launch and copy nothing else until
+(POSIX file "...")'`) immediately before launch and copy nothing else until
     the publish returns.
 
 ### I. Site back-link block — verify each permalink in a browser (added 2026-07-03, X/FB/LI/VK/TG)

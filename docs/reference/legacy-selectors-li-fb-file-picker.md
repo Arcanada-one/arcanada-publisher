@@ -4,7 +4,7 @@
 > CLIs were deleted from the ecosystem (2026-07-03). The current adapters attach
 > media by **clipboard paste** (media-before-text, policy §6.4 in
 > `docs/explanation/social-links-and-comments-policy.md`) — the reliable path today.
-> This note keeps the *old* file-chooser + multi-image orchestration on record in
+> This note keeps the _old_ file-chooser + multi-image orchestration on record in
 > case a LinkedIn/Facebook UI revert ever makes the clipboard path stop working and
 > the file-picker path has to be re-engineered. It is NOT the current contract.
 
