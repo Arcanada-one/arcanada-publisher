@@ -304,7 +304,11 @@ async function runPublishFlow(
       // blob/preview hooks (still images do not false-positive the same way and
       // there is no scoped image equivalent in the 2026 composer).
       let attached = false;
-      const maxPolls = hasVideo ? 360 : 40; // video ≤180s, image ≤20s
+      // Large videos (tens of MB / many minutes) need longer than the 180s
+      // default before their <video> preview appears in the composer. Override
+      // via LINKEDIN_VIDEO_PREVIEW_POLLS (× 500ms). Default 360 = 180s.
+      const videoPreviewPolls = Number(process.env["LINKEDIN_VIDEO_PREVIEW_POLLS"] ?? 360);
+      const maxPolls = hasVideo ? videoPreviewPolls : 40; // video default ≤180s, image ≤20s
       const imagePreviewSel =
         "img[src^='blob:'], img[src*='media'], [data-test-media-preview], .share-images";
       for (let i = 0; i < maxPolls; i++) {
@@ -364,7 +368,12 @@ async function runPublishFlow(
     // R7: the share-creation API call is the publish confirmation; the DOM toast
     // caches and lies. We race the (polled) click against the network response.
     const publishingVideo = imagePaths.some(isVideoPath);
-    const postMaxPolls = publishingVideo ? 120 : 20; // ~60s / ~10s @ 500ms
+    // The Post button stays disabled until LinkedIn finalises the upload; a
+    // large video needs longer than the 60s default. Override via
+    // LINKEDIN_POST_BUTTON_POLLS (× 500ms). Default 120 = 60s.
+    const postMaxPolls = publishingVideo
+      ? Number(process.env["LINKEDIN_POST_BUTTON_POLLS"] ?? 120)
+      : 20; // ~60s / ~10s @ 500ms
     let posted = false;
     const clickPost = async (): Promise<void> => {
       for (let i = 0; i < postMaxPolls; i++) {
@@ -373,10 +382,15 @@ async function runPublishFlow(
         await page.waitForTimeout(500);
       }
     };
+    // Share-API confirmation timeout: a large video's finalisation can exceed the
+    // 30s default. Override via LINKEDIN_SHARE_API_TIMEOUT_MS. Default 30000.
+    const shareApiTimeoutMs = publishingVideo
+      ? Number(process.env["LINKEDIN_SHARE_API_TIMEOUT_MS"] ?? 30_000)
+      : 15_000;
     await Promise.all([
       page
         .waitForResponse((r) => r.url().includes(LINKEDIN_SHARE_API), {
-          timeout: publishingVideo ? 30_000 : 15_000,
+          timeout: shareApiTimeoutMs,
         })
         .catch(() => null),
       clickPost(),
