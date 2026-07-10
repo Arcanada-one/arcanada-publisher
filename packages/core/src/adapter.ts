@@ -15,6 +15,12 @@ export interface PublishInput {
   imagePaths?: string[];
   profile: string;
   dryRun?: boolean;
+  /** Reddit-specific target subreddit (without the `r/` prefix). */
+  subreddit?: string;
+  /** Reddit-specific self-post title. */
+  title?: string;
+  /** VK-specific wall owner id. */
+  ownerId?: number;
   /**
    * PUB-0033: opt-in X Premium long-form mode. When true, the X adapter gates
    * the body on the 25 000 UTF-16-unit Premium ceiling instead of the free-tier

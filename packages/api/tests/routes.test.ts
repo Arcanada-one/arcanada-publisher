@@ -141,6 +141,33 @@ describe("api routes — publish/comment/edit/delete over loopback", () => {
     expect(lines).toHaveLength(1);
   });
 
+  it("POST /publish forwards subreddit, title, and ownerId to the adapter", async () => {
+    await start();
+    const res = await fetch(`${base()}/publish`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        platform: "reddit",
+        text: "hello",
+        profile: "default",
+        dryRun: true,
+        subreddit: "test",
+        title: "Hello title",
+        ownerId: -42,
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(lastAdapter?.calls.publish).toHaveLength(1);
+    expect(lastAdapter?.calls.publish[0]).toMatchObject({
+      text: "hello",
+      profile: "default",
+      dryRun: true,
+      subreddit: "test",
+      title: "Hello title",
+      ownerId: -42,
+    } satisfies Partial<PublishInput>);
+  });
+
   it("POST /comment returns 200 with a CommentResult", async () => {
     await start();
     const res = await fetch(`${base()}/comment`, {
