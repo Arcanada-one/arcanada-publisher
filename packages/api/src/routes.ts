@@ -75,6 +75,11 @@ async function handlePublish(body: Body, deps: RouteDeps): Promise<unknown> {
     profile,
     dryRun,
     ...(imagePaths ? { imagePaths } : {}),
+    ...(typeof body.subreddit === "string" ? { subreddit: body.subreddit } : {}),
+    ...(typeof body.title === "string" ? { title: body.title } : {}),
+    ...(typeof body.ownerId === "number" && Number.isInteger(body.ownerId)
+      ? { ownerId: body.ownerId }
+      : {}),
   });
 
   if (dryRun) return result;
