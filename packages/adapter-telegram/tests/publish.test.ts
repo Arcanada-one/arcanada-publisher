@@ -70,6 +70,49 @@ describe("TelegramAdapter publish safety", () => {
     expect(transport).toHaveBeenNthCalledWith(2, "getUpdates", expect.any(URLSearchParams));
   });
 
+  it.each([
+    { name: "photo", fileName: "hero.png", method: "sendPhoto", field: "photo" },
+    { name: "video", fileName: "hero.mp4", method: "sendVideo", field: "video" },
+  ])("uses Telegram's $field multipart field for a $name", async ({ fileName, method, field }) => {
+    const media = makeMedia(fileName);
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, result: { id: 42 } })
+      .mockResolvedValueOnce({ ok: true, result: [] })
+      .mockImplementationOnce(async (actualMethod: string, body: FormData) => {
+        expect(actualMethod).toBe(method);
+        expect([...body.keys()].sort()).toEqual(["caption", "chat_id", field].sort());
+        const caption = String(body.get("caption"));
+        return {
+          ok: true,
+          result: {
+            message_id: 1,
+            chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
+            from: { id: 42 },
+            caption,
+            ...(field === "photo"
+              ? { photo: [{ file_id: "photo", width: 1, height: 1 }] }
+              : {
+                  video: {
+                    file_id: "video",
+                    width: 1,
+                    height: 1,
+                    duration: 1,
+                    file_name: fileName,
+                  },
+                }),
+          },
+        };
+      });
+    const adapter = new TelegramAdapter({ transport, nonce: () => "fixed" });
+    await adapter.publish({
+      text: "Title\n\nLead",
+      imagePaths: [media],
+      profile: "",
+      chatId: TELEGRAM_TEST_CHAT_ID,
+    });
+  });
+
   it("publishes Pattern A as a bounded photo caption and a linked body reply", async () => {
     const image = makeImage();
     const text = `${"😀".repeat(400)}${"a".repeat(199)} ${"b".repeat(4096)}`;
@@ -242,8 +285,12 @@ describe("TelegramAdapter publish safety", () => {
 });
 
 function makeImage(): string {
+  return makeMedia("hero.png");
+}
+
+function makeMedia(fileName: string): string {
   const dir = mkdtempSync(join(tmpdir(), "publisher-telegram-"));
-  const file = join(dir, "hero.png");
+  const file = join(dir, fileName);
   writeFileSync(file, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
   return file;
 }
