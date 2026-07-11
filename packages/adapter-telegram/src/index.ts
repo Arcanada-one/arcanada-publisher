@@ -233,10 +233,9 @@ export class TelegramAdapter extends BaseAdapter {
   ): Promise<void> {
     const actual = message.caption ?? message.text ?? "";
     if (
-      !chatMatches(message, chatId) ||
+      !authoredByExpectedSender(message, chatId, botId) ||
       message.message_id <= baseline ||
       message.forward_origin ||
-      message.from?.id !== botId ||
       actual !== expectedText
     )
       throw new AdapterError(
@@ -313,6 +312,15 @@ function chatMatches(message: TelegramMessage, chatId: string): boolean {
   return chatId.startsWith("@")
     ? message.chat.username === chatId.slice(1)
     : String(message.chat.id) === chatId;
+}
+function authoredByExpectedSender(
+  message: TelegramMessage,
+  chatId: string,
+  botId: number,
+): boolean {
+  if (!chatMatches(message, chatId)) return false;
+  if (message.from) return message.from.id === botId;
+  return message.sender_chat?.id === message.chat.id;
 }
 function parseMessageUrl(url: string): { chatId: string; messageId: number } {
   const parsed = new URL(url);
