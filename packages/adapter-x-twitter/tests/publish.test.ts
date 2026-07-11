@@ -210,6 +210,21 @@ describe("x publish — exact CreateTweet permalink", () => {
     ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
     expect(goto).toHaveBeenCalledTimes(1);
   });
+
+  it("fails closed when the response author differs from the authenticated profile", async () => {
+    const { page, goto, feedLinkRead } = makeDefaultStepsPage(
+      readFixture("create-tweet-direct.json"),
+      "/DifferentValid",
+    );
+    await expect(
+      publish(
+        { text: "hello", imagePaths: [makeImage()], profile: FAKE_PROFILE },
+        { profileManager: makeProfiles(), page },
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    expect(goto).toHaveBeenCalledTimes(1);
+    expect(feedLinkRead).not.toHaveBeenCalled();
+  });
 });
 
 function readFixture(name: string): unknown {
@@ -220,8 +235,13 @@ function readFixture(name: string): unknown {
 function makeDefaultStepsPage(
   createTweetPayload: unknown,
   profileHref: string | null,
-): { page: never; goto: ReturnType<typeof vi.fn> } {
+): {
+  page: never;
+  goto: ReturnType<typeof vi.fn>;
+  feedLinkRead: ReturnType<typeof vi.fn>;
+} {
   const goto = vi.fn(async () => {});
+  const feedLinkRead = vi.fn();
   const response = {
     url: () => "https://x.com/i/api/graphql/create/CreateTweet",
     status: () => 200,
@@ -237,7 +257,10 @@ function makeDefaultStepsPage(
       setInputFiles: vi.fn(async () => {}),
       getAttribute: vi.fn(async () => {
         if (selector === 'a[data-testid="AppTabBar_Profile_Link"]') return profileHref;
-        if (selector.includes("/status/")) return "/gdb/status/2075270503405924466";
+        if (selector.includes("/status/")) {
+          feedLinkRead();
+          return "/gdb/status/2075270503405924466";
+        }
         return null;
       }),
     };
@@ -255,5 +278,5 @@ function makeDefaultStepsPage(
     keyboard: { insertText: vi.fn(async () => {}) },
     isClosed: vi.fn(() => true),
   };
-  return { page: page as never, goto };
+  return { page: page as never, goto, feedLinkRead };
 }
