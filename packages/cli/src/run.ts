@@ -147,6 +147,7 @@ async function runPublish(
     ...(args.subreddit !== undefined ? { subreddit: args.subreddit } : {}),
     ...(args.title !== undefined ? { title: args.title } : {}),
     ...(args.ownerId !== undefined ? { ownerId: args.ownerId } : {}),
+    ...(args.chatId !== undefined ? { chatId: args.chatId } : {}),
   } as Parameters<ReturnType<typeof makeAdapter>["publish"]>[0]);
   return { code: ErrorCode.SUCCESS, message: `published: ${res.postUrl}` };
 }

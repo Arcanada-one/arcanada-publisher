@@ -8,6 +8,7 @@ import { LinkedInAdapter } from "@arcanada/publisher-linkedin";
 import { XAdapter } from "@arcanada/publisher-x";
 import { RedditAdapter } from "@arcanada/publisher-reddit";
 import { VKontakteAdapter } from "@arcanada/publisher-vkontakte";
+import { TelegramAdapter } from "@arcanada/publisher-telegram";
 import { type ParsedArgs } from "./parse-args.js";
 
 export function makeAdapter(platform: Platform, args: ParsedArgs): Adapter {
@@ -29,12 +30,29 @@ export function makeAdapter(platform: Platform, args: ParsedArgs): Adapter {
       return new RedditAdapter({ accessToken: requireToken("REDDIT_ACCESS_TOKEN", args) });
     case "vkontakte":
       return new VKontakteAdapter({ accessToken: requireToken("VK_ACCESS_TOKEN", args) });
+    case "telegram":
+      return makeTelegramAdapter(requireToken("TELEGRAM_BOT_TOKEN", args));
     default:
       throw new AdapterError(
         ErrorCode.INVALID_ARGS,
         `unsupported platform '${platform as string}'`,
       );
   }
+}
+
+function telegramAllowedChats(): string[] | undefined {
+  const value = process.env["TELEGRAM_ALLOWED_CHAT_IDS"];
+  return value
+    ? value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : undefined;
+}
+
+function makeTelegramAdapter(botToken: string): TelegramAdapter {
+  const allowedLiveChatIds = telegramAllowedChats();
+  return new TelegramAdapter({ botToken, ...(allowedLiveChatIds ? { allowedLiveChatIds } : {}) });
 }
 
 /** API adapters read their token from the environment (never a CLI flag). */

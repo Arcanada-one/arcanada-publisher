@@ -26,12 +26,13 @@
     "@arcanada/publisher-core": "workspace:*",
     "@arcanada/publisher-facebook": "workspace:*",
     "@arcanada/publisher-linkedin": "workspace:*",
-    "@arcanada/publisher-x": "workspace:*",
     "@arcanada/publisher-reddit": "workspace:*",
-    "@arcanada/publisher-vkontakte": "workspace:*"
+    "@arcanada/publisher-telegram": "workspace:*",
+    "@arcanada/publisher-vkontakte": "workspace:*",
+    "@arcanada/publisher-x": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^3.2.7"
   }
 }

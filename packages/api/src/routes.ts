@@ -80,6 +80,7 @@ async function handlePublish(body: Body, deps: RouteDeps): Promise<unknown> {
     ...(typeof body.ownerId === "number" && Number.isInteger(body.ownerId)
       ? { ownerId: body.ownerId }
       : {}),
+    ...(typeof body.chatId === "string" ? { chatId: body.chatId } : {}),
   });
 
   if (dryRun) return result;

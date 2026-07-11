@@ -8,6 +8,7 @@
     { "path": "packages/adapter-linkedin" },
     { "path": "packages/adapter-x-twitter" },
     { "path": "packages/adapter-reddit" },
-    { "path": "packages/adapter-vkontakte" }
+    { "path": "packages/adapter-vkontakte" },
+    { "path": "packages/adapter-telegram" }
   ]
 }

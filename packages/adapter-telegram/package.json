@@ -1,7 +1,7 @@
 {
-  "name": "@arcanada/publisher-reddit",
+  "name": "@arcanada/publisher-telegram",
   "version": "0.1.0-pre.0",
-  "description": "Reddit adapter for arcanada-publisher (OAuth API)",
+  "description": "Telegram Bot API adapter for arcanada-publisher",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",

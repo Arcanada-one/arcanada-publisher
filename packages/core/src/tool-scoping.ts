@@ -19,6 +19,7 @@ export const PLATFORM_TEXT_LIMITS: Record<Platform, number> = {
   linkedin: 3_000,
   reddit: 40_000,
   vkontakte: 16_384,
+  telegram: 4_096,
 };
 
 /** Image MIME types an agent may attach. */
