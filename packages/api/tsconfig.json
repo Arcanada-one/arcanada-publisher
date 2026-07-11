@@ -12,6 +12,7 @@
     { "path": "../adapter-linkedin" },
     { "path": "../adapter-x-twitter" },
     { "path": "../adapter-reddit" },
-    { "path": "../adapter-vkontakte" }
+    { "path": "../adapter-vkontakte" },
+    { "path": "../adapter-telegram" }
   ]
 }
