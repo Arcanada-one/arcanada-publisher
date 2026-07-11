@@ -76,7 +76,7 @@ describe("comment — parent verify round-trip", () => {
 describe("comment — TipTap submit and exact post verification", () => {
   const text = "Exact first comment\nhttps://example.com/article";
 
-  it("submits the Finnish TipTap composer through its enabled localized button", async () => {
+  it("submits the Finnish TipTap composer without requiring an ancestor form", async () => {
     const harness = makeCommentPage({
       mode: "tiptap",
       postMatches: [{ text, id: "9001" }],
@@ -85,6 +85,18 @@ describe("comment — TipTap submit and exact post verification", () => {
     expect(result.commentId).toBe("9001");
     expect(harness.submitClick).toHaveBeenCalledTimes(1);
     expect(harness.keyboardPress).not.toHaveBeenCalledWith("Control+Enter");
+  });
+
+  it("uses the nearest composer button and ignores farther and global localized decoys", async () => {
+    const harness = makeCommentPage({
+      mode: "tiptap",
+      postMatches: [{ text, id: "9011" }],
+    });
+    const result = await runComment(text, harness.page);
+    expect(result.commentId).toBe("9011");
+    expect(harness.submitClick).toHaveBeenCalledTimes(1);
+    expect(harness.farSubmitClick).not.toHaveBeenCalled();
+    expect(harness.globalSubmitClick).not.toHaveBeenCalled();
   });
 
   it("uses Ctrl+Enter only for the legacy Quill editor", async () => {
@@ -196,12 +208,20 @@ function makeCommentPage(options: CommentPageOptions): {
   page: never;
   submitClick: ReturnType<typeof vi.fn>;
   submitIsEnabled: ReturnType<typeof vi.fn>;
+  farSubmitClick: ReturnType<typeof vi.fn>;
+  globalSubmitClick: ReturnType<typeof vi.fn>;
   keyboardPress: ReturnType<typeof vi.fn>;
 } {
   let submitted = false;
   let preSubmitRead = 0;
   let enabledRead = 0;
   const submitClick = vi.fn(async () => {
+    submitted = true;
+  });
+  const farSubmitClick = vi.fn(async () => {
+    submitted = true;
+  });
+  const globalSubmitClick = vi.fn(async () => {
     submitted = true;
   });
   const keyboardPress = vi.fn(async (key: string) => {
@@ -218,19 +238,36 @@ function makeCommentPage(options: CommentPageOptions): {
     click: submitClick,
     isEnabled: submitIsEnabled,
   });
-  const composer = makeLocator(true, {
-    getByRole: () => submit,
+  const farSubmit = makeLocator(true, { click: farSubmitClick });
+  const globalSubmit = makeLocator(true, { click: globalSubmitClick });
+  const topParent = makeLocator(true, {
+    getByRole: () => farSubmit,
   });
+  const nearestComposer = makeLocator(true, {
+    getByRole: () => submit,
+    locator: (selector: string) => (selector === "xpath=.." ? topParent : failing),
+  });
+  let editorParent = nearestComposer;
+  for (let depth = 1; depth < 6; depth += 1) {
+    const parent = editorParent;
+    editorParent = makeLocator(true, {
+      getByRole: () => failing,
+      locator: (selector: string) => (selector === "xpath=.." ? parent : failing),
+    });
+  }
   const tiptap = makeLocator(options.mode === "tiptap", {
-    locator: () => composer,
+    locator: (selector: string) => (selector === "xpath=.." ? editorParent : failing),
   });
   const legacy = makeLocator(options.mode === "legacy", {
-    locator: () => composer,
+    locator: () => nearestComposer,
   });
   const page = {
     goto: vi.fn(async () => {}),
-    getByRole: (role: string) =>
-      role === "textbox" ? (options.mode === "legacy" ? legacy : tiptap) : failing,
+    getByRole: (role: string) => {
+      if (role === "textbox") return options.mode === "legacy" ? legacy : tiptap;
+      if (role === "button") return globalSubmit;
+      return failing;
+    },
     locator: (selector: string) => {
       if (selector.includes("tiptap")) return tiptap;
       if (selector.includes("ql-editor") || selector.includes("comments-comment-box"))
@@ -250,7 +287,14 @@ function makeCommentPage(options: CommentPageOptions): {
     }),
     isClosed: vi.fn(() => true),
   };
-  return { page: page as never, submitClick, submitIsEnabled, keyboardPress };
+  return {
+    page: page as never,
+    submitClick,
+    submitIsEnabled,
+    farSubmitClick,
+    globalSubmitClick,
+    keyboardPress,
+  };
 }
 
 function makeLocator(
@@ -259,6 +303,7 @@ function makeLocator(
 ): Record<string, unknown> {
   const locator: Record<string, unknown> = {
     first: () => locator,
+    count: async () => (visible ? 1 : 0),
     waitFor: async () => {
       if (!visible) throw new Error("locator not visible");
     },

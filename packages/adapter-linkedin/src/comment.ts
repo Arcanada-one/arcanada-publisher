@@ -151,10 +151,14 @@ async function resolveCommentEditor(page: Page): Promise<ResolvedCommentEditor> 
 }
 
 async function submitTipTapComment(page: Page, editor: Locator): Promise<void> {
-  const composer = editor.locator("xpath=ancestor::form[1]");
-  const submit = composer
-    .getByRole("button", { name: selectors.commentSubmitButton, exact: true })
-    .first();
+  const submit = await findNearestTipTapSubmit(editor);
+  if (!submit) {
+    throw new AdapterError(
+      ErrorCode.PUBLISH_BUTTON_ABSENT,
+      "comment: enabled TipTap submit button was not found in the composer",
+      { liErrorType: "publish_button_absent" },
+    );
+  }
   try {
     await submit.waitFor({ state: "visible", timeout: 5_000 });
   } catch {
@@ -183,6 +187,19 @@ async function submitTipTapComment(page: Page, editor: Locator): Promise<void> {
     "comment: enabled TipTap submit button was not found in the composer",
     { liErrorType: "publish_button_absent" },
   );
+}
+
+async function findNearestTipTapSubmit(editor: Locator): Promise<Locator | null> {
+  let scope = editor.locator("xpath=..");
+  for (let depth = 0; depth < 12; depth += 1) {
+    const candidate = scope
+      .getByRole("button", { name: selectors.commentSubmitButton, exact: true })
+      .first();
+    const count = await candidate.count().catch(() => 0);
+    if (count > 0) return candidate;
+    scope = scope.locator("xpath=..");
+  }
+  return null;
 }
 
 interface RenderedCommentMatch {
