@@ -29,6 +29,9 @@ import {
 } from "./client.js";
 
 export const TELEGRAM_TEST_CHAT_ID = "-1003855619081";
+const TELEGRAM_CAPTION_LIMIT = 1_024;
+const TELEGRAM_MESSAGE_LIMIT = 4_096;
+const TELEGRAM_PATTERN_A_LIMIT = 5_096;
 export interface TelegramAdapterOptions {
   botToken?: string;
   transport?: TelegramTransport;
@@ -60,7 +63,13 @@ export class TelegramAdapter extends BaseAdapter {
     if (!input.text.trim())
       throw new AdapterError(ErrorCode.MISSING_INPUT, "publish: text is required");
     const media = input.imagePaths?.[0] ?? input.imagePath;
-    if (media && input.text.length > 900)
+    const kind = media ? mediaKind(media) : undefined;
+    if (media && kind === "image" && input.text.length > TELEGRAM_PATTERN_A_LIMIT)
+      throw new AdapterError(
+        ErrorCode.INVALID_ARGS,
+        `telegram: Pattern A text exceeds ${TELEGRAM_PATTERN_A_LIMIT} UTF-16 units`,
+      );
+    if (media && kind === "video" && input.text.length > 900)
       throw new AdapterError(
         ErrorCode.INVALID_ARGS,
         "telegram: media caption must leave room for the idempotency marker (maximum 900 characters)",
@@ -82,21 +91,53 @@ export class TelegramAdapter extends BaseAdapter {
       );
     const bot = requireResult<{ id: number }>(await this.transport("getMe", undefined), "getMe");
     const baseline = await this.baseline(chatId);
-    const marker = `PUB-0029-${this.nonce()}`;
-    const text = `${input.text}\n\n#${marker.replace(/[^A-Za-z0-9_]/g, "_")}`;
+    const markerNonce =
+      this.nonce()
+        .replace(/[^A-Za-z0-9]/g, "")
+        .slice(0, 12) || "nonce";
+    const markerSuffix = `\n\n#PUB_0029_${markerNonce}`;
+    const pattern =
+      media && kind === "image"
+        ? patternAText(input.text, TELEGRAM_CAPTION_LIMIT - markerSuffix.length)
+        : { hero: input.text };
+    const heroText = `${pattern.hero}${markerSuffix}`;
     const body = new FormData();
     body.set("chat_id", chatId);
     let method = "sendMessage";
     if (media) {
       const bytes = await readFile(media);
-      const kind = mediaKind(media);
-      method = kind === "video" ? "sendVideo" : "sendPhoto";
-      body.set(kind, new Blob([bytes]), basename(media));
-      body.set("caption", text);
-    } else body.set("text", text);
+      const attachmentKind = mediaKind(media);
+      method = attachmentKind === "video" ? "sendVideo" : "sendPhoto";
+      body.set(attachmentKind, new Blob([bytes]), basename(media));
+      body.set("caption", heroText);
+    } else body.set("text", heroText);
 
     const message = requireMessage(await this.transport(method, body), method);
-    await this.assertReadBack(message, chatId, baseline, bot.id, text, media);
+    await this.assertReadBack(message, chatId, baseline, bot.id, heroText, media);
+    if (pattern.reply) {
+      const reply = requireMessage(
+        await this.transport(
+          "sendMessage",
+          jsonBody({
+            chat_id: chatId,
+            text: pattern.reply,
+            reply_parameters: { message_id: message.message_id },
+          }),
+        ),
+        "sendMessage",
+      );
+      await this.assertReadBack(reply, chatId, baseline, bot.id, pattern.reply);
+      if (
+        reply.message_id <= message.message_id ||
+        reply.reply_to_message?.message_id !== message.message_id ||
+        reply.reply_to_message.chat.id !== message.chat.id
+      )
+        throw new AdapterError(
+          ErrorCode.VERIFY_FAILED,
+          "publish: Telegram Pattern A reply linkage read-back mismatch",
+          { heroMessageId: message.message_id, replyMessageId: reply.message_id },
+        );
+    }
     return PublishResultSchema.parse({
       ok: true,
       platform: "telegram",
@@ -196,8 +237,7 @@ export class TelegramAdapter extends BaseAdapter {
       message.message_id <= baseline ||
       message.forward_origin ||
       message.from?.id !== botId ||
-      actual.slice(0, 120) !== expectedText.slice(0, 120) ||
-      actual.slice(-120) !== expectedText.slice(-120)
+      actual !== expectedText
     )
       throw new AdapterError(
         ErrorCode.VERIFY_FAILED,
@@ -225,6 +265,35 @@ function requireChatId(value?: string): string {
 }
 function mediaKind(path: string): "image" | "video" {
   return /\.(mp4|mov|webm)$/i.test(path) ? "video" : "image";
+}
+function patternAText(text: string, heroLimit: number): { hero: string; reply?: string } {
+  if (text.length <= heroLimit) return { hero: text };
+  const minimum = Math.max(0, text.length - TELEGRAM_MESSAGE_LIMIT);
+  const splitAt =
+    lastBoundary(text, minimum, heroLimit, /\n\s*\n/gu) ??
+    lastBoundary(text, minimum, heroLimit, /[.!?]["')\]]?\s+/gu) ??
+    lastBoundary(text, minimum, heroLimit, /\s+/gu);
+  if (splitAt === undefined)
+    throw new AdapterError(
+      ErrorCode.INVALID_ARGS,
+      "telegram: Pattern A cannot split at a paragraph, sentence, or space boundary",
+      { heroLimit, replyLimit: TELEGRAM_MESSAGE_LIMIT },
+    );
+  return { hero: text.slice(0, splitAt), reply: text.slice(splitAt) };
+}
+function lastBoundary(
+  text: string,
+  minimum: number,
+  maximum: number,
+  pattern: RegExp,
+): number | undefined {
+  let found: number | undefined;
+  for (const match of text.matchAll(pattern)) {
+    const end = (match.index ?? 0) + match[0].length;
+    if (end >= minimum && end <= maximum) found = end;
+    if (end > maximum) break;
+  }
+  return found;
 }
 function jsonBody(value: Record<string, unknown>): URLSearchParams {
   const body = new URLSearchParams();

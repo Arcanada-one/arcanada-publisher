@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { run } from "../src/run.js";
 
@@ -38,6 +40,26 @@ describe("cli run — X dry-run publish (V-AC-11)", () => {
     ]);
     expect(res.code).not.toBe(0);
     expect(res.code).toBe(1); // ErrorCode.INVALID_ARGS
+  });
+
+  it("Telegram Pattern A dry-run with an attachment exits 0", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "publisher-cli-telegram-"));
+    const text = join(dir, "longread.txt");
+    const image = join(dir, "missing.png");
+    writeFileSync(text, `${"hero words ".repeat(100)}\n\n${"body words ".repeat(200)}`);
+    const res = await run([
+      "publish",
+      "--platform",
+      "telegram",
+      "--chat-id",
+      "-1003855619081",
+      "--text-file",
+      text,
+      "--image",
+      image,
+      "--dry-run",
+    ]);
+    expect(res.code).toBe(0);
   });
 
   it("an unknown platform exits with INVALID_ARGS", async () => {
