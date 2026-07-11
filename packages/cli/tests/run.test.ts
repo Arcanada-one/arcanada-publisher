@@ -45,9 +45,8 @@ describe("cli run — X dry-run publish (V-AC-11)", () => {
   it("Telegram Pattern A dry-run with an attachment exits 0", async () => {
     const dir = mkdtempSync(join(tmpdir(), "publisher-cli-telegram-"));
     const text = join(dir, "longread.txt");
-    const image = join(dir, "hero.png");
+    const image = join(dir, "missing.png");
     writeFileSync(text, `${"hero words ".repeat(100)}\n\n${"body words ".repeat(200)}`);
-    writeFileSync(image, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     const res = await run([
       "publish",
       "--platform",

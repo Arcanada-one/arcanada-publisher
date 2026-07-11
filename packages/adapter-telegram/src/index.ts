@@ -237,8 +237,7 @@ export class TelegramAdapter extends BaseAdapter {
       message.message_id <= baseline ||
       message.forward_origin ||
       message.from?.id !== botId ||
-      actual.slice(0, 120) !== expectedText.slice(0, 120) ||
-      actual.slice(-120) !== expectedText.slice(-120)
+      actual !== expectedText
     )
       throw new AdapterError(
         ErrorCode.VERIFY_FAILED,
