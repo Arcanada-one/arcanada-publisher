@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
+import { describe, it, expect, vi } from "vitest";
+import { mkdtempSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { AdapterError, ErrorCode, ProfileManager } from "@arcanada/publisher-core";
 import { comment } from "../src/comment.js";
 
 const FAKE_PROFILE = "vitest-fake-profile";
@@ -69,3 +72,214 @@ describe("comment — parent verify round-trip", () => {
     ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
   });
 });
+
+describe("comment — TipTap submit and exact post verification", () => {
+  const text = "Exact first comment\nhttps://example.com/article";
+
+  it("submits the Finnish TipTap composer through its enabled localized button", async () => {
+    const harness = makeCommentPage({
+      mode: "tiptap",
+      postMatches: [{ text, id: "9001" }],
+    });
+    const result = await runComment(text, harness.page);
+    expect(result.commentId).toBe("9001");
+    expect(harness.submitClick).toHaveBeenCalledTimes(1);
+    expect(harness.keyboardPress).not.toHaveBeenCalledWith("Control+Enter");
+  });
+
+  it("uses Ctrl+Enter only for the legacy Quill editor", async () => {
+    const harness = makeCommentPage({
+      mode: "legacy",
+      postMatches: [{ text, id: "9002" }],
+    });
+    const result = await runComment(text, harness.page);
+    expect(result.commentId).toBe("9002");
+    expect(harness.submitClick).not.toHaveBeenCalled();
+    expect(harness.keyboardPress).toHaveBeenCalledWith("Control+Enter");
+  });
+
+  it("fails TipTap closed when no enabled localized submit button exists", async () => {
+    const harness = makeCommentPage({ mode: "tiptap", submitEnabled: false });
+    await expect(runComment(text, harness.page)).rejects.toMatchObject({
+      code: ErrorCode.PUBLISH_BUTTON_ABSENT,
+    });
+    expect(harness.submitIsEnabled).toHaveBeenCalledTimes(20);
+    expect(harness.submitClick).not.toHaveBeenCalled();
+    expect(harness.keyboardPress).not.toHaveBeenCalledWith("Control+Enter");
+  });
+
+  it("waits for the TipTap submit button to become enabled", async () => {
+    const harness = makeCommentPage({
+      mode: "tiptap",
+      submitEnabled: [false, false, true],
+      postMatches: [{ text, id: "9004" }],
+    });
+    const result = await runComment(text, harness.page);
+    expect(result.commentId).toBe("9004");
+    expect(harness.submitIsEnabled).toHaveBeenCalledTimes(3);
+    expect(harness.submitClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails when exact submitted text never appears even if a generic comment id exists", async () => {
+    const harness = makeCommentPage({
+      mode: "legacy",
+      legacyExtractedId: "9999",
+      postMatches: [{ text: "Different comment", id: "9999" }],
+    });
+    await expect(runComment(text, harness.page)).rejects.toMatchObject({
+      code: ErrorCode.VERIFY_FAILED,
+    });
+  });
+
+  it("returns an explicit verified evidence id only after exact new text appears without a DOM id", async () => {
+    const harness = makeCommentPage({ mode: "tiptap", postMatches: [{ text, id: "" }] });
+    const result = await runComment(text, harness.page);
+    expect(result.commentId).toMatch(/^verified:7462962260978642944:[a-f0-9]{16}$/);
+    expect(harness.submitClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("prefers a real comment id over an id-less exact wrapper match", async () => {
+    const harness = makeCommentPage({
+      mode: "tiptap",
+      postMatches: [
+        { text, id: "" },
+        { text, id: "9010" },
+      ],
+    });
+    const result = await runComment(text, harness.page);
+    expect(result.commentId).toBe("9010");
+  });
+
+  it("fails before submit when the exact comment text already exists at baseline", async () => {
+    const harness = makeCommentPage({
+      mode: "legacy",
+      baselineMatches: [{ text, id: "8000" }],
+      postMatches: [{ text, id: "9003" }],
+      legacyExtractedId: "9003",
+    });
+    await expect(runComment(text, harness.page)).rejects.toMatchObject({
+      code: ErrorCode.VERIFY_FAILED,
+    });
+    expect(harness.keyboardPress).not.toHaveBeenCalled();
+    expect(harness.submitClick).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when an old exact match loads after baseline but before submit", async () => {
+    const harness = makeCommentPage({
+      mode: "tiptap",
+      preSubmitSnapshots: [[], [{ text, id: "8001" }]],
+      postMatches: [{ text, id: "9005" }],
+    });
+    await expect(runComment(text, harness.page)).rejects.toMatchObject({
+      code: ErrorCode.VERIFY_FAILED,
+    });
+    expect(harness.submitClick).not.toHaveBeenCalled();
+    expect(harness.keyboardPress).not.toHaveBeenCalled();
+  });
+});
+
+interface CommentMatch {
+  text: string;
+  id: string;
+}
+
+interface CommentPageOptions {
+  mode: "tiptap" | "legacy";
+  submitEnabled?: boolean | boolean[];
+  baselineMatches?: CommentMatch[];
+  preSubmitSnapshots?: CommentMatch[][];
+  postMatches?: CommentMatch[];
+  legacyExtractedId?: string;
+}
+
+function makeCommentPage(options: CommentPageOptions): {
+  page: never;
+  submitClick: ReturnType<typeof vi.fn>;
+  submitIsEnabled: ReturnType<typeof vi.fn>;
+  keyboardPress: ReturnType<typeof vi.fn>;
+} {
+  let submitted = false;
+  let preSubmitRead = 0;
+  let enabledRead = 0;
+  const submitClick = vi.fn(async () => {
+    submitted = true;
+  });
+  const keyboardPress = vi.fn(async (key: string) => {
+    if (options.mode === "legacy" && key === "Control+Enter") submitted = true;
+  });
+  const submitIsEnabled = vi.fn(async () => {
+    if (!Array.isArray(options.submitEnabled)) return options.submitEnabled ?? true;
+    const value = options.submitEnabled[Math.min(enabledRead, options.submitEnabled.length - 1)];
+    enabledRead += 1;
+    return value;
+  });
+  const failing = makeLocator(false);
+  const submit = makeLocator(true, {
+    click: submitClick,
+    isEnabled: submitIsEnabled,
+  });
+  const composer = makeLocator(true, {
+    getByRole: () => submit,
+  });
+  const tiptap = makeLocator(options.mode === "tiptap", {
+    locator: () => composer,
+  });
+  const legacy = makeLocator(options.mode === "legacy", {
+    locator: () => composer,
+  });
+  const page = {
+    goto: vi.fn(async () => {}),
+    getByRole: (role: string) =>
+      role === "textbox" ? (options.mode === "legacy" ? legacy : tiptap) : failing,
+    locator: (selector: string) => {
+      if (selector.includes("tiptap")) return tiptap;
+      if (selector.includes("ql-editor") || selector.includes("comments-comment-box"))
+        return legacy;
+      return failing;
+    },
+    keyboard: { insertText: vi.fn(async () => {}), press: keyboardPress },
+    waitForTimeout: vi.fn(async () => {}),
+    evaluate: vi.fn(async (source: unknown, expected?: string) => {
+      if (typeof source === "string") {
+        return submitted ? (options.legacyExtractedId ?? options.postMatches?.[0]?.id ?? "") : "";
+      }
+      const matches = submitted
+        ? (options.postMatches ?? [])
+        : (options.preSubmitSnapshots?.[preSubmitRead++] ?? options.baselineMatches ?? []);
+      return matches.filter((match) => match.text === expected);
+    }),
+    isClosed: vi.fn(() => true),
+  };
+  return { page: page as never, submitClick, submitIsEnabled, keyboardPress };
+}
+
+function makeLocator(
+  visible: boolean,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const locator: Record<string, unknown> = {
+    first: () => locator,
+    waitFor: async () => {
+      if (!visible) throw new Error("locator not visible");
+    },
+    click: vi.fn(async () => {}),
+    isEnabled: async () => true,
+    locator: () => locator,
+    getByRole: () => locator,
+    ...overrides,
+  };
+  return locator;
+}
+
+async function runComment(text: string, page: never) {
+  const root = mkdtempSync(join(tmpdir(), "content-0377-li-comment-"));
+  mkdirSync(join(root, "linkedin", "p1"), { recursive: true });
+  return comment(
+    { parentPostUrl: PARENT_OK, text, profile: "p1" },
+    {
+      profileManager: new ProfileManager({ root }),
+      page,
+      verifyParent: async () => true,
+    },
+  );
+}
