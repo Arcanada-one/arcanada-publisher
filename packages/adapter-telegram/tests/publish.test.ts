@@ -187,6 +187,52 @@ describe("TelegramAdapter publish safety", () => {
     },
   );
 
+  it("accepts channel-authored hero and reply responses without Message.from", async () => {
+    const text = `${"hero words ".repeat(100)}\n\n${"body words ".repeat(180)}`;
+    const channelIdentity = { sender_chat: { id: Number(TELEGRAM_TEST_CHAT_ID) } };
+    await expect(
+      runPatternA(text, {}, { hero: channelIdentity, reply: channelIdentity }),
+    ).resolves.toMatchObject({ heroCaption: expect.any(String), replyText: expect.any(String) });
+  });
+
+  it.each([
+    { part: "hero", caseName: "missing sender_chat", identity: {} },
+    { part: "reply", caseName: "missing sender_chat", identity: {} },
+    {
+      part: "hero",
+      caseName: "mismatched sender_chat",
+      identity: { sender_chat: { id: -1001 } },
+    },
+    {
+      part: "reply",
+      caseName: "mismatched sender_chat",
+      identity: { sender_chat: { id: -1001 } },
+    },
+    {
+      part: "hero",
+      caseName: "wrong from with otherwise valid sender_chat",
+      identity: { from: { id: 999 }, sender_chat: { id: Number(TELEGRAM_TEST_CHAT_ID) } },
+    },
+    {
+      part: "reply",
+      caseName: "wrong from with otherwise valid sender_chat",
+      identity: { from: { id: 999 }, sender_chat: { id: Number(TELEGRAM_TEST_CHAT_ID) } },
+    },
+  ] as const)("rejects $caseName on the $part", async ({ part, identity }) => {
+    const text = `${"hero words ".repeat(100)}\n\n${"body words ".repeat(180)}`;
+    const validChannelIdentity = { sender_chat: { id: Number(TELEGRAM_TEST_CHAT_ID) } };
+    await expect(
+      runPatternA(
+        text,
+        {},
+        {
+          hero: part === "hero" ? identity : validChannelIdentity,
+          reply: part === "reply" ? identity : validChannelIdentity,
+        },
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+  });
+
   it("prefers a paragraph boundary over later sentence and space boundaries", async () => {
     const text = `${"p".repeat(250)}\n\n${"s".repeat(300)}. ${"w".repeat(400)} ${"tail".repeat(100)}`;
     const { heroCaption, replyText } = await runPatternA(text);
@@ -298,6 +344,7 @@ function makeMedia(fileName: string): string {
 async function runPatternA(
   text: string,
   mutate: Partial<Record<"hero" | "reply", (value: string) => string>> = {},
+  identity: Partial<Record<"hero" | "reply", TestMessageIdentity>> = {},
 ): Promise<{ heroCaption: string; replyText: string }> {
   let heroCaption = "";
   let replyText = "";
@@ -312,7 +359,7 @@ async function runPatternA(
         result: {
           message_id: 1,
           chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
-          from: { id: 42 },
+          ...(identity.hero ?? { from: { id: 42 } }),
           caption: mutate.hero?.(heroCaption) ?? heroCaption,
           photo: [{ file_id: "photo", width: 1, height: 1 }],
         },
@@ -325,7 +372,7 @@ async function runPatternA(
         result: {
           message_id: 2,
           chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
-          from: { id: 42 },
+          ...(identity.reply ?? { from: { id: 42 } }),
           text: mutate.reply?.(replyText) ?? replyText,
           reply_to_message: { message_id: 1, chat: { id: Number(TELEGRAM_TEST_CHAT_ID) } },
         },
@@ -339,6 +386,11 @@ async function runPatternA(
     chatId: TELEGRAM_TEST_CHAT_ID,
   });
   return { heroCaption, replyText };
+}
+
+interface TestMessageIdentity {
+  from?: { id: number };
+  sender_chat?: { id: number };
 }
 
 function stripMarker(text: string): string {

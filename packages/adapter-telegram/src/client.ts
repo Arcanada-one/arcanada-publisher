@@ -4,6 +4,7 @@ export interface TelegramMessage {
   message_id: number;
   chat: { id: number; username?: string };
   from?: { id: number };
+  sender_chat?: { id: number };
   forward_origin?: unknown;
   text?: string;
   caption?: string;
