@@ -108,7 +108,7 @@ export class TelegramAdapter extends BaseAdapter {
       const bytes = await readFile(media);
       const attachmentKind = mediaKind(media);
       method = attachmentKind === "video" ? "sendVideo" : "sendPhoto";
-      body.set(attachmentKind, new Blob([bytes]), basename(media));
+      body.set(attachmentKind === "image" ? "photo" : "video", new Blob([bytes]), basename(media));
       body.set("caption", heroText);
     } else body.set("text", heroText);
 
