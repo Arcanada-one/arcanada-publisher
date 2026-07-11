@@ -28,6 +28,7 @@ Operators automating their own social-media posting across several platforms tod
 | `@arcanada/publisher-x`         | live       | X (Twitter) publisher                                                            |
 | `@arcanada/publisher-reddit`    | live       | Reddit publisher                                                                 |
 | `@arcanada/publisher-vkontakte` | live       | VKontakte publisher                                                              |
+| `@arcanada/publisher-telegram`  | live       | Telegram Bot API publisher with test-channel-first gating                        |
 | `@arcanada/publisher`           | live       | Unified CLI (`arcanada-publisher`)                                               |
 | `@arcanada/publisher-server`    | live       | Local HTTP API (Fastify, loopback by default)                                    |
 
@@ -38,6 +39,17 @@ pnpm install --frozen-lockfile
 pnpm -r build
 pnpm -r test
 pnpm audit --prod --audit-level=high
+```
+
+Telegram publishes require `TELEGRAM_BOT_TOKEN` and `--chat-id`. Live publishing
+is restricted to the canonical test channel (`-1003855619081`) by default.
+After operator approval, additional channel IDs can be explicitly allowlisted in
+the comma-separated `TELEGRAM_ALLOWED_CHAT_IDS` environment variable. Dry runs
+never require credentials or contact Telegram:
+
+```bash
+arcanada-publisher publish --platform telegram --chat-id -1003855619081 \
+  --text-file post.md --dry-run
 ```
 
 All five platform adapters (Facebook, LinkedIn, X, Reddit, VKontakte), the unified CLI, and the loopback HTTP API are implemented and tested.

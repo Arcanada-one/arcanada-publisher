@@ -41,6 +41,8 @@ export interface ParsedArgs {
   title: string | undefined;
   /** VK-specific: wall owner id (negative for communities). */
   ownerId: number | undefined;
+  /** Telegram-specific: target chat/channel id or @username. */
+  chatId: string | undefined;
   /** X-specific (PUB-0033): opt-in Premium long-form mode (25 000-char limit). */
   premium: boolean;
   /**
@@ -98,6 +100,7 @@ const VALUE_FLAGS = new Set([
   "--subreddit",
   "--title",
   "--owner-id",
+  "--chat-id",
   // video subcommand flags
   "--cover",
   "--audio",
@@ -144,6 +147,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     subreddit: undefined,
     title: undefined,
     ownerId: undefined,
+    chatId: undefined,
     premium: false,
     headed: false,
     cover: undefined,
@@ -238,6 +242,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
         out.ownerId = ownerId;
         break;
       }
+      case "--chat-id":
+        out.chatId = value;
+        break;
       // video subcommand flags
       case "--cover":
         out.cover = value;
