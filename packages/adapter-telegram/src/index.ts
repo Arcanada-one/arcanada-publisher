@@ -60,16 +60,16 @@ export class TelegramAdapter extends BaseAdapter {
 
   async publish(input: PublishInput): Promise<PublishResult> {
     const chatId = requireChatId(input.chatId);
-    if (!input.text.trim())
-      throw new AdapterError(ErrorCode.MISSING_INPUT, "publish: text is required");
+    const text = normalizeTerminalLineEnding(input.text);
+    if (!text.trim()) throw new AdapterError(ErrorCode.MISSING_INPUT, "publish: text is required");
     const media = input.imagePaths?.[0] ?? input.imagePath;
     const kind = media ? mediaKind(media) : undefined;
-    if (media && kind === "image" && input.text.length > TELEGRAM_PATTERN_A_LIMIT)
+    if (media && kind === "image" && text.length > TELEGRAM_PATTERN_A_LIMIT)
       throw new AdapterError(
         ErrorCode.INVALID_ARGS,
         `telegram: Pattern A text exceeds ${TELEGRAM_PATTERN_A_LIMIT} UTF-16 units`,
       );
-    if (media && kind === "video" && input.text.length > 900)
+    if (media && kind === "video" && text.length > 900)
       throw new AdapterError(
         ErrorCode.INVALID_ARGS,
         "telegram: media caption must leave room for the idempotency marker (maximum 900 characters)",
@@ -98,8 +98,8 @@ export class TelegramAdapter extends BaseAdapter {
     const markerSuffix = `\n\n#PUB_0029_${markerNonce}`;
     const pattern =
       media && kind === "image"
-        ? patternAText(input.text, TELEGRAM_CAPTION_LIMIT - markerSuffix.length)
-        : { hero: input.text };
+        ? patternAText(text, TELEGRAM_CAPTION_LIMIT - markerSuffix.length)
+        : { hero: text };
     const heroText = `${pattern.hero}${markerSuffix}`;
     const body = new FormData();
     body.set("chat_id", chatId);
@@ -261,6 +261,9 @@ function requireChatId(value?: string): string {
   if (!value?.trim())
     throw new AdapterError(ErrorCode.MISSING_INPUT, "publish: chatId is required");
   return value;
+}
+function normalizeTerminalLineEnding(text: string): string {
+  return text.replace(/\r?\n$/, "");
 }
 function mediaKind(path: string): "image" | "video" {
   return /\.(mp4|mov|webm)$/i.test(path) ? "video" : "image";
