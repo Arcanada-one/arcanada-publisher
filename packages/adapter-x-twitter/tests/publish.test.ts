@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { ErrorCode, ProfileManager } from "@arcanada/publisher-core";
 import { publish, collectImagePath, type PublishStepRecorder } from "../src/publish.js";
 
@@ -161,3 +162,121 @@ describe("x publish — happy path + dry-run", () => {
     expect(rec.openComposer).not.toHaveBeenCalled();
   });
 });
+
+describe("x publish — exact CreateTweet permalink", () => {
+  it.each([
+    {
+      name: "direct Tweet result with response user fields",
+      fixture: "create-tweet-direct.json",
+      profileHref: null,
+    },
+    {
+      name: "TweetWithVisibilityResults with authenticated profile link",
+      fixture: "create-tweet-visibility.json",
+      profileHref: "/VeritasArcanaAI",
+    },
+  ])("returns the created own URL for $name", async ({ fixture, profileHref }) => {
+    const { page, goto } = makeDefaultStepsPage(readFixture(fixture), profileHref);
+    const result = await publish(
+      { text: "hello", imagePaths: [makeImage()], profile: FAKE_PROFILE },
+      { profileManager: makeProfiles(), page },
+    );
+    expect(result.postUrl).toBe("https://x.com/VeritasArcanaAI/status/2075990818234548332");
+    expect(result.account).toBe("VeritasArcanaAI");
+    expect(goto).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed on a malformed CreateTweet response instead of using the first feed link", async () => {
+    const { page, goto } = makeDefaultStepsPage(
+      readFixture("create-tweet-malformed.json"),
+      "/VeritasArcanaAI",
+    );
+    await expect(
+      publish(
+        { text: "hello", imagePaths: [makeImage()], profile: FAKE_PROFILE },
+        { profileManager: makeProfiles(), page },
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    expect(goto).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the own handle is absent from both response and profile link", async () => {
+    const { page, goto } = makeDefaultStepsPage(readFixture("create-tweet-visibility.json"), null);
+    await expect(
+      publish(
+        { text: "hello", imagePaths: [makeImage()], profile: FAKE_PROFILE },
+        { profileManager: makeProfiles(), page },
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    expect(goto).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the response author differs from the authenticated profile", async () => {
+    const { page, goto, feedLinkRead } = makeDefaultStepsPage(
+      readFixture("create-tweet-direct.json"),
+      "/DifferentValid",
+    );
+    await expect(
+      publish(
+        { text: "hello", imagePaths: [makeImage()], profile: FAKE_PROFILE },
+        { profileManager: makeProfiles(), page },
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    expect(goto).toHaveBeenCalledTimes(1);
+    expect(feedLinkRead).not.toHaveBeenCalled();
+  });
+});
+
+function readFixture(name: string): unknown {
+  const path = fileURLToPath(new URL(`fixtures/${name}`, import.meta.url));
+  return JSON.parse(readFileSync(path, "utf8")) as unknown;
+}
+
+function makeDefaultStepsPage(
+  createTweetPayload: unknown,
+  profileHref: string | null,
+): {
+  page: never;
+  goto: ReturnType<typeof vi.fn>;
+  feedLinkRead: ReturnType<typeof vi.fn>;
+} {
+  const goto = vi.fn(async () => {});
+  const feedLinkRead = vi.fn();
+  const response = {
+    url: () => "https://x.com/i/api/graphql/create/CreateTweet",
+    status: () => 200,
+    json: vi.fn(async () => createTweetPayload),
+  };
+  const locator = vi.fn((selector: string) => {
+    const self = {
+      first: () => self,
+      or: () => self,
+      count: vi.fn(async () => 1),
+      waitFor: vi.fn(async () => {}),
+      click: vi.fn(async () => {}),
+      setInputFiles: vi.fn(async () => {}),
+      getAttribute: vi.fn(async () => {
+        if (selector === 'a[data-testid="AppTabBar_Profile_Link"]') return profileHref;
+        if (selector.includes("/status/")) {
+          feedLinkRead();
+          return "/gdb/status/2075270503405924466";
+        }
+        return null;
+      }),
+    };
+    return self;
+  });
+  const page = {
+    goto,
+    locator,
+    content: vi.fn(async () => ""),
+    waitForTimeout: vi.fn(async () => {}),
+    waitForResponse: vi.fn(async (predicate: (value: typeof response) => boolean) => {
+      expect(predicate(response)).toBe(true);
+      return response;
+    }),
+    keyboard: { insertText: vi.fn(async () => {}) },
+    isClosed: vi.fn(() => true),
+  };
+  return { page: page as never, goto, feedLinkRead };
+}

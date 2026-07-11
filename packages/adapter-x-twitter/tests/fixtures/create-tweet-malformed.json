@@ -1,0 +1,12 @@
+{
+  "data": {
+    "create_tweet": {
+      "tweet_results": {
+        "result": {
+          "__typename": "Tweet",
+          "rest_id": "not-a-numeric-tweet-id"
+        }
+      }
+    }
+  }
+}

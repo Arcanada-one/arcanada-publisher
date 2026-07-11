@@ -1,0 +1,21 @@
+{
+  "data": {
+    "create_tweet": {
+      "tweet_results": {
+        "result": {
+          "__typename": "Tweet",
+          "rest_id": "2075990818234548332",
+          "core": {
+            "user_results": {
+              "result": {
+                "legacy": {
+                  "screen_name": "VeritasArcanaAI"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

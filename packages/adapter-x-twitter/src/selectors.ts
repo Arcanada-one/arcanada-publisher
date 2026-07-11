@@ -21,6 +21,8 @@ export const selectors = {
   caret: '[data-testid="caret"]',
   /** Logged-in signal: the compose button in the side nav. */
   loginCheck: '[data-testid="SideNav_NewTweet_Button"]',
+  /** Stable authenticated-user profile link; href is /<own-handle>. */
+  profileLink: 'a[data-testid="AppTabBar_Profile_Link"]',
 } as const;
 
 /**

@@ -197,6 +197,11 @@ const defaultSteps: PublishStepRecorder = {
       .first()
       .waitFor({ state: "visible", timeout: 180_000 })
       .catch(() => {});
+    const profileHref = await page
+      .locator(selectors.profileLink)
+      .first()
+      .getAttribute("href")
+      .catch(() => null);
     // R7: CreateTweet 200 is the confirmation — the DOM is unreliable. The
     // ceiling is generous so a large-video compose still confirms in one shot.
     const [response] = await Promise.all([
@@ -205,14 +210,90 @@ const defaultSteps: PublishStepRecorder = {
       }),
       button.click(),
     ]);
-    void response;
-    // The created tweet's permalink is the most-recent status on the profile.
-    await page.goto("https://x.com/home");
-    const link = page.locator('a[href*="/status/"]').first();
-    const href = await link.getAttribute("href");
-    return href ? new URL(href, "https://x.com").toString() : "https://x.com/i/status/0";
+    const payload = await response.json().catch(() => undefined);
+    return exactCreatedTweetUrl(payload, profileHref);
   },
 };
+
+type JsonObject = Record<string, unknown>;
+
+function exactCreatedTweetUrl(payload: unknown, profileHref: string | null): string {
+  const result = asObject(readPath(payload, ["data", "create_tweet", "tweet_results", "result"]));
+  const wrappedTweet = asObject(result?.["tweet"]);
+  const tweet = wrappedTweet ?? result;
+  const tweetId = tweet?.["rest_id"];
+  if (typeof tweetId !== "string" || !/^\d+$/.test(tweetId)) {
+    throw unresolvedCreateTweet("numeric created tweet rest_id absent");
+  }
+
+  const responseHandle = handleFromCreateTweet(tweet, result);
+  const profileHandle = handleFromProfileHref(profileHref);
+  if (
+    responseHandle &&
+    profileHandle &&
+    responseHandle.toLowerCase() !== profileHandle.toLowerCase()
+  ) {
+    throw unresolvedCreateTweet("response author and authenticated profile handle mismatch");
+  }
+  const handle = responseHandle ?? profileHandle;
+  if (!handle) throw unresolvedCreateTweet("authenticated handle absent");
+  return `https://x.com/${handle}/status/${tweetId}`;
+}
+
+function handleFromCreateTweet(
+  tweet: JsonObject | undefined,
+  result: JsonObject | undefined,
+): string | undefined {
+  const paths = [
+    ["core", "user_results", "result", "legacy", "screen_name"],
+    ["core", "user_results", "result", "core", "screen_name"],
+    ["author_results", "result", "legacy", "screen_name"],
+  ];
+  for (const source of [tweet, result]) {
+    for (const path of paths) {
+      const handle = validHandle(readPath(source, path));
+      if (handle) return handle;
+    }
+  }
+  return undefined;
+}
+
+function handleFromProfileHref(href: string | null): string | undefined {
+  if (!href) return undefined;
+  try {
+    const url = new URL(href, "https://x.com");
+    if (url.hostname !== "x.com" && url.hostname !== "www.x.com") return undefined;
+    const parts = url.pathname.split("/").filter(Boolean);
+    return parts.length === 1 ? validHandle(parts[0]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function validHandle(value: unknown): string | undefined {
+  return typeof value === "string" && /^[A-Za-z0-9_]{1,15}$/.test(value) ? value : undefined;
+}
+
+function readPath(value: unknown, path: string[]): unknown {
+  let current: unknown = value;
+  for (const key of path) {
+    current = asObject(current)?.[key];
+    if (current === undefined) return undefined;
+  }
+  return current;
+}
+
+function asObject(value: unknown): JsonObject | undefined {
+  return value !== null && typeof value === "object" ? (value as JsonObject) : undefined;
+}
+
+function unresolvedCreateTweet(reason: string): AdapterError {
+  return new AdapterError(
+    ErrorCode.VERIFY_FAILED,
+    `publish: CreateTweet 200 response did not identify the created own tweet (${reason})`,
+    { reason },
+  );
+}
 
 /** X status URLs are https://x.com/<handle>/status/<id>; pull <handle>. */
 function extractHandle(statusUrl: string): string {
