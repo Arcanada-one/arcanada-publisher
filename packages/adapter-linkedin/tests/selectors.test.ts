@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { selectors, matchesExact, isCaptchaBlob, shadowClickPatterns } from "../src/selectors.js";
+import {
+  cssSelectors,
+  selectors,
+  matchesExact,
+  isCaptchaBlob,
+  shadowClickPatterns,
+} from "../src/selectors.js";
 
 /** Compile a JS-regex-literal source string (e.g. "/^x$/i") to a RegExp. */
 function compileSource(src: string): RegExp {
@@ -53,6 +59,11 @@ describe("selectors — RU/EN composer & action regex", () => {
     expect(selectors.commentBox.test("Kommentar hinzufügen")).toBe(true);
     expect(selectors.commentBox.test("Kommentar schreiben")).toBe(true);
     expect(selectors.commentBox.test("Lisää kommentti")).toBe(true);
+  });
+
+  it("commentBox and structural CSS cover the Finnish 2026 TipTap composer", () => {
+    expect(selectors.commentBox.test("Tekstieditori kommentin luomiseen")).toBe(true);
+    expect(cssSelectors.commentEditor).toContain("div.tiptap.ProseMirror");
   });
 
   it("post control-menu matches DE/FI labels via editPostAction* (PUB-0032)", () => {

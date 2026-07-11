@@ -7,10 +7,11 @@
 // composed text; no aria-label, just an inner-text «Comment»). The legacy
 // bash li-comment.sh:144-178 disambiguates by querying the submit button
 // inside the open composer scope. We preserve that semantics: locate the
-// editable textbox, type, then submit via Ctrl+Enter (LinkedIn's canonical
-// keyboard shortcut) — this elides the submit/trigger ambiguity entirely.
+// editable textbox, type, then submit through the enabled localized button in
+// the 2026 TipTap composer. Ctrl+Enter remains only for the legacy Quill UI.
 
-import { type Page } from "playwright";
+import { createHash } from "node:crypto";
+import { type Locator, type Page } from "playwright";
 import {
   AdapterError,
   ErrorCode,
@@ -76,35 +77,25 @@ export async function comment(
 async function runCommentFlow(page: Page, input: CommentInput): Promise<CommentResult> {
   return withScreenshotOnFail(page, "comment", async () => {
     await page.goto(input.parentPostUrl);
-    const editor = await resolveCommentEditor(page);
-    await editor.click();
-    await page.keyboard.insertText(input.text);
-    // Ctrl+Enter is LinkedIn's canonical submit shortcut — bypasses the
-    // submit/trigger button disambiguation per [[playwright-submit-vs-trigger]].
-    await page.keyboard.press("Control+Enter");
-    await page.waitForTimeout(4_000);
-
-    // Comments inherit the parent activity id; LinkedIn's DOM exposes
-    // `data-id="urn:li:comment:(activity:<id>,<comment-id>)"` on the rendered
-    // node. Extract from the freshly rendered comment thread.
-    const commentId = (await page.evaluate(`
-      (() => {
-        const nodes = Array.from(document.querySelectorAll('[data-id^="urn:li:comment"]'));
-        const top = nodes[0];
-        if (!top) return '';
-        const raw = top.getAttribute('data-id') || '';
-        const m = /urn:li:comment:\\(.*?,(\\d+)\\)/.exec(raw);
-        return m && m[1] ? m[1] : '';
-      })()
-    `)) as string;
-    if (!commentId) {
+    const baseline = await readExactCommentMatches(page, input.text);
+    if (baseline.length > 0) {
       throw new AdapterError(
         ErrorCode.VERIFY_FAILED,
-        "comment: posted but commentId could not be extracted from DOM",
+        "comment: exact text already exists before submit; refusing ambiguous duplicate",
         { parentPostUrl: input.parentPostUrl, liErrorType: "verify_mismatch" },
       );
     }
-    const account = `urn:li:activity:${extractActivityId(input.parentPostUrl)}`;
+
+    const resolved = await resolveCommentEditor(page);
+    await resolved.editor.click();
+    await page.keyboard.insertText(input.text);
+    if (resolved.kind === "tiptap") await submitTipTapComment(resolved.editor);
+    else await page.keyboard.press("Control+Enter");
+
+    const rendered = await waitForExactComment(page, input.text);
+    const activityId = extractActivityId(input.parentPostUrl);
+    const commentId = rendered.id || verifiedEvidenceId(activityId, input.text);
+    const account = `urn:li:activity:${activityId}`;
     return CommentResultSchema.parse({
       ok: true,
       platform: "linkedin",
@@ -115,25 +106,126 @@ async function runCommentFlow(page: Page, input: CommentInput): Promise<CommentR
   });
 }
 
+interface ResolvedCommentEditor {
+  editor: Locator;
+  kind: "tiptap" | "legacy";
+}
+
 /**
  * PUB-0032: resolve the comment composer textbox tolerant to UI drift. The 2026
- * LinkedIn UI localizes the accessible name (e.g. DE «Kommentar hinzufügen»),
- * which the prior `getByRole("textbox", { name: commentBox })` did not match →
- * the composer timed out and the first-comment never posted. We try the
- * (now-widened, multi-locale) accessible-name locator first, then fall back to a
- * locale-independent structural CSS hook (`cssSelectors.commentEditor`). Throws
- * if neither resolves so the caller never silently types into nothing.
+ * LinkedIn UI localizes the accessible name and now uses TipTap in its 2026
+ * composer. Resolve TipTap structurally first so its button-submit contract is
+ * unambiguous; only an absent TipTap editor may fall back to legacy Quill role
+ * and structural locators.
  */
-async function resolveCommentEditor(page: Page): Promise<ReturnType<Page["locator"]>> {
+async function resolveCommentEditor(page: Page): Promise<ResolvedCommentEditor> {
+  const tiptap = page.locator(cssSelectors.commentTipTapEditor).first();
+  try {
+    await tiptap.waitFor({ state: "visible", timeout: 4_000 });
+    return { editor: tiptap, kind: "tiptap" };
+  } catch {
+    // Continue to legacy Quill locators only when TipTap is absent.
+  }
   const byName = page.getByRole("textbox", { name: selectors.commentBox }).first();
   try {
-    await byName.waitFor({ state: "visible", timeout: 8_000 });
-    return byName;
+    await byName.waitFor({ state: "visible", timeout: 4_000 });
+    return { editor: byName, kind: "legacy" };
   } catch {
-    const byCss = page.locator(cssSelectors.commentEditor).first();
+    const byCss = page.locator(cssSelectors.commentLegacyEditor).first();
     await byCss.waitFor({ state: "visible", timeout: 8_000 });
-    return byCss;
+    return { editor: byCss, kind: "legacy" };
   }
+}
+
+async function submitTipTapComment(editor: Locator): Promise<void> {
+  const composer = editor.locator("xpath=ancestor::form[1]");
+  const submit = composer
+    .getByRole("button", { name: selectors.commentSubmitButton, exact: true })
+    .first();
+  let enabled = false;
+  try {
+    await submit.waitFor({ state: "visible", timeout: 5_000 });
+    enabled = await submit.isEnabled();
+  } catch {
+    enabled = false;
+  }
+  if (!enabled) {
+    throw new AdapterError(
+      ErrorCode.PUBLISH_BUTTON_ABSENT,
+      "comment: enabled TipTap submit button was not found in the composer",
+      { liErrorType: "publish_button_absent" },
+    );
+  }
+  await submit.click();
+}
+
+interface RenderedCommentMatch {
+  text: string;
+  id: string;
+}
+
+async function waitForExactComment(page: Page, text: string): Promise<RenderedCommentMatch> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const matches = await readExactCommentMatches(page, text);
+    if (matches[0]) return matches.find((match) => match.id) ?? matches[0];
+    await page.waitForTimeout(250);
+  }
+  throw new AdapterError(
+    ErrorCode.VERIFY_FAILED,
+    "comment: exact submitted text did not appear newly in the comment thread",
+    { liErrorType: "verify_mismatch" },
+  );
+}
+
+async function readExactCommentMatches(
+  page: Page,
+  expectedText: string,
+): Promise<RenderedCommentMatch[]> {
+  return page.evaluate((expected) => {
+    interface BrowserElement {
+      innerText: string;
+      closest(selector: string): BrowserElement | null;
+      getAttribute(name: string): string | null;
+      querySelectorAll(selector: string): ArrayLike<BrowserElement>;
+    }
+    const browserDocument = (
+      globalThis as unknown as {
+        document: { querySelectorAll(selector: string): ArrayLike<BrowserElement> };
+      }
+    ).document;
+    const containers = Array.from(
+      browserDocument.querySelectorAll(
+        "[data-id^='urn:li:comment'], .comments-comment-item, [class*='comments-comment-item']",
+      ),
+    );
+    const seen = new Set<BrowserElement>();
+    const matches: Array<{ text: string; id: string }> = [];
+    for (const container of containers) {
+      if (seen.has(container)) continue;
+      seen.add(container);
+      const bodies = [
+        container,
+        ...Array.from(
+          container.querySelectorAll(
+            ".comments-comment-item__main-content, .comments-comment-item-content-body, .update-components-text, [data-testid='comment-content'], span[dir='ltr'], p",
+          ),
+        ),
+      ];
+      if (!bodies.some((body) => body.innerText === expected)) continue;
+      const raw = container.closest("[data-id^='urn:li:comment']")?.getAttribute("data-id") ?? "";
+      const id = /urn:li:comment:\(.*?,(\d+)\)/.exec(raw)?.[1] ?? "";
+      matches.push({ text: expected, id });
+    }
+    return matches;
+  }, expectedText);
+}
+
+function verifiedEvidenceId(activityId: string, text: string): string {
+  const digest = createHash("sha256")
+    .update(`${activityId}\0${text}`, "utf8")
+    .digest("hex")
+    .slice(0, 16);
+  return `verified:${activityId}:${digest}`;
 }
 
 function assertParentActivityUrl(parentPostUrl: string): void {
@@ -284,7 +376,7 @@ const defaultEditCommentSteps: EditCommentRecorder = {
 
   async replaceText(page: Page, text: string): Promise<void> {
     // PUB-0032: same drift-tolerant resolver as the publish-comment flow.
-    const editor = await resolveCommentEditor(page);
+    const { editor } = await resolveCommentEditor(page);
     await editor.click();
     await page.keyboard.press("Control+A");
     await page.keyboard.press("Delete");

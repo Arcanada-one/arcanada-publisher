@@ -51,6 +51,7 @@ describe("comment — composer selector drift fallback (PUB-0032)", () => {
   it("falls back to the structural CSS editor when the localized name locator misses", async () => {
     const cssClicks = { n: 0 };
     let getByRoleCalls = 0;
+    let submitted = false;
     const page = {
       goto: async () => {},
       getByRole: (role: string) => {
@@ -61,11 +62,20 @@ describe("comment — composer selector drift fallback (PUB-0032)", () => {
         }
         return failingLocator();
       },
-      locator: () => okLocator(cssClicks), // cssSelectors.commentEditor resolves
+      locator: (selector: string) =>
+        selector.includes("tiptap") ? failingLocator() : okLocator(cssClicks),
       isClosed: () => false,
       waitForTimeout: async () => {},
-      keyboard: { insertText: async () => {}, press: async () => {} },
-      evaluate: async (src: string) => {
+      keyboard: {
+        insertText: async () => {},
+        press: async (key: string) => {
+          if (key === "Control+Enter") submitted = true;
+        },
+      },
+      evaluate: async (src: unknown, expected?: string) => {
+        if (typeof src !== "string") {
+          return submitted ? [{ text: expected ?? "", id: "9999" }] : [];
+        }
         // commentId extraction → return a real id so the flow succeeds.
         if (src.includes("urn:li:comment")) return "9999";
         return "";

@@ -41,8 +41,11 @@ export const cssSelectors = {
   // accessible-name match misses (e.g. DE «Kommentar hinzufügen»). LinkedIn
   // renders the comment box as a Quill contenteditable inside a comments box
   // wrapper; these class/attribute hooks are locale-independent.
-  commentEditor:
+  commentTipTapEditor: "div.tiptap.ProseMirror[contenteditable='true']",
+  commentLegacyEditor:
     "div.comments-comment-box__form .ql-editor[contenteditable='true'], div[class*='comments-comment-box'] div[role='textbox'][contenteditable='true'], div.ql-editor[contenteditable='true'][data-placeholder]",
+  commentEditor:
+    "div.tiptap.ProseMirror[contenteditable='true'], div.comments-comment-box__form .ql-editor[contenteditable='true'], div[class*='comments-comment-box'] div[role='textbox'][contenteditable='true'], div.ql-editor[contenteditable='true'][data-placeholder]",
 } as const;
 
 export const selectors = {
@@ -61,7 +64,9 @@ export const selectors = {
   // 2026 composer on a DE-locale account did not match the prior set → comment
   // composer timed out). Finnish «Lisää kommentti» added alongside.
   commentBox:
-    /^(Добавить комментарий|Написать комментарий|Add a comment|Write a comment|Kommentar hinzufügen|Kommentar schreiben|Lisää kommentti|Текстовое поле комментария|Comment text field)/,
+    /^(Добавить комментарий|Написать комментарий|Add a comment|Write a comment|Kommentar hinzufügen|Kommentar schreiben|Lisää kommentti|Tekstieditori kommentin luomiseen|Текстовое поле комментария|Comment text field)/,
+  commentSubmitButton:
+    /^(Отправить|Опубликовать|Send|Post|Comment|Senden|Kommentieren|Lähetä|Kommentoi)$/,
   editPostActionRu: /^(Открыть меню|Действия|Параметры|Открыть панель управления|Дополнительно)/,
   // PUB-0032: the post control-menu («...») drifted/localized. Added DE «Mehr
   // Aktionen / Steuerungsmenü öffnen» and FI «Lisää toimintoja» so the delete +
