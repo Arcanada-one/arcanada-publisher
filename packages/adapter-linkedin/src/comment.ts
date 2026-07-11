@@ -77,6 +77,7 @@ export async function comment(
 async function runCommentFlow(page: Page, input: CommentInput): Promise<CommentResult> {
   return withScreenshotOnFail(page, "comment", async () => {
     await page.goto(input.parentPostUrl);
+    const resolved = await resolveCommentEditor(page);
     const baseline = await readExactCommentMatches(page, input.text);
     if (baseline.length > 0) {
       throw new AdapterError(
@@ -86,10 +87,22 @@ async function runCommentFlow(page: Page, input: CommentInput): Promise<CommentR
       );
     }
 
-    const resolved = await resolveCommentEditor(page);
     await resolved.editor.click();
     await page.keyboard.insertText(input.text);
-    if (resolved.kind === "tiptap") await submitTipTapComment(resolved.editor);
+
+    // Re-scan immediately before the submit action. A virtualized thread can
+    // finish hydrating while the composer is being filled; treating a late old
+    // match as the newly submitted comment would be a false positive.
+    const preSubmit = await readExactCommentMatches(page, input.text);
+    if (preSubmit.length > 0) {
+      throw new AdapterError(
+        ErrorCode.VERIFY_FAILED,
+        "comment: exact text appeared before submit; refusing ambiguous duplicate",
+        { parentPostUrl: input.parentPostUrl, liErrorType: "verify_mismatch" },
+      );
+    }
+
+    if (resolved.kind === "tiptap") await submitTipTapComment(page, resolved.editor);
     else await page.keyboard.press("Control+Enter");
 
     const rendered = await waitForExactComment(page, input.text);
@@ -137,26 +150,39 @@ async function resolveCommentEditor(page: Page): Promise<ResolvedCommentEditor> 
   }
 }
 
-async function submitTipTapComment(editor: Locator): Promise<void> {
+async function submitTipTapComment(page: Page, editor: Locator): Promise<void> {
   const composer = editor.locator("xpath=ancestor::form[1]");
   const submit = composer
     .getByRole("button", { name: selectors.commentSubmitButton, exact: true })
     .first();
-  let enabled = false;
   try {
     await submit.waitFor({ state: "visible", timeout: 5_000 });
-    enabled = await submit.isEnabled();
   } catch {
-    enabled = false;
-  }
-  if (!enabled) {
     throw new AdapterError(
       ErrorCode.PUBLISH_BUTTON_ABSENT,
       "comment: enabled TipTap submit button was not found in the composer",
       { liErrorType: "publish_button_absent" },
     );
   }
-  await submit.click();
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const enabled = await submit.isEnabled().catch(() => false);
+    if (enabled) {
+      try {
+        await submit.click({ timeout: 5_000 });
+        return;
+      } catch {
+        break;
+      }
+    }
+    if (attempt < 19) await page.waitForTimeout(250);
+  }
+
+  throw new AdapterError(
+    ErrorCode.PUBLISH_BUTTON_ABSENT,
+    "comment: enabled TipTap submit button was not found in the composer",
+    { liErrorType: "publish_button_absent" },
+  );
 }
 
 interface RenderedCommentMatch {

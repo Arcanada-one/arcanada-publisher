@@ -103,8 +103,21 @@ describe("comment — TipTap submit and exact post verification", () => {
     await expect(runComment(text, harness.page)).rejects.toMatchObject({
       code: ErrorCode.PUBLISH_BUTTON_ABSENT,
     });
+    expect(harness.submitIsEnabled).toHaveBeenCalledTimes(20);
     expect(harness.submitClick).not.toHaveBeenCalled();
     expect(harness.keyboardPress).not.toHaveBeenCalledWith("Control+Enter");
+  });
+
+  it("waits for the TipTap submit button to become enabled", async () => {
+    const harness = makeCommentPage({
+      mode: "tiptap",
+      submitEnabled: [false, false, true],
+      postMatches: [{ text, id: "9004" }],
+    });
+    const result = await runComment(text, harness.page);
+    expect(result.commentId).toBe("9004");
+    expect(harness.submitIsEnabled).toHaveBeenCalledTimes(3);
+    expect(harness.submitClick).toHaveBeenCalledTimes(1);
   });
 
   it("fails when exact submitted text never appears even if a generic comment id exists", async () => {
@@ -150,6 +163,19 @@ describe("comment — TipTap submit and exact post verification", () => {
     expect(harness.keyboardPress).not.toHaveBeenCalled();
     expect(harness.submitClick).not.toHaveBeenCalled();
   });
+
+  it("fails closed when an old exact match loads after baseline but before submit", async () => {
+    const harness = makeCommentPage({
+      mode: "tiptap",
+      preSubmitSnapshots: [[], [{ text, id: "8001" }]],
+      postMatches: [{ text, id: "9005" }],
+    });
+    await expect(runComment(text, harness.page)).rejects.toMatchObject({
+      code: ErrorCode.VERIFY_FAILED,
+    });
+    expect(harness.submitClick).not.toHaveBeenCalled();
+    expect(harness.keyboardPress).not.toHaveBeenCalled();
+  });
 });
 
 interface CommentMatch {
@@ -159,8 +185,9 @@ interface CommentMatch {
 
 interface CommentPageOptions {
   mode: "tiptap" | "legacy";
-  submitEnabled?: boolean;
+  submitEnabled?: boolean | boolean[];
   baselineMatches?: CommentMatch[];
+  preSubmitSnapshots?: CommentMatch[][];
   postMatches?: CommentMatch[];
   legacyExtractedId?: string;
 }
@@ -168,19 +195,28 @@ interface CommentPageOptions {
 function makeCommentPage(options: CommentPageOptions): {
   page: never;
   submitClick: ReturnType<typeof vi.fn>;
+  submitIsEnabled: ReturnType<typeof vi.fn>;
   keyboardPress: ReturnType<typeof vi.fn>;
 } {
   let submitted = false;
+  let preSubmitRead = 0;
+  let enabledRead = 0;
   const submitClick = vi.fn(async () => {
     submitted = true;
   });
   const keyboardPress = vi.fn(async (key: string) => {
     if (options.mode === "legacy" && key === "Control+Enter") submitted = true;
   });
+  const submitIsEnabled = vi.fn(async () => {
+    if (!Array.isArray(options.submitEnabled)) return options.submitEnabled ?? true;
+    const value = options.submitEnabled[Math.min(enabledRead, options.submitEnabled.length - 1)];
+    enabledRead += 1;
+    return value;
+  });
   const failing = makeLocator(false);
   const submit = makeLocator(true, {
     click: submitClick,
-    isEnabled: async () => options.submitEnabled ?? true,
+    isEnabled: submitIsEnabled,
   });
   const composer = makeLocator(true, {
     getByRole: () => submit,
@@ -207,12 +243,14 @@ function makeCommentPage(options: CommentPageOptions): {
       if (typeof source === "string") {
         return submitted ? (options.legacyExtractedId ?? options.postMatches?.[0]?.id ?? "") : "";
       }
-      const matches = submitted ? (options.postMatches ?? []) : (options.baselineMatches ?? []);
+      const matches = submitted
+        ? (options.postMatches ?? [])
+        : (options.preSubmitSnapshots?.[preSubmitRead++] ?? options.baselineMatches ?? []);
       return matches.filter((match) => match.text === expected);
     }),
     isClosed: vi.fn(() => true),
   };
-  return { page: page as never, submitClick, keyboardPress };
+  return { page: page as never, submitClick, submitIsEnabled, keyboardPress };
 }
 
 function makeLocator(
