@@ -187,6 +187,34 @@ describe("TelegramAdapter publish safety", () => {
     },
   );
 
+  it.each([
+    { name: "terminal LF", suffix: "\n", expectedSuffix: "" },
+    { name: "terminal CRLF", suffix: "\r\n", expectedSuffix: "" },
+    { name: "no terminal newline", suffix: "", expectedSuffix: "" },
+    { name: "intentional trailing spaces", suffix: "  ", expectedSuffix: "  " },
+    {
+      name: "intentional trailing spaces before LF",
+      suffix: "  \n",
+      expectedSuffix: "  ",
+    },
+  ])("normalizes $name without trimming other whitespace", async ({ suffix, expectedSuffix }) => {
+    const base = `${"hero words ".repeat(100)}\n\n${"body words ".repeat(180)}`.trimEnd();
+    const { heroCaption, replyText } = await runPatternA(`${base}${suffix}`, {
+      reply: removeOneTerminalLineEnding,
+    });
+    expect(heroCaption).toMatch(/\n\n#PUB_0029_fixed$/);
+    expect(`${stripMarker(heroCaption)}${replyText}`).toBe(`${base}${expectedSuffix}`);
+  });
+
+  it("normalizes a terminal LF before the Pattern A length limit", async () => {
+    const normalized = `${"😀".repeat(400)}${"a".repeat(199)} ${"b".repeat(4096)}`;
+    expect(normalized.length).toBe(5_096);
+    const { heroCaption, replyText } = await runPatternA(`${normalized}\n`, {
+      reply: removeOneTerminalLineEnding,
+    });
+    expect(`${stripMarker(heroCaption)}${replyText}`).toBe(normalized);
+  });
+
   it("accepts channel-authored hero and reply responses without Message.from", async () => {
     const text = `${"hero words ".repeat(100)}\n\n${"body words ".repeat(180)}`;
     const channelIdentity = { sender_chat: { id: Number(TELEGRAM_TEST_CHAT_ID) } };
@@ -402,4 +430,8 @@ function corruptMiddle(text: string): string {
   const middle = Math.floor(codePoints.length / 2);
   codePoints[middle] = codePoints[middle] === "X" ? "Y" : "X";
   return codePoints.join("");
+}
+
+function removeOneTerminalLineEnding(text: string): string {
+  return text.replace(/\r?\n$/, "");
 }
