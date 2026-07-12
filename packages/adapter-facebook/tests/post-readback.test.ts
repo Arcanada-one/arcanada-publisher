@@ -66,6 +66,27 @@ describe("Facebook exact post readback primitives", () => {
       );
     }
   });
+
+  it("dedupes identical multi-article DOM copies and rejects every divergent axis", async () => {
+    const same = [{}, {}];
+    await expect(readFacebookPost(fakePageVariants(same) as never, TARGET)).resolves.toMatchObject({
+      canonicalPermalink: TARGET,
+      normalizedBody: "Title\n\nFull body",
+      authorProfileIdentity: "www.facebook.com/pavelvalentov",
+      mediaIdentity: "https://www.facebook.com/photo/?fbid=hero",
+    });
+    for (const changed of [
+      { body: "different" },
+      { author: "https://www.facebook.com/impostor" },
+      { media: "https://www.facebook.com/photo/?fbid=other" },
+      { extraPermalink: "https://www.facebook.com/pavelvalentov/posts/pfbid-other" },
+      { media: null },
+    ]) {
+      await expect(
+        readFacebookPost(fakePageVariants([{}, changed]) as never, TARGET),
+      ).rejects.toThrow(/ambiguous target evidence/);
+    }
+  });
 });
 
 class FakeList<T> implements Iterable<T> {
@@ -105,32 +126,19 @@ class FakeElement {
 }
 
 function fakePage(withAttachment: boolean) {
-  const articleOne: Record<string, FakeElement | undefined> = {};
-  const articleMany: Record<string, FakeElement[]> = {};
-  const article = new FakeElement("", undefined, articleOne, articleMany);
-  article.article = article;
-  const body = new FakeElement("Title\n\nFull body");
-  body.article = article;
-  const avatar = new FakeElement(
-    "Pavel",
-    "https://www.facebook.com/pavelvalentov",
-    {},
-    { img: [new FakeElement()] },
-  );
-  avatar.article = article;
-  avatar.before = body;
-  const permalink = new FakeElement("time", TARGET);
-  permalink.article = article;
-  const photo = new FakeElement(
-    "",
-    "https://www.facebook.com/photo/?fbid=hero",
-    {},
-    { img: [new FakeElement()] },
-  );
-  photo.article = article;
-  articleOne['[data-ad-preview="message"], [data-ad-comet-preview="message"]'] = body;
-  articleMany["a[href]"] = withAttachment ? [avatar, permalink, photo] : [avatar, permalink];
-  const root = new FakeElement("", undefined, {}, { '[role="article"]': [article] });
+  return fakePageVariants([{ media: withAttachment ? undefined : null }]);
+}
+
+type ArticleVariant = {
+  body?: string;
+  author?: string;
+  media?: string | null;
+  extraPermalink?: string;
+};
+
+function fakePageVariants(variants: ArticleVariant[]) {
+  const articles = variants.map((variant) => makeArticle(variant));
+  const root = new FakeElement("", undefined, {}, { '[role="article"]': articles });
   return {
     goto: async () => {},
     getByRole: () => ({ count: async () => 0 }),
@@ -151,4 +159,37 @@ function fakePage(withAttachment: boolean) {
       },
     }),
   };
+}
+
+function makeArticle(variant: ArticleVariant): FakeElement {
+  const articleOne: Record<string, FakeElement | undefined> = {};
+  const articleMany: Record<string, FakeElement[]> = {};
+  const article = new FakeElement("", undefined, articleOne, articleMany);
+  article.article = article;
+  const body = new FakeElement(variant.body ?? "Title\n\nFull body");
+  body.article = article;
+  const avatar = new FakeElement(
+    "Pavel",
+    variant.author ?? "https://www.facebook.com/pavelvalentov",
+    {},
+    { img: [new FakeElement()] },
+  );
+  avatar.article = article;
+  avatar.before = body;
+  const permalink = new FakeElement("time", TARGET);
+  permalink.article = article;
+  const mediaHref =
+    variant.media === undefined ? "https://www.facebook.com/photo/?fbid=hero" : variant.media;
+  const photo = new FakeElement("", mediaHref ?? undefined, {}, { img: [new FakeElement()] });
+  photo.article = article;
+  articleOne['[data-ad-preview="message"], [data-ad-comet-preview="message"]'] = body;
+  const anchors = [avatar, permalink];
+  if (variant.extraPermalink) {
+    const extra = new FakeElement("other", variant.extraPermalink);
+    extra.article = article;
+    anchors.push(extra);
+  }
+  if (mediaHref) anchors.push(photo);
+  articleMany["a[href]"] = anchors;
+  return article;
 }

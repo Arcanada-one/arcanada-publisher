@@ -74,10 +74,14 @@ export async function readFacebookPost(
     };
     const matches = Array.from(bodyRoot.querySelectorAll('[role="article"]')).flatMap((article) => {
       const anchors = Array.from(article.querySelectorAll("a[href]"));
-      const permalink = anchors.find(
-        (anchor) => anchor.href && canonical(anchor.href) === expected,
-      );
-      if (!permalink) return [];
+      const postPermalinks = Array.from(
+        new Set(
+          anchors
+            .flatMap((anchor) => (anchor.href ? [canonical(anchor.href)] : []))
+            .filter((value): value is string => value !== null),
+        ),
+      ).sort();
+      if (!postPermalinks.includes(expected)) return [];
       const body = article.querySelector(
         '[data-ad-preview="message"], [data-ad-comet-preview="message"]',
       );
@@ -105,17 +109,17 @@ export async function readFacebookPost(
           return false;
         }
       });
-      if (!mediaAnchor?.href) return [];
-      const mediaUrl = new URL(mediaAnchor.href, browserLocation.href);
-      mediaUrl.searchParams.delete("__cft__[0]");
-      mediaUrl.searchParams.delete("__tn__");
+      const mediaUrl = mediaAnchor?.href ? new URL(mediaAnchor.href, browserLocation.href) : null;
+      mediaUrl?.searchParams.delete("__cft__[0]");
+      mediaUrl?.searchParams.delete("__tn__");
       return [
         {
-          canonicalPermalink: expected,
+          canonicalPermalink:
+            postPermalinks.length === 1 ? postPermalinks[0]! : postPermalinks.join("|"),
           authorProfileHref: author.href!,
           body: body.innerText,
-          hasImage: true,
-          mediaIdentity: mediaUrl.toString(),
+          hasImage: mediaUrl !== null,
+          mediaIdentity: mediaUrl?.toString() ?? "",
         },
       ];
     });
@@ -148,6 +152,8 @@ export function dedupeFacebookPostReadbacks(
       candidate.mediaIdentity === first.mediaIdentity,
   );
   if (!identical) throw readbackError(`ambiguous target evidence across ${ordered.length} copies`);
+  if (!first.hasImage || first.mediaIdentity === "")
+    throw readbackError("target has no post media");
   return first;
 }
 
