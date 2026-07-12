@@ -45,8 +45,8 @@ export interface EditInput {
   expectedContent?: string;
   /** Read-before-edit media oracle for adapters that can inspect the current artifact. */
   expectedMediaKind?: "image" | "video" | "none";
-  /** Optional read-before-edit reply-parent oracle. */
-  expectedParentUrl?: string;
+  /** Explicit read-before-edit reply-parent oracle: exact URL or `none`. */
+  expectedParentUrl?: string | "none";
   profile: string;
 }
 

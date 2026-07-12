@@ -51,7 +51,10 @@ export class TelegramAdapter extends BaseAdapter {
       throw new AdapterError(ErrorCode.MISSING_INPUT, "Telegram bot token is required");
     this.transport = options.transport ?? createTransport(options.botToken!);
     this.nonce = options.nonce ?? randomUUID;
-    this.allowedLiveChatIds = new Set(options.allowedLiveChatIds ?? [TELEGRAM_TEST_CHAT_ID]);
+    this.allowedLiveChatIds = new Set([
+      TELEGRAM_TEST_CHAT_ID,
+      ...(options.allowedLiveChatIds ?? []),
+    ]);
   }
 
   async login(_options: LoginOptions): Promise<void> {
@@ -192,7 +195,8 @@ export class TelegramAdapter extends BaseAdapter {
     if (
       message.message_id !== messageId ||
       !chatMatches(message, chatId) ||
-      (expectedBotId !== undefined && !authoredByExpectedSender(message, chatId, expectedBotId)) ||
+      (expectedBotId !== undefined &&
+        !publisherSourceIdentityMatches(message, chatId, expectedBotId)) ||
       message.forward_origin ||
       !replyParentMatches(message, chatId, input.expectedParentUrl) ||
       message.text !== input.text
@@ -212,13 +216,18 @@ export class TelegramAdapter extends BaseAdapter {
     chatId: string,
     messageId: number,
   ): Promise<EditResult> {
-    if (!input.expectedContent?.trim() || !input.expectedMediaKind)
+    if (
+      !input.expectedContent?.match(/^#PUB_0029_[A-Za-z0-9]+$/) ||
+      !input.expectedMediaKind ||
+      input.expectedParentUrl !== undefined
+    )
       throw new AdapterError(
-        ErrorCode.MISSING_INPUT,
-        "edit: Telegram media replacement requires expectedContent and expectedMediaKind",
+        ErrorCode.INVALID_ARGS,
+        "edit: Telegram media replacement requires a Publisher marker and expectedMediaKind; parent oracle is unsupported",
       );
     const bot = requireResult<{ id: number }>(await this.transport("getMe", undefined), "getMe");
-    await this.assertCurrentMessage(input, chatId, messageId, bot.id);
+    const current = await this.forwardProbe(chatId, messageId);
+    this.assertCurrentArtifact(input, current, chatId, bot.id);
     const bytes = await readFile(input.imagePath!);
     const attachmentKind = mediaKind(input.imagePath!);
     const body = new FormData();
@@ -233,19 +242,32 @@ export class TelegramAdapter extends BaseAdapter {
       }),
     );
     body.set("media_file", new Blob([bytes]), basename(input.imagePath!));
-    const message = requireMessage(
-      await this.transport("editMessageMedia", body),
-      "editMessageMedia",
-    );
+    let raw: unknown;
+    try {
+      raw = await this.transport("editMessageMedia", body);
+    } catch (cause) {
+      throw editUnknownState(chatId, messageId, cause);
+    }
+    let message: TelegramMessage;
+    try {
+      message = requireMessage(raw, "editMessageMedia");
+    } catch (cause) {
+      throw editUnknownState(chatId, messageId, cause);
+    }
     const actual = message.caption ?? "";
     const returnedKind = message.video ? "video" : message.photo?.length ? "image" : "none";
     if (
       message.message_id !== messageId ||
-      !authoredByExpectedSender(message, chatId, bot.id) ||
+      !publisherSourceIdentityMatches(message, chatId, bot.id) ||
       message.forward_origin ||
       actual !== input.text ||
       returnedKind !== attachmentKind ||
-      (attachmentKind === "video" && message.video?.file_name !== basename(input.imagePath!))
+      (attachmentKind === "video" &&
+        (message.video?.file_name !== basename(input.imagePath!) ||
+          message.video.file_size !== bytes.byteLength ||
+          message.video.width <= 0 ||
+          message.video.height <= 0 ||
+          message.video.duration <= 0))
     )
       throw new AdapterError(
         ErrorCode.VERIFY_FAILED,
@@ -291,35 +313,102 @@ export class TelegramAdapter extends BaseAdapter {
         update.edited_channel_post,
       ].filter((message): message is TelegramMessage => Boolean(message)),
     );
-    const current = candidates
+    const fromUpdates = candidates
       .filter((message) => message.message_id === messageId && chatMatches(message, chatId))
       .at(-1);
-    if (!current)
-      throw new AdapterError(
-        ErrorCode.VERIFY_FAILED,
-        "edit: target message is absent from the Telegram read-before-edit window",
-        { chatId, messageId, readBeforeEditRequired: true },
-      );
-    if (!authoredByExpectedSender(current, chatId, botId) || current.forward_origin)
-      throw new AdapterError(ErrorCode.VERIFY_FAILED, "edit: current author identity mismatch");
+    const current = fromUpdates ?? (await this.forwardProbe(chatId, messageId));
+    this.assertCurrentArtifact(input, current, chatId, botId);
+    if (!replyParentMatches(current, chatId, input.expectedParentUrl))
+      throw new AdapterError(ErrorCode.VERIFY_FAILED, "edit: current reply-parent oracle mismatch");
+  }
+
+  private assertCurrentArtifact(
+    input: EditInput,
+    current: TelegramMessage,
+    chatId: string,
+    botId: number,
+  ): void {
+    if (!publisherSourceIdentityMatches(current, chatId, botId) || current.forward_origin)
+      throw new AdapterError(ErrorCode.VERIFY_FAILED, "edit: current source identity mismatch");
     const actual = current.caption ?? current.text ?? "";
     const currentKind = current.video ? "video" : current.photo?.length ? "image" : "none";
-    if (input.expectedContent && !actual.includes(input.expectedContent))
+    if (
+      input.expectedContent &&
+      actual !== input.expectedContent &&
+      !actual.endsWith(`\n\n${input.expectedContent}`)
+    )
       throw new AdapterError(ErrorCode.VERIFY_FAILED, "edit: current content oracle mismatch");
     if (input.expectedMediaKind && currentKind !== input.expectedMediaKind)
       throw new AdapterError(ErrorCode.VERIFY_FAILED, "edit: current media oracle mismatch");
-    if (input.expectedParentUrl) {
-      const parent = parseMessageUrl(input.expectedParentUrl);
-      if (
-        parent.chatId !== chatId ||
-        current.reply_to_message?.message_id !== parent.messageId ||
-        String(current.reply_to_message.chat.id) !== normalizedChatNumericId(chatId, current.chat)
-      )
-        throw new AdapterError(
-          ErrorCode.VERIFY_FAILED,
-          "edit: current reply-parent oracle mismatch",
-        );
+  }
+
+  private async forwardProbe(chatId: string, messageId: number): Promise<TelegramMessage> {
+    if (!this.allowedLiveChatIds.has(TELEGRAM_TEST_CHAT_ID))
+      throw new AdapterError(
+        ErrorCode.NETWORK_GUARD,
+        "edit: Telegram probe chat is not allowlisted",
+      );
+    let forwarded: unknown;
+    try {
+      forwarded = await this.transport(
+        "forwardMessage",
+        jsonBody({
+          chat_id: TELEGRAM_TEST_CHAT_ID,
+          from_chat_id: chatId,
+          message_id: messageId,
+        }),
+      );
+    } catch (cause) {
+      throw probeUnknownState("forwardMessage", chatId, messageId, cause);
     }
+    const probe = requireMessage(forwarded, "forwardMessage");
+    if (!chatMatches(probe, TELEGRAM_TEST_CHAT_ID))
+      throw new AdapterError(
+        ErrorCode.VERIFY_FAILED,
+        "forwardMessage: probe landed outside the allowlisted test channel; state UNKNOWN",
+        { unknown: true, reconcileRequired: true, probeMessageId: probe.message_id },
+      );
+    let deleteResult: unknown;
+    try {
+      deleteResult = await this.transport(
+        "deleteMessage",
+        jsonBody({ chat_id: TELEGRAM_TEST_CHAT_ID, message_id: probe.message_id }),
+      );
+    } catch (cause) {
+      throw probeUnknownState("deleteMessage", chatId, messageId, cause, probe.message_id);
+    }
+    const deleted = requireResult<boolean>(deleteResult, "deleteMessage");
+    if (deleted !== true)
+      throw new AdapterError(
+        ErrorCode.VERIFY_FAILED,
+        "deleteMessage: Telegram probe deletion not confirmed; source edit blocked",
+        { unknown: true, reconcileRequired: true, probeMessageId: probe.message_id },
+      );
+    const origin = probe.forward_origin;
+    if (
+      origin?.type !== "channel" ||
+      !origin.chat ||
+      origin.message_id !== messageId ||
+      !chatIdentityMatches(origin.chat, chatId)
+    )
+      throw new AdapterError(
+        ErrorCode.VERIFY_FAILED,
+        "forwardMessage: returned forward_origin does not match the exact source target",
+        { chatId, messageId, probeMessageId: probe.message_id },
+      );
+    // reply_to_message belongs to the probe destination and is not evidence of
+    // the source post's parent. Never synthesize/rebrand it as source metadata.
+    const {
+      forward_origin: _forwardOrigin,
+      reply_to_message: _probeReply,
+      ...sourceSnapshot
+    } = probe;
+    return {
+      ...sourceSnapshot,
+      message_id: origin.message_id,
+      chat: origin.chat,
+      sender_chat: origin.chat,
+    };
   }
 
   async delete(input: DeleteInput): Promise<DeleteResult> {
@@ -367,7 +456,7 @@ export class TelegramAdapter extends BaseAdapter {
   ): Promise<void> {
     const actual = message.caption ?? message.text ?? "";
     if (
-      !authoredByExpectedSender(message, chatId, botId) ||
+      !publisherSourceIdentityMatches(message, chatId, botId) ||
       message.message_id <= baseline ||
       message.forward_origin ||
       actual !== expectedText
@@ -450,15 +539,19 @@ function chatMatches(message: TelegramMessage, chatId: string): boolean {
     ? message.chat.username === chatId.slice(1)
     : String(message.chat.id) === chatId;
 }
+function chatIdentityMatches(chat: TelegramMessage["chat"], chatId: string): boolean {
+  return chatId.startsWith("@") ? chat.username === chatId.slice(1) : String(chat.id) === chatId;
+}
 function normalizedChatNumericId(chatId: string, chat: TelegramMessage["chat"]): string {
   return chatId.startsWith("@") ? String(chat.id) : chatId;
 }
 function replyParentMatches(
   message: TelegramMessage,
   chatId: string,
-  expectedParentUrl?: string,
+  expectedParentUrl?: string | "none",
 ): boolean {
-  if (!expectedParentUrl) return true;
+  if (expectedParentUrl === undefined) return true;
+  if (expectedParentUrl === "none") return message.reply_to_message === undefined;
   const parent = parseMessageUrl(expectedParentUrl);
   return (
     parent.chatId === chatId &&
@@ -466,14 +559,51 @@ function replyParentMatches(
     String(message.reply_to_message.chat.id) === normalizedChatNumericId(chatId, message.chat)
   );
 }
-function authoredByExpectedSender(
+function publisherSourceIdentityMatches(
   message: TelegramMessage,
   chatId: string,
   botId: number,
 ): boolean {
   if (!chatMatches(message, chatId)) return false;
   if (message.from) return message.from.id === botId;
+  // Channel posts expose sender_chat, not the posting bot. This proves only
+  // source-channel identity; callers must also bind the Publisher marker and ID.
   return message.sender_chat?.id === message.chat.id;
+}
+function editUnknownState(chatId: string, messageId: number, cause: unknown): AdapterError {
+  return new AdapterError(
+    ErrorCode.VERIFY_FAILED,
+    "editMessageMedia: Telegram state UNKNOWN; do not retry blindly",
+    {
+      unknown: true,
+      reconcileRequired: true,
+      method: "editMessageMedia",
+      chatId,
+      messageId,
+      cause: cause instanceof Error ? cause.message : String(cause),
+    },
+  );
+}
+function probeUnknownState(
+  method: "forwardMessage" | "deleteMessage",
+  chatId: string,
+  messageId: number,
+  cause: unknown,
+  probeMessageId?: number,
+): AdapterError {
+  return new AdapterError(
+    ErrorCode.VERIFY_FAILED,
+    `${method}: Telegram probe state UNKNOWN; source edit blocked`,
+    {
+      unknown: true,
+      reconcileRequired: true,
+      method,
+      chatId,
+      messageId,
+      ...(probeMessageId !== undefined ? { probeMessageId } : {}),
+      cause: cause instanceof Error ? cause.message : String(cause),
+    },
+  );
 }
 function parseMessageUrl(url: string): { chatId: string; messageId: number } {
   const parsed = new URL(url);

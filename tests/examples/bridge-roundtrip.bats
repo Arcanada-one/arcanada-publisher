@@ -14,13 +14,14 @@ setup() {
   }
   IMG_DIR="$(mktemp -d)"
   IMG="${IMG_DIR}/hero.png"
+  SERVER_LOG="${IMG_DIR}/bridge-server.log"
   printf '\x89PNG\r\n\x1a\n' >"$IMG"
   # Pick a free ephemeral port instead of a hard-coded one: parallel CI jobs (or a
   # leftover server from a previous run) can already hold a fixed port, which made
   # the bind silently fail and the round-trip flaky (exit 0 on a clean runner,
   # connection-refused otherwise).
   PORT="$(node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{process.stdout.write(String(s.address().port));s.close();});')"
-  node "${ROOT}/packages/cli/dist/index.js" server --port "$PORT" >/tmp/bridge-bats-server.log 2>&1 &
+  node "${ROOT}/packages/cli/dist/index.js" server --port "$PORT" >"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
   # Wait for the loopback listener to come up; fail explicitly on timeout so a
   # dead server is a clear error, not a downstream connection-refused mystery.
@@ -31,7 +32,7 @@ setup() {
   done
   if [ -z "$up" ]; then
     echo "loopback server did not become healthy on port ${PORT}; log:" >&2
-    cat /tmp/bridge-bats-server.log >&2 || true
+    cat "$SERVER_LOG" >&2 || true
     return 1
   fi
   export ARCANADA_PUBLISHER_PORT="$PORT"

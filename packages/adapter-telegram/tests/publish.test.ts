@@ -357,140 +357,67 @@ describe("TelegramAdapter publish safety", () => {
     }
   });
 
-  it("edits an allowlisted Telegram photo post to multipart video after exact baseline checks", async () => {
-    const video = makeMedia("telegram-ru.mp4");
-    const transport = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, result: { id: 42 } })
-      .mockResolvedValueOnce({
-        ok: true,
-        result: [
-          {
-            channel_post: {
-              message_id: 208,
-              chat: { id: Number(TELEGRAM_TEST_CHAT_ID), username: "test" },
-              sender_chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
-              caption: "old caption\n\n#PUB_0029_unique",
-              photo: [{ file_id: "old-photo", width: 800, height: 400 }],
-            },
-          },
-        ],
-      })
-      .mockImplementationOnce(async (method: string, body: FormData) => {
-        expect(method).toBe("editMessageMedia");
-        expect([...body.keys()].sort()).toEqual(["chat_id", "media", "media_file", "message_id"]);
-        expect(body.get("chat_id")).toBe(TELEGRAM_TEST_CHAT_ID);
-        expect(body.get("message_id")).toBe("208");
-        expect(JSON.parse(String(body.get("media")))).toEqual({
-          type: "video",
-          media: "attach://media_file",
-          caption: "new caption",
-        });
-        return {
-          ok: true,
-          result: {
-            message_id: 208,
-            chat: { id: Number(TELEGRAM_TEST_CHAT_ID), username: "test" },
-            sender_chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
-            caption: "new caption",
-            video: {
-              file_id: "new-video",
-              file_size: 21_732_579,
-              width: 1280,
-              height: 720,
-              duration: 245,
-              file_name: "telegram-ru.mp4",
-            },
-          },
-        };
+  it("uses an exact forward probe, deletes it, then sends multipart editMessageMedia", async () => {
+    const transport = mediaEditTransport(async (method: string, body: FormData) => {
+      expect(method).toBe("editMessageMedia");
+      expect([...body.keys()].sort()).toEqual(["chat_id", "media", "media_file", "message_id"]);
+      expect(body.get("chat_id")).toBe(TELEGRAM_TEST_CHAT_ID);
+      expect(body.get("message_id")).toBe("208");
+      expect(JSON.parse(String(body.get("media")))).toEqual({
+        type: "video",
+        media: "attach://media_file",
+        caption: "new caption",
       });
+      return telegramEditedVideo();
+    });
     const adapter = new TelegramAdapter({ transport });
 
-    await expect(
-      adapter.edit({
-        postUrl: "https://t.me/c/3855619081/208",
-        text: "new caption",
-        imagePath: video,
-        expectedContent: "#PUB_0029_unique",
-        expectedMediaKind: "image",
-        profile: "",
-      }),
-    ).resolves.toMatchObject({ postUrl: "https://t.me/c/3855619081/208", edited: true });
-    expect(transport).toHaveBeenCalledTimes(3);
+    await expect(safeMediaEdit(adapter)).resolves.toMatchObject({ edited: true });
+    expect(transport).toHaveBeenCalledTimes(4);
   });
 
   it.each([
-    { expectedContent: "wrong marker", expectedMediaKind: "image" as const },
+    { expectedContent: "#PUB_0029_wrong", expectedMediaKind: "image" as const },
     { expectedContent: "#PUB_0029_unique", expectedMediaKind: "video" as const },
-  ])(
-    "fails before editMessageMedia when the current Telegram baseline mismatches",
-    async (oracle) => {
-      const transport = vi
-        .fn()
-        .mockResolvedValueOnce({ ok: true, result: { id: 42 } })
-        .mockResolvedValueOnce({
-          ok: true,
-          result: [
-            {
-              channel_post: {
-                message_id: 208,
-                chat: { id: Number(TELEGRAM_TEST_CHAT_ID), username: "test" },
-                sender_chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
-                caption: "old caption\n\n#PUB_0029_unique",
-                photo: [{ file_id: "old-photo", width: 800, height: 400 }],
-              },
-            },
-          ],
-        });
-      const adapter = new TelegramAdapter({ transport });
+  ])("fails before editMessageMedia when the forward baseline mismatches", async (oracle) => {
+    const transport = mediaEditTransport(telegramEditedVideo());
+    const adapter = new TelegramAdapter({ transport });
 
-      await expect(
-        adapter.edit({
-          postUrl: "https://t.me/c/3855619081/208",
-          text: "new caption",
-          imagePath: makeMedia("telegram-ru.mp4"),
-          ...oracle,
-          profile: "",
-        }),
-      ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
-      expect(transport).toHaveBeenCalledTimes(2);
-    },
-  );
+    await expect(safeMediaEdit(adapter, oracle)).rejects.toMatchObject({
+      code: ErrorCode.VERIFY_FAILED,
+    });
+    expect(transport).toHaveBeenCalledTimes(3);
+  });
 
   it("rejects a mismatched editMessageMedia response as UNKNOWN state", async () => {
-    const transport = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, result: { id: 42 } })
-      .mockResolvedValueOnce({
-        ok: true,
-        result: [
-          {
-            channel_post: {
-              message_id: 208,
-              chat: { id: Number(TELEGRAM_TEST_CHAT_ID), username: "test" },
-              sender_chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
-              caption: "old caption\n\n#PUB_0029_unique",
-              photo: [{ file_id: "old-photo", width: 800, height: 400 }],
-            },
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        result: {
-          message_id: 209,
-          chat: { id: Number(TELEGRAM_TEST_CHAT_ID), username: "test" },
-          sender_chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
-          caption: "new caption",
-          video: {
-            file_id: "new-video",
-            width: 1280,
-            height: 720,
-            duration: 245,
-            file_name: "telegram-ru.mp4",
-          },
-        },
-      });
+    const transport = mediaEditTransport({
+      ...telegramEditedVideo(),
+      result: { ...telegramEditedVideo().result, message_id: 209 },
+    });
+    const adapter = new TelegramAdapter({ transport });
+
+    await expect(safeMediaEdit(adapter)).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+  });
+
+  it("maps an editMessageMedia transport rejection to explicit UNKNOWN state", async () => {
+    const transport = mediaEditTransport(new Error("socket reset"));
+    const adapter = new TelegramAdapter({ transport });
+
+    await expect(safeMediaEdit(adapter)).rejects.toMatchObject({
+      code: ErrorCode.VERIFY_FAILED,
+      details: {
+        unknown: true,
+        reconcileRequired: true,
+        method: "editMessageMedia",
+        chatId: TELEGRAM_TEST_CHAT_ID,
+        messageId: 208,
+      },
+    });
+    expect(transport).toHaveBeenCalledTimes(4);
+  });
+
+  it("rejects media replacement without a Publisher-owned idempotency marker", async () => {
+    const transport = vi.fn();
     const adapter = new TelegramAdapter({ transport });
 
     await expect(
@@ -498,11 +425,60 @@ describe("TelegramAdapter publish safety", () => {
         postUrl: "https://t.me/c/3855619081/208",
         text: "new caption",
         imagePath: makeMedia("telegram-ru.mp4"),
-        expectedContent: "#PUB_0029_unique",
+        expectedContent: "old caption",
         expectedMediaKind: "image",
         profile: "",
       }),
-    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it("rejects a parent oracle for editMessageMedia", async () => {
+    const transport = vi.fn();
+    const adapter = new TelegramAdapter({ transport });
+
+    await expect(safeMediaEdit(adapter, { expectedParentUrl: "none" })).rejects.toMatchObject({
+      code: ErrorCode.INVALID_ARGS,
+    });
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it("rejects a prefix collision instead of accepting a changed Publisher marker", async () => {
+    const transport = mediaEditTransport(telegramEditedVideo(), {
+      probeCaption: "old caption\n\n#PUB_0029_uniqueX",
+    });
+    const adapter = new TelegramAdapter({ transport });
+
+    await expect(safeMediaEdit(adapter)).rejects.toMatchObject({
+      code: ErrorCode.VERIFY_FAILED,
+    });
+    expect(transport).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    {
+      name: "destination reply metadata is ignored",
+      mutation: telegramEditedVideo({
+        reply_to_message: { message_id: 207, chat: { id: Number(TELEGRAM_TEST_CHAT_ID) } },
+      }),
+      resolves: true,
+    },
+    {
+      name: "wrong returned byte size",
+      mutation: telegramEditedVideo({ fileSize: 5 }),
+      resolves: false,
+    },
+  ])("handles $name without treating it as source-parent proof", async ({ mutation, resolves }) => {
+    const transport = mediaEditTransport(mutation, { probeHasDestinationReply: true });
+    const adapter = new TelegramAdapter({ transport });
+
+    if (resolves) await expect(safeMediaEdit(adapter)).resolves.toMatchObject({ edited: true });
+    else
+      await expect(safeMediaEdit(adapter)).rejects.toMatchObject({
+        code: ErrorCode.VERIFY_FAILED,
+        details: { unknown: true, reconcileRequired: true },
+      });
+    expect(transport).toHaveBeenCalledTimes(4);
   });
 
   it("edits exactly one existing longread reply after content and parent read-before-edit", async () => {
@@ -555,6 +531,22 @@ describe("TelegramAdapter publish safety", () => {
       }),
     ).resolves.toMatchObject({ postUrl: "https://t.me/c/3855619081/209", edited: true });
   });
+
+  it("deletes the probe and stops before source edit when forward_origin mismatches", async () => {
+    const transport = mediaEditTransport(telegramEditedVideo(), { originChatId: -100999 });
+    const adapter = new TelegramAdapter({ transport });
+
+    await expect(safeMediaEdit(adapter)).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    expect(transport).toHaveBeenCalledTimes(3);
+  });
+
+  it("stops before source edit when probe deletion is not explicitly confirmed", async () => {
+    const transport = mediaEditTransport(telegramEditedVideo(), { deleteConfirmed: false });
+    const adapter = new TelegramAdapter({ transport });
+
+    await expect(safeMediaEdit(adapter)).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    expect(transport).toHaveBeenCalledTimes(3);
+  });
 });
 
 function makeImage(): string {
@@ -566,6 +558,106 @@ function makeMedia(fileName: string): string {
   const file = join(dir, fileName);
   writeFileSync(file, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
   return file;
+}
+
+function mediaEditTransport(
+  mutation: unknown | Error | ((method: string, body: FormData) => Promise<unknown>),
+  options: {
+    originChatId?: number;
+    deleteConfirmed?: boolean;
+    probeHasDestinationReply?: boolean;
+    probeCaption?: string;
+  } = {},
+) {
+  const transport = vi
+    .fn()
+    .mockResolvedValueOnce({ ok: true, result: { id: 42 } })
+    .mockImplementationOnce(async (method: string, body: URLSearchParams) => {
+      expect(method).toBe("forwardMessage");
+      expect(Object.fromEntries(body)).toEqual({
+        chat_id: TELEGRAM_TEST_CHAT_ID,
+        from_chat_id: TELEGRAM_TEST_CHAT_ID,
+        message_id: "208",
+      });
+      return {
+        ok: true,
+        result: {
+          message_id: 501,
+          chat: { id: Number(TELEGRAM_TEST_CHAT_ID), username: "probe" },
+          from: { id: 42 },
+          caption: options.probeCaption ?? "old caption\n\n#PUB_0029_unique",
+          photo: [{ file_id: "old-photo", width: 800, height: 400 }],
+          forward_origin: {
+            type: "channel",
+            chat: {
+              id: options.originChatId ?? Number(TELEGRAM_TEST_CHAT_ID),
+              username: "test",
+            },
+            message_id: 208,
+          },
+          ...(options.probeHasDestinationReply
+            ? {
+                reply_to_message: {
+                  message_id: 999,
+                  chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
+                },
+              }
+            : {}),
+        },
+      };
+    })
+    .mockImplementationOnce(async (method: string, body: URLSearchParams) => {
+      expect(method).toBe("deleteMessage");
+      expect(Object.fromEntries(body)).toEqual({
+        chat_id: TELEGRAM_TEST_CHAT_ID,
+        message_id: "501",
+      });
+      return { ok: true, result: options.deleteConfirmed ?? true };
+    });
+  if (mutation instanceof Error) return transport.mockRejectedValueOnce(mutation);
+  if (typeof mutation === "function") return transport.mockImplementationOnce(mutation);
+  return transport.mockResolvedValueOnce(mutation);
+}
+
+function safeMediaEdit(
+  adapter: TelegramAdapter,
+  overrides: Partial<Parameters<TelegramAdapter["edit"]>[0]> = {},
+) {
+  return adapter.edit({
+    postUrl: "https://t.me/c/3855619081/208",
+    text: "new caption",
+    imagePath: makeMedia("telegram-ru.mp4"),
+    expectedContent: "#PUB_0029_unique",
+    expectedMediaKind: "image",
+    ...overrides,
+    profile: "",
+  });
+}
+
+function telegramEditedVideo(
+  overrides: {
+    fileSize?: number;
+    reply_to_message?: { message_id: number; chat: { id: number } };
+  } = {},
+) {
+  return {
+    ok: true,
+    result: {
+      message_id: 208,
+      chat: { id: Number(TELEGRAM_TEST_CHAT_ID), username: "test" },
+      sender_chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
+      caption: "new caption",
+      ...(overrides.reply_to_message ? { reply_to_message: overrides.reply_to_message } : {}),
+      video: {
+        file_id: "new-video",
+        file_size: overrides.fileSize ?? 4,
+        width: 1280,
+        height: 720,
+        duration: 245,
+        file_name: "telegram-ru.mp4",
+      },
+    },
+  };
 }
 
 async function runPatternA(

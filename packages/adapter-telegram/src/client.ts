@@ -5,7 +5,11 @@ export interface TelegramMessage {
   chat: { id: number; username?: string };
   from?: { id: number };
   sender_chat?: { id: number };
-  forward_origin?: unknown;
+  forward_origin?: {
+    type: string;
+    chat?: { id: number; username?: string };
+    message_id?: number;
+  };
   text?: string;
   caption?: string;
   photo?: Array<{ file_id: string; file_size?: number; width: number; height: number }>;
