@@ -123,6 +123,8 @@ export interface PublishOptions {
    * with a headed browser so the operator can watch the composer populate.
    */
   abortBeforePost?: boolean;
+  /** Attachment-only smoke: stop after scoped media preview, before text/Post. */
+  abortAfterMedia?: boolean;
   /** Test seam and point-of-use clipboard ownership hook. */
   __prepareMediaClipboard?: (path: string) => unknown;
 }
@@ -142,6 +144,18 @@ export async function publish(
   }
   // R1: validate every image path (multi-image); the array order is preserved.
   const safeImagePaths = collectImagePaths(input).map(validateImagePath);
+  if (options.abortAfterMedia && safeImagePaths.length !== 1) {
+    throw new AdapterError(
+      safeImagePaths.length === 0 ? ErrorCode.MISSING_INPUT : ErrorCode.INVALID_ARGS,
+      "inspectMediaAttachment: exactly one media path is required",
+    );
+  }
+  if (options.abortAfterMedia && !isVideoPath(safeImagePaths[0])) {
+    throw new AdapterError(
+      ErrorCode.INVALID_ARGS,
+      "inspectMediaAttachment: attachment-only smoke currently requires one video",
+    );
+  }
 
   // Dry-run validates inputs but performs no IO — no profile store, no browser.
   // (A page-injected test still exercises the dry-run branch in runPublishFlow.)
@@ -359,6 +373,16 @@ async function runPublishFlow(
       // hit an unrelated control and reset the composer to empty. We just let the
       // upload settle in place; for a video, give the transcode a moment.
       await page.waitForTimeout(hasVideo ? 4_000 : 2_500);
+    }
+
+    if (options.abortAfterMedia) {
+      return {
+        ok: true,
+        platform: "linkedin",
+        aborted: true,
+        mediaAttached,
+        attachments: attachmentsFor(imagePaths),
+      } satisfies AbortedPublishResult;
     }
 
     // Fill text AFTER media (operator rule §6.4: media-before-text).

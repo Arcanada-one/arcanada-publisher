@@ -71,6 +71,41 @@ function fakeVideoPublishPage(): never {
 }
 
 describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
+  it("abortAfterMedia rejects a smoke without media before browser IO", async () => {
+    await expect(
+      publish(
+        { text: "unused", profile: "p1" },
+        { profileManager: makeProfiles(), page: fakeVideoPublishPage(), abortAfterMedia: true },
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.MISSING_INPUT });
+  });
+
+  it("abortAfterMedia rejects image smoke until scoped image detection exists", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "li-image-smoke-"));
+    const image = join(dir, "cover.png");
+    writeFileSync(image, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    await expect(
+      publish(
+        { text: "unused", imagePath: image, profile: "p1" },
+        { profileManager: makeProfiles(), page: fakeVideoPublishPage(), abortAfterMedia: true },
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
+  });
+
+  it("abortAfterMedia returns before text insertion or Post", async () => {
+    const vid = makeVideo();
+    const page = fakeVideoPublishPage() as unknown as {
+      keyboard: { press: ReturnType<typeof vi.fn>; insertText: ReturnType<typeof vi.fn> };
+    };
+    page.keyboard.insertText = vi.fn(async () => {});
+    const result = await publish(
+      { text: "must not be typed", imagePath: vid, profile: "p1" },
+      { profileManager: makeProfiles(), page: page as never, abortAfterMedia: true },
+    );
+    expect(result).toMatchObject({ aborted: true, mediaAttached: true });
+    expect(page.keyboard.insertText).not.toHaveBeenCalled();
+  });
+
   it("prepares the exact clipboard twice, with the second check immediately before paste", async () => {
     const vid = makeVideo();
     const events: string[] = [];
