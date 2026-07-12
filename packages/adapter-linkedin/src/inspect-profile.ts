@@ -132,8 +132,8 @@ async function runInspection(
     await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
     await chmod(evidenceDir, 0o700);
     await writePrivate(bodyPath, matched.body);
-    await page.screenshot({ path: screenshotPath, fullPage: true });
-    await chmod(screenshotPath, 0o600);
+    const screenshot = await page.screenshot({ fullPage: true });
+    await writePrivate(screenshotPath, screenshot);
     await writePrivate(
       join(evidenceDir, "manifest.json"),
       `${JSON.stringify(
@@ -234,7 +234,7 @@ function verifyError(message: string): AdapterError {
   return new AdapterError(ErrorCode.VERIFY_FAILED, `inspect-profile-post: ${message}`);
 }
 
-async function writePrivate(path: string, content: string): Promise<void> {
+async function writePrivate(path: string, content: string | Uint8Array): Promise<void> {
   const handle = await open(path, "w", 0o600);
   try {
     await handle.chmod(0o600);
@@ -255,41 +255,80 @@ const defaultRecorder: InspectLinkedInProfileRecorder = {
         .click({ timeout: 1_000 })
         .catch(() => undefined);
     }
-    const scanJs = `(function(){
-      const containers=Array.from(document.querySelectorAll(
-        "[data-urn*='urn:li:activity'], [data-id*='urn:li:activity']"
-      ));
-      const seen=new Set(); const out=[];
-      for(const container of containers){
-        const raw=container.getAttribute("data-urn")||container.getAttribute("data-id")||"";
-        const match=/urn:li:activity:(\\d+)/.exec(raw); const id=match&&match[1];
-        if(!id||seen.has(id)) continue; seen.add(id);
-        const bodyNodes=Array.from(container.querySelectorAll(
-          ".update-components-text, [data-testid='main-feed-activity-card__commentary'], .feed-shared-update-v2__description"
-        ));
-        const body=bodyNodes.map(node=>node.innerText||"").sort((a,b)=>b.length-a.length)[0]||"";
-        const author=container.querySelector(
-          ".update-components-actor__meta-link[href*='/in/'], .update-components-actor__container-link[href*='/in/'], a[href*='/in/']"
-        );
-        const vanity=Array.from(container.querySelectorAll("a[href*='/posts/']"))
-          .map(anchor=>(anchor.href||"").split("?")[0])
-          .find(href=>href.includes("-"+id+"-"))||"";
-        out.push({
-          activityUrl:"https://www.linkedin.com/feed/update/urn:li:activity:"+id+"/",
-          vanityPermalink:vanity,
-          authorProfileHref:author?(author.href||"").split("?")[0]:"",
-          body,
-          hasNativeVideo:Boolean(container.querySelector(
-            "video, [data-test-native-video], .video-js, [class*='video-player'], [data-vjs-player]"
-          ))
-        });
-      }
-      return out;
-    })()`;
-    return (await page.evaluate(scanJs)) as ObservedLinkedInProfilePost[];
+    return page.locator("body").evaluate(extractLinkedInProfilePosts);
   },
   async scroll(page) {
     await page.evaluate("window.scrollBy(0, Math.max(window.innerHeight, 900))");
     await page.waitForTimeout(1_500);
   },
 };
+
+interface BrowserNode {
+  innerText: string;
+  href?: string;
+  parentElement: BrowserNode | null;
+  tagName: string;
+  className: string;
+  getAttribute(name: string): string | null;
+  querySelectorAll(selector: string): ArrayLike<BrowserNode>;
+}
+
+/** Browser-serializable extractor. Every accepted node must belong directly to
+ * one activity container; nested activities, comments, articles, and mini
+ * updates are rejected before body/author/media/permalink binding. */
+export function extractLinkedInProfilePosts(root: BrowserNode): ObservedLinkedInProfilePost[] {
+  const activitySelector = "[data-urn*='urn:li:activity'], [data-id*='urn:li:activity']";
+  const containers = Array.from(root.querySelectorAll(activitySelector));
+  const seen = new Set<string>();
+  const out: ObservedLinkedInProfilePost[] = [];
+  const isBoundary = (node: BrowserNode): boolean => {
+    const raw = node.getAttribute("data-urn") ?? node.getAttribute("data-id") ?? "";
+    return (
+      /urn:li:activity:\d+/.test(raw) ||
+      /^urn:li:comment/.test(raw) ||
+      node.tagName.toLowerCase() === "article" ||
+      /comments-comment-item|mini-update/i.test(node.className ?? "")
+    );
+  };
+  const isOwned = (node: BrowserNode, container: BrowserNode): boolean => {
+    let current = node.parentElement;
+    while (current && current !== container) {
+      if (isBoundary(current)) return false;
+      current = current.parentElement;
+    }
+    return current === container;
+  };
+  for (const container of containers) {
+    const raw = container.getAttribute("data-urn") ?? container.getAttribute("data-id") ?? "";
+    const id = /urn:li:activity:(\d+)/.exec(raw)?.[1];
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const owned = (selector: string): BrowserNode[] =>
+      Array.from(container.querySelectorAll(selector)).filter((node) => isOwned(node, container));
+    const body =
+      owned(
+        ".update-components-text, [data-testid='main-feed-activity-card__commentary'], .feed-shared-update-v2__description",
+      )
+        .map((node) => node.innerText ?? "")
+        .sort((a, b) => b.length - a.length)[0] ?? "";
+    const author = owned(
+      ".update-components-actor__meta-link[href*='/in/'], .update-components-actor__container-link[href*='/in/']",
+    )[0];
+    const vanity =
+      owned("a[href*='/posts/']")
+        .map((anchor) => (anchor.href ?? "").split("?")[0] ?? "")
+        .find((href) => href.includes(`-${id}-`)) ?? "";
+    const hasNativeVideo =
+      owned(
+        "video, [data-test-native-video], .video-js, [class*='video-player'], [data-vjs-player]",
+      ).length > 0;
+    out.push({
+      activityUrl: `https://www.linkedin.com/feed/update/urn:li:activity:${id}/`,
+      vanityPermalink: vanity,
+      authorProfileHref: author?.href?.split("?")[0] ?? "",
+      body,
+      hasNativeVideo,
+    });
+  }
+  return out;
+}

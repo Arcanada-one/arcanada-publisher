@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ErrorCode } from "@arcanada/publisher-core";
 import {
+  extractLinkedInProfilePosts,
   inspectLinkedInProfilePost,
   type ObservedLinkedInProfilePost,
 } from "../src/inspect-profile.js";
@@ -28,9 +29,7 @@ function options(batches: ObservedLinkedInProfilePost[][]) {
   return {
     page: {
       goto: async () => {},
-      screenshot: async ({ path }: { path: string }) => {
-        await import("node:fs/promises").then((fs) => fs.writeFile(path, "png"));
-      },
+      screenshot: async () => Buffer.from("png"),
     } as never,
     skipTeardown: true,
     __recorder: {
@@ -71,6 +70,7 @@ describe("LinkedIn read-only profile inspection", () => {
     expect(statSync(evidenceDir).mode & 0o777).toBe(0o700);
     expect(statSync(join(evidenceDir, "post-body.txt")).mode & 0o777).toBe(0o600);
     expect(statSync(join(evidenceDir, "manifest.json")).mode & 0o777).toBe(0o600);
+    expect(statSync(join(evidenceDir, "readback.png")).mode & 0o777).toBe(0o600);
     expect(readFileSync(join(evidenceDir, "post-body.txt"), "utf8")).toBe(BODY);
   });
 
@@ -106,4 +106,83 @@ describe("LinkedIn read-only profile inspection", () => {
       /publishButton|clickPost|deleteMenu|commentSubmit|runPublish|runDelete/,
     );
   });
+
+  it("rejects nested repost/comment ownership and profile mentions", () => {
+    const outer = new FakeNode("", { "data-urn": `urn:li:activity:${ID}` });
+    const outerBody = outer.child(
+      "Building the Binary Is Only the Beginning",
+      "update-components-text",
+    );
+    outer.child("Pavel", "update-components-actor__meta-link", PROFILE);
+    outer.child(
+      "time",
+      "",
+      undefined,
+      `https://www.linkedin.com/posts/pavel_post-activity-${ID}-AbCd`,
+    );
+    outer.child("video", "video-player");
+    const nested = outer.child("", "mini-update");
+    nested.child(BODY, "update-components-text");
+    nested.child(
+      "Impostor",
+      "update-components-actor__meta-link",
+      "https://www.linkedin.com/in/impostor/",
+    );
+    nested.child("video", "video-player");
+    const root = new FakeNode("");
+    root.children.push(outer);
+
+    const [observed] = extractLinkedInProfilePosts(root);
+    expect(observed).toMatchObject({
+      body: outerBody.innerText,
+      authorProfileHref: PROFILE,
+      hasNativeVideo: true,
+      vanityPermalink: expect.stringContaining(ID),
+    });
+    expect(observed?.body).not.toBe(BODY);
+  });
 });
+
+class FakeNode {
+  parentElement: FakeNode | null = null;
+  children: FakeNode[] = [];
+  tagName = "div";
+  href?: string;
+
+  constructor(
+    readonly innerText: string,
+    private readonly attrs: Record<string, string> = {},
+    readonly className = "",
+  ) {}
+
+  child(text: string, className = "", href?: string, permalink?: string): FakeNode {
+    const node = new FakeNode(text, {}, className);
+    node.parentElement = this;
+    if (href) node.href = href;
+    if (permalink) node.href = permalink;
+    this.children.push(node);
+    return node;
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attrs[name] ?? null;
+  }
+
+  querySelectorAll(selector: string): FakeNode[] {
+    const descendants = (node: FakeNode): FakeNode[] =>
+      node.children.flatMap((child) => [child, ...descendants(child)]);
+    return descendants(this).filter((node) => {
+      if (selector.includes("urn:li:activity"))
+        return /urn:li:activity:/.test(node.getAttribute("data-urn") ?? "");
+      if (selector.includes("update-components-text"))
+        return node.className.includes("update-components-text");
+      if (selector.includes("update-components-actor"))
+        return (
+          node.className.includes("update-components-actor") && Boolean(node.href?.includes("/in/"))
+        );
+      if (selector === "a[href*='/posts/']") return Boolean(node.href?.includes("/posts/"));
+      if (selector.startsWith("video")) return node.className.includes("video-player");
+      return false;
+    });
+  }
+}
