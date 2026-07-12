@@ -4,6 +4,7 @@ import {
   shadowCountJs,
   scopedVideoCountJs,
   shadowFindActivityUrnJs,
+  markComposerScopeJs,
 } from "../src/dom-shadow.js";
 
 // The walkers are JS *source strings* run via page.evaluate in the browser. We
@@ -219,11 +220,11 @@ describe("dom-shadow — shadowFindActivityUrnJs", () => {
 });
 
 describe("dom-shadow — scopedVideoCountJs (fail-closed video detection)", () => {
-  it("counts a <video> INSIDE a media-editor scope", () => {
+  it("counts a <video> inside the exact marked composer scope", () => {
     const video = el({ tag: "video" });
     const scope = el({
       tag: "div",
-      text: "scope:.media-editor",
+      text: "scope:[data-arcanada-publish-composer='true']",
       children: [video],
     });
     const r = run(scopedVideoCountJs(), [scope]);
@@ -240,10 +241,98 @@ describe("dom-shadow — scopedVideoCountJs (fail-closed video detection)", () =
 
   it("counts a <video> nested inside a dialog scope across a shadow root", () => {
     const video = el({ tag: "video" });
-    const dialog = el({ tag: "div", text: "scope:[role='dialog']", children: [video] });
+    const dialog = el({
+      tag: "div",
+      text: "scope:[data-arcanada-publish-composer='true']",
+      children: [video],
+    });
     const host = el({ tag: "div", shadow: [dialog] });
     const r = run(scopedVideoCountJs(), [host]);
     expect(r).toBe(1);
+  });
+
+  it("counts a video inside a nested shadow root below the composer scope", () => {
+    // Live 2026 UI: [role=dialog] is in the light DOM, while the visible black
+    // video preview is rendered inside a descendant component's shadow root.
+    // A plain scope.querySelectorAll('video') returns zero in that structure.
+    const video = el({ tag: "video" });
+    const previewHost = el({ tag: "div", shadow: [video] });
+    const dialog = el({
+      tag: "div",
+      text: "scope:[data-arcanada-publish-composer='true']",
+      children: [previewHost],
+    });
+    const r = run(scopedVideoCountJs(), [dialog]);
+    expect(r).toBe(1);
+  });
+
+  it("counts a video when the marked composer host owns the shadow root", () => {
+    const video = el({ tag: "video" });
+    const markedHost = el({
+      tag: "div",
+      text: "scope:[data-arcanada-publish-composer='true']",
+      shadow: [video],
+    });
+    const r = run(scopedVideoCountJs(), [markedHost]);
+    expect(r).toBe(1);
+  });
+
+  it("ignores a nested-shadow video in an unrelated dialog even when it has an editor", () => {
+    const video = el({ tag: "video" });
+    const previewHost = el({ tag: "div", shadow: [video] });
+    const editor = el({ tag: "textarea" });
+    const unrelatedDialog = el({
+      tag: "div",
+      text: "scope:[role='dialog']",
+      children: [editor, previewHost],
+    });
+    const r = run(scopedVideoCountJs(), [unrelatedDialog]);
+    expect(r).toBe(0);
+  });
+
+  it("counts one video once when composer scopes overlap", () => {
+    const video = el({ tag: "video" });
+    const mediaEditor = el({
+      tag: "div",
+      text: "scope:[data-arcanada-publish-composer='true']",
+      children: [video],
+    });
+    const dialog = el({
+      tag: "div",
+      text: "scope:[data-arcanada-publish-composer='true']",
+      children: [mediaEditor],
+    });
+    const r = run(scopedVideoCountJs(), [dialog]);
+    expect(r).toBe(1);
+  });
+});
+
+describe("dom-shadow — markComposerScopeJs", () => {
+  it("marks the dialog parent inside the same shadow root before crossing to its host", () => {
+    const attributes = new Map<string, string>();
+    const shadowRoot = { host: null as unknown };
+    const host = {
+      parentElement: null,
+      matches: () => false,
+      getRootNode: () => ({ host: null }),
+    };
+    shadowRoot.host = host;
+    const dialog = {
+      parentElement: null,
+      matches: (selector: string) => selector.includes("[role='dialog']"),
+      setAttribute: (name: string, value: string) => attributes.set(name, value),
+      getRootNode: () => shadowRoot,
+    };
+    const editor = {
+      parentElement: dialog,
+      matches: () => false,
+      getRootNode: () => shadowRoot,
+    };
+    const marker = Function(`return ${markComposerScopeJs()};`)() as (
+      element: typeof editor,
+    ) => boolean;
+    expect(marker(editor)).toBe(true);
+    expect(attributes.get("data-arcanada-publish-composer")).toBe("true");
   });
 });
 
