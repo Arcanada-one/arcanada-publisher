@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ErrorCode } from "@arcanada/publisher-core";
 import {
+  expandMatchingLinkedInActivity,
   extractLinkedInProfilePosts,
   inspectLinkedInProfilePost,
   type ObservedLinkedInProfilePost,
@@ -141,6 +142,34 @@ describe("LinkedIn read-only profile inspection", () => {
     });
     expect(observed?.body).not.toBe(BODY);
   });
+
+  it("clicks plain more only on the direct-owned expected author/title activity", () => {
+    const outer = new FakeNode("", { "data-urn": `urn:li:activity:${ID}` });
+    outer.child("Building the Binary Is Only the Beginning…", "update-components-text");
+    outer.child("Pavel", "update-components-actor__meta-link", PROFILE);
+    const ownMore = outer.child("more", "button");
+    const nested = outer.child("", "mini-update");
+    nested.child("more", "button");
+    const other = new FakeNode("", { "data-urn": "urn:li:activity:999" });
+    other.child("Building the Binary Is Only the Beginning…", "update-components-text");
+    other.child(
+      "Other",
+      "update-components-actor__meta-link",
+      "https://www.linkedin.com/in/other/",
+    );
+    other.child("more", "button");
+    const root = new FakeNode("");
+    root.children.push(outer, other);
+
+    const clicked = expandMatchingLinkedInActivity(root, {
+      expectedAuthorIdentity: "www.linkedin.com/in/pavelvalentov",
+      expectedTitle: "Building the Binary Is Only the Beginning",
+    });
+    expect(clicked).toBe(1);
+    expect(ownMore.clickCount).toBe(1);
+    expect(nested.children[0]?.clickCount).toBe(0);
+    expect(other.children[2]?.clickCount).toBe(0);
+  });
 });
 
 class FakeNode {
@@ -148,6 +177,7 @@ class FakeNode {
   children: FakeNode[] = [];
   tagName = "div";
   href?: string;
+  clickCount = 0;
 
   constructor(
     readonly innerText: string,
@@ -168,6 +198,10 @@ class FakeNode {
     return this.attrs[name] ?? null;
   }
 
+  click(): void {
+    this.clickCount += 1;
+  }
+
   querySelectorAll(selector: string): FakeNode[] {
     const descendants = (node: FakeNode): FakeNode[] =>
       node.children.flatMap((child) => [child, ...descendants(child)]);
@@ -182,6 +216,7 @@ class FakeNode {
         );
       if (selector === "a[href*='/posts/']") return Boolean(node.href?.includes("/posts/"));
       if (selector.startsWith("video")) return node.className.includes("video-player");
+      if (selector === "button") return node.className.includes("button");
       return false;
     });
   }

@@ -37,7 +37,11 @@ export interface InspectLinkedInProfilePostResult {
 }
 
 export interface InspectLinkedInProfileRecorder {
-  scanLoadedPosts(page: Page): Promise<ObservedLinkedInProfilePost[]>;
+  scanLoadedPosts(
+    page: Page,
+    expectedAuthorIdentity: string,
+    expectedTitle: string,
+  ): Promise<ObservedLinkedInProfilePost[]>;
   scroll(page: Page, index: number): Promise<void>;
 }
 
@@ -82,9 +86,14 @@ async function runInspection(
   const activitySurface = `${input.profileUrl.replace(/\/$/, "")}/recent-activity/all/`;
   await page.goto(activitySurface, { waitUntil: "domcontentloaded" });
   const observed = new Map<string, ObservedLinkedInProfilePost>();
+  const expected = normalizeExact(input.expectedBody ?? input.contentExcerpt!);
   let scrollsPerformed = 0;
   for (let pass = 0; pass <= input.maxScrolls; pass += 1) {
-    for (const candidate of await recorder.scanLoadedPosts(page)) {
+    for (const candidate of await recorder.scanLoadedPosts(
+      page,
+      expectedIdentity,
+      expected.split("\n", 1)[0]!,
+    )) {
       if (!activityId(candidate.activityUrl)) continue;
       observed.set(candidate.activityUrl, candidate);
     }
@@ -93,7 +102,6 @@ async function runInspection(
       scrollsPerformed += 1;
     }
   }
-  const expected = normalizeExact(input.expectedBody ?? input.contentExcerpt!);
   const matches = [...observed.values()].filter((candidate) => {
     const body = normalizeExact(candidate.body);
     return input.expectedBody !== undefined ? body === expected : body.includes(expected);
@@ -245,16 +253,12 @@ async function writePrivate(path: string, content: string | Uint8Array): Promise
 }
 
 const defaultRecorder: InspectLinkedInProfileRecorder = {
-  async scanLoadedPosts(page) {
-    const expanders = page.getByRole("button", {
-      name: /^(See more|…more|Näytä lisää|Показать ещё)$/i,
+  async scanLoadedPosts(page, expectedAuthorIdentity, expectedTitle) {
+    const expanded = await page.locator("body").evaluate(expandMatchingLinkedInActivity, {
+      expectedAuthorIdentity,
+      expectedTitle,
     });
-    for (let i = 0; i < (await expanders.count()); i += 1) {
-      await expanders
-        .nth(i)
-        .click({ timeout: 1_000 })
-        .catch(() => undefined);
-    }
+    if (expanded > 0) await page.waitForTimeout(500);
     return page.locator("body").evaluate(extractLinkedInProfilePosts);
   },
   async scroll(page) {
@@ -269,8 +273,77 @@ interface BrowserNode {
   parentElement: BrowserNode | null;
   tagName: string;
   className: string;
+  textContent?: string | null;
   getAttribute(name: string): string | null;
   querySelectorAll(selector: string): ArrayLike<BrowserNode>;
+  click?(): void;
+}
+
+/** Expand only the direct-owned collapse control of the expected author/title
+ * activity. Plain `more` is the live 2026 LinkedIn label; broad page-level
+ * button clicks are forbidden because they can mutate unrelated feed items. */
+export function expandMatchingLinkedInActivity(
+  root: BrowserNode,
+  expected: { expectedAuthorIdentity: string; expectedTitle: string },
+): number {
+  const containers = Array.from(
+    root.querySelectorAll("[data-urn*='urn:li:activity'], [data-id*='urn:li:activity']"),
+  );
+  const isBoundary = (node: BrowserNode): boolean => {
+    const raw = node.getAttribute("data-urn") ?? node.getAttribute("data-id") ?? "";
+    return (
+      /urn:li:activity:\d+/.test(raw) ||
+      /^urn:li:comment/.test(raw) ||
+      node.tagName.toLowerCase() === "article" ||
+      /comments-comment-item|mini-update/i.test(node.className ?? "")
+    );
+  };
+  const isOwned = (node: BrowserNode, container: BrowserNode): boolean => {
+    let current = node.parentElement;
+    while (current && current !== container) {
+      if (isBoundary(current)) return false;
+      current = current.parentElement;
+    }
+    return current === container;
+  };
+  const identity = (href: string): string => {
+    try {
+      const parsed = new URL(href, "https://www.linkedin.com");
+      const match = /^\/in\/([^/]+)\/?$/.exec(parsed.pathname);
+      return match ? `www.linkedin.com/in/${match[1]!.toLowerCase()}` : "";
+    } catch {
+      return "";
+    }
+  };
+  let clicked = 0;
+  for (const container of containers) {
+    const owned = (selector: string): BrowserNode[] =>
+      Array.from(container.querySelectorAll(selector)).filter((node) => isOwned(node, container));
+    const author = owned(
+      ".update-components-actor__meta-link[href*='/in/'], .update-components-actor__container-link[href*='/in/']",
+    )[0];
+    if (identity(author?.href ?? "") !== expected.expectedAuthorIdentity) continue;
+    const bodies = owned(
+      ".update-components-text, [data-testid='main-feed-activity-card__commentary'], .feed-shared-update-v2__description",
+    );
+    if (!bodies.some((node) => (node.innerText ?? "").trim().startsWith(expected.expectedTitle)))
+      continue;
+    for (const button of owned("button")) {
+      const label = (
+        button.getAttribute("aria-label") ??
+        button.innerText ??
+        button.textContent ??
+        ""
+      )
+        .normalize("NFKC")
+        .trim()
+        .toLowerCase();
+      if (!/^(more|see more|…more|näytä lisää|показать ещё)$/.test(label)) continue;
+      button.click?.();
+      clicked += 1;
+    }
+  }
+  return clicked;
 }
 
 /** Browser-serializable extractor. Every accepted node must belong directly to
