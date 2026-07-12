@@ -37,6 +37,14 @@ describe("Facebook exact post readback primitives", () => {
     await expect(readFacebookPost(fakePage(false) as never, TARGET)).rejects.toMatchObject({
       code: 6,
     });
+    await expect(
+      readFacebookPost(
+        fakePageVariants([
+          { media: null, headerPhoto: "https://www.facebook.com/photo/?fbid=avatar" },
+        ]) as never,
+        TARGET,
+      ),
+    ).rejects.toMatchObject({ code: 6 });
     await expect(readFacebookPost(fakePage(true) as never, TARGET)).resolves.toMatchObject({
       canonicalPermalink: TARGET,
       normalizedBody: "Title\n\nFull body",
@@ -129,6 +137,41 @@ describe("Facebook exact post readback primitives", () => {
     );
     expect(page.actions).toEqual(["expand:0", "expand:1"]);
   });
+
+  it("excludes target URLs inside unrelated body and nested comments", async () => {
+    const page = fakePageVariants([
+      {
+        author: "https://www.facebook.com/pimenov",
+        permalink: "https://www.facebook.com/pimenov/posts/unrelated-one",
+        targetInBody: true,
+      },
+      {
+        author: "https://www.facebook.com/pimenov",
+        permalink: "https://www.facebook.com/pimenov/posts/unrelated-two",
+        targetInNestedComment: true,
+      },
+      { body: "Title\n\nFull body", modal: true },
+    ]);
+    await expect(readFacebookPost(page as never, TARGET)).resolves.toMatchObject({
+      canonicalPermalink: TARGET,
+      authorProfileIdentity: "www.facebook.com/pavelvalentov",
+      normalizedBody: "Title\n\nFull body",
+    });
+    expect(page.actions).toEqual(["expand:2"]);
+  });
+
+  it("does not expand an outer article whose selected message belongs to a nested article", async () => {
+    const page = fakePageVariants([
+      { messageOwned: false },
+      { body: "Title\n\nFull body", modal: true },
+    ]);
+    await expect(readFacebookPost(page as never, TARGET)).resolves.toMatchObject({
+      canonicalPermalink: TARGET,
+      authorProfileIdentity: "www.facebook.com/pavelvalentov",
+      normalizedBody: "Title\n\nFull body",
+    });
+    expect(page.actions).toEqual(["expand:1"]);
+  });
 });
 
 class FakeList<T> implements Iterable<T> {
@@ -150,6 +193,7 @@ class FakeElement {
   rect = { width: 100, height: 100 };
   style = { display: "block", visibility: "visible", opacity: "1" };
   attributes: Record<string, string> = {};
+  contained = new Set<FakeElement>();
   constructor(
     readonly innerText = "",
     href?: string,
@@ -178,6 +222,9 @@ class FakeElement {
   getBoundingClientRect() {
     return this.rect;
   }
+  contains(child: FakeElement): boolean {
+    return this.contained.has(child);
+  }
 }
 
 function fakePage(withAttachment: boolean) {
@@ -192,6 +239,10 @@ type ArticleVariant = {
   modal?: boolean;
   hiddenModal?: boolean;
   permalink?: string;
+  targetInBody?: boolean;
+  targetInNestedComment?: boolean;
+  messageOwned?: boolean;
+  headerPhoto?: string;
 };
 
 function fakePageVariants(variants: ArticleVariant[]) {
@@ -264,7 +315,10 @@ function makeArticle(variant: ArticleVariant): FakeElement {
     if (variant.hiddenModal) article.dialog.style.display = "none";
   }
   const body = new FakeElement(variant.body ?? "Title\n\nFull body");
-  body.article = article;
+  body.article =
+    variant.messageOwned === false
+      ? Object.assign(new FakeElement(), { article: new FakeElement() })
+      : article;
   const avatar = new FakeElement(
     "Pavel",
     variant.author ?? "https://www.facebook.com/pavelvalentov",
@@ -275,16 +329,37 @@ function makeArticle(variant: ArticleVariant): FakeElement {
   avatar.before = body;
   const permalink = new FakeElement("time", variant.permalink ?? TARGET);
   permalink.article = article;
+  permalink.before = body;
   const mediaHref =
     variant.media === undefined ? "https://www.facebook.com/photo/?fbid=hero" : variant.media;
   const photo = new FakeElement("", mediaHref ?? undefined, {}, { img: [new FakeElement()] });
   photo.article = article;
   articleOne['[data-ad-preview="message"], [data-ad-comet-preview="message"]'] = body;
   const anchors = [avatar, permalink];
+  if (variant.headerPhoto) {
+    const headerPhoto = new FakeElement("", variant.headerPhoto, {}, { img: [new FakeElement()] });
+    headerPhoto.article = article;
+    headerPhoto.before = body;
+    anchors.push(headerPhoto);
+  }
   if (variant.extraPermalink) {
     const extra = new FakeElement("other", variant.extraPermalink);
     extra.article = article;
+    extra.before = body;
     anchors.push(extra);
+  }
+  if (variant.targetInBody) {
+    const bodyLink = new FakeElement("target in body", TARGET);
+    bodyLink.article = article;
+    body.contained.add(bodyLink);
+    anchors.push(bodyLink);
+  }
+  if (variant.targetInNestedComment) {
+    const nestedArticle = new FakeElement();
+    nestedArticle.article = nestedArticle;
+    const nestedLink = new FakeElement("target in comment", TARGET);
+    nestedLink.article = nestedArticle;
+    anchors.push(nestedLink);
   }
   if (mediaHref) anchors.push(photo);
   articleMany["a[href]"] = anchors;
