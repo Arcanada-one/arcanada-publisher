@@ -30,7 +30,7 @@ import { cssSelectors, selectors } from "./selectors.js";
 import { launchSession, withScreenshotOnFail } from "./context.js";
 import { ACTIVITY_URN_RE, extractActivityUrn, pickFirstActivityHref } from "./url-extraction.js";
 import { classifyLiError, mapLiError } from "./errors.js";
-import { prepareMediaClipboard } from "./media-clipboard.js";
+import { prepareMediaClipboard, validateMediaFile } from "./media-clipboard.js";
 import {
   markComposerScopeJs,
   shadowClickComposerButtonJs,
@@ -52,6 +52,18 @@ const RECENT_ACTIVITY = "https://www.linkedin.com/in/me/recent-activity/all/";
 const POST_BODY_LIMIT = 3000;
 /** R7: the share-creation API call is the real publish confirmation. */
 const LINKEDIN_SHARE_API = "voyager/api/contentcreation";
+
+interface FocusNode {
+  ownerDocument: { activeElement: FocusNode | null };
+  shadowRoot?: { activeElement: FocusNode | null } | null;
+  contains(node: FocusNode): boolean;
+}
+
+export function isComposedEditorFocused(element: FocusNode): boolean {
+  let active = element.ownerDocument.activeElement;
+  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+  return active === element || (active !== null && element.contains(active));
+}
 
 /** R1: collect every image path (imagePaths wins; imagePath is the legacy alias). */
 export function collectImagePaths(input: PublishInput): string[] {
@@ -127,6 +139,9 @@ export interface PublishOptions {
   abortAfterMedia?: boolean;
   /** Test seam and point-of-use clipboard ownership hook. */
   __prepareMediaClipboard?: (path: string) => unknown;
+  __validateMediaFile?: (path: string) => unknown;
+  __isEditorFocused?: (editor: ReturnType<Page["locator"]>) => Promise<boolean>;
+  __onStage?: (stage: string) => void;
 }
 
 export async function publish(
@@ -170,9 +185,8 @@ export async function publish(
     });
   }
 
-  const clipboardPreparer = options.__prepareMediaClipboard ?? prepareMediaClipboard;
-  if (safeImagePaths.length > 0 && (!options.page || options.__prepareMediaClipboard)) {
-    clipboardPreparer(safeImagePaths[0]);
+  if (safeImagePaths.length > 0 && (!options.page || options.__validateMediaFile)) {
+    (options.__validateMediaFile ?? validateMediaFile)(safeImagePaths[0]);
   }
 
   const profiles = options.profileManager ?? new ProfileManager();
@@ -321,12 +335,26 @@ async function runPublishFlow(
       // picker. Use the concrete OS accelerator: macOS Chromium did not deliver
       // a POSIX-file paste through the abstract ControlOrMeta alias.
       await editor.click();
+      options.__onStage?.("editor_click");
+      await editor.focus();
+      options.__onStage?.("editor_focus");
+      const editorFocused = options.__isEditorFocused
+        ? await options.__isEditorFocused(editor)
+        : ((await editor.evaluate(isComposedEditorFocused as never)) as boolean);
+      if (!editorFocused) {
+        throw mapLiError("composer_not_found", {
+          extra: { stage: "editor_focus_failed" },
+        });
+      }
+      options.__onStage?.("composed_focus_proof");
       // Re-establish and verify at point of use, after focus and with no await or
       // clipboard write between this proof and the paste keystroke.
       if (!options.page || options.__prepareMediaClipboard) {
         (options.__prepareMediaClipboard ?? prepareMediaClipboard)(imagePaths[0]);
+        options.__onStage?.("clipboard_prepare");
       }
       await page.keyboard.press(process.platform === "darwin" ? "Meta+v" : "Control+v");
+      options.__onStage?.("paste_key");
       // Wait for ingest: a <video> (or <img> for a still) preview appears. Video
       // transcodes server-side, much longer than an image — bounded poll.
       await page.waitForTimeout(hasVideo ? 6_000 : 3_000);
@@ -351,6 +379,7 @@ async function runPublishFlow(
           const n = (await page.evaluate(scopedVideoCountJs())) as number;
           if (n > 0) {
             attached = true;
+            options.__onStage?.("scoped_preview");
             break;
           }
         } else if ((await page.locator(imagePreviewSel).count()) > 0) {
@@ -388,6 +417,7 @@ async function runPublishFlow(
     // Fill text AFTER media (operator rule §6.4: media-before-text).
     await editor.click();
     await page.keyboard.insertText(input.text);
+    options.__onStage?.("text_insert");
 
     // No-publish dry-run (PublishOptions.abortBeforePost): the composer is now
     // fully populated — media attached + text typed — and we are ONE click away
@@ -423,6 +453,7 @@ async function runPublishFlow(
     const clickPost = async (): Promise<void> => {
       for (let i = 0; i < postMaxPolls; i++) {
         posted = (await page.evaluate(shadowClickComposerButtonJs(POST_RE))) as boolean;
+        if (posted) options.__onStage?.("post_click");
         if (posted) return;
         await page.waitForTimeout(500);
       }
