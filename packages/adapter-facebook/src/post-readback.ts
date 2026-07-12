@@ -41,18 +41,40 @@ export async function readFacebookPost(
 ): Promise<FacebookPostReadback> {
   const target = canonicalFacebookPostUrl(targetUrl);
   await page.goto(target);
-  const postId = target.split("/").at(-1)!;
-  const targetArticles = page
-    .locator('[role="article"]')
-    .filter({ has: page.locator(`a[href*="/posts/${postId}"]`) });
-  const expanders = targetArticles.getByRole("button", {
-    name: /^(See more|Показать ещё|Ещё|Näytä lisää)$/i,
-  });
-  for (let i = 0, count = await expanders.count().catch(() => 0); i < count; i += 1) {
-    await expanders
-      .nth(i)
-      .click()
-      .catch(() => undefined);
+  const articleLocators = page.locator('[role="article"]');
+  for (let index = 0, count = await articleLocators.count(); index < count; index += 1) {
+    const article = articleLocators.nth(index);
+    const isExactTarget = await article.evaluate((node, expected) => {
+      const canonical = (href: string): string | null => {
+        try {
+          const url = new URL(
+            href,
+            (globalThis as unknown as { location: { href: string } }).location.href,
+          );
+          const parts = url.pathname.split("/").filter(Boolean);
+          return parts.length >= 3 && parts[1] === "posts"
+            ? `https://www.facebook.com/${parts[0]}/posts/${parts[2]}`
+            : null;
+        } catch {
+          return null;
+        }
+      };
+      return Array.from(
+        (
+          node as unknown as { querySelectorAll(s: string): ArrayLike<{ href?: string }> }
+        ).querySelectorAll("a[href]"),
+      ).some((anchor) => anchor.href && canonical(anchor.href) === expected);
+    }, target);
+    if (!isExactTarget) continue;
+    const expanders = article.getByRole("button", {
+      name: /^(See more|Показать ещё|Ещё|Näytä lisää)$/i,
+    });
+    for (let i = 0, expandCount = await expanders.count().catch(() => 0); i < expandCount; i += 1) {
+      await expanders
+        .nth(i)
+        .click()
+        .catch(() => undefined);
+    }
   }
   const raw = await page.locator("body").evaluate((root, expected) => {
     type DomElement = {
@@ -63,6 +85,8 @@ export async function readFacebookPost(
       querySelectorAll(selector: string): ArrayLike<DomElement> & Iterable<DomElement>;
       compareDocumentPosition(other: DomElement): number;
       getAttribute(name: string): string | null;
+      isConnected: boolean;
+      getBoundingClientRect(): { width: number; height: number };
     };
     const bodyRoot = root as unknown as DomElement;
     const browserLocation = (globalThis as unknown as { location: { href: string } }).location;
@@ -117,6 +141,31 @@ export async function readFacebookPost(
       const mediaUrl = mediaAnchor?.href ? new URL(mediaAnchor.href, browserLocation.href) : null;
       mediaUrl?.searchParams.delete("__cft__[0]");
       mediaUrl?.searchParams.delete("__tn__");
+      const dialog = article.closest('[role="dialog"]');
+      const style = dialog
+        ? (
+            globalThis as unknown as {
+              getComputedStyle(node: DomElement): {
+                display: string;
+                visibility: string;
+                opacity: string;
+              };
+            }
+          ).getComputedStyle(dialog)
+        : null;
+      const rect = dialog?.getBoundingClientRect();
+      const isModal = Boolean(
+        dialog &&
+        dialog.isConnected &&
+        dialog.getAttribute("hidden") === null &&
+        dialog.getAttribute("aria-hidden") !== "true" &&
+        style?.display !== "none" &&
+        style?.visibility !== "hidden" &&
+        style?.opacity !== "0" &&
+        rect &&
+        rect.width > 0 &&
+        rect.height > 0,
+      );
       return [
         {
           canonicalPermalink:
@@ -125,9 +174,7 @@ export async function readFacebookPost(
           body: body.innerText,
           hasImage: mediaUrl !== null,
           mediaIdentity: mediaUrl?.toString() ?? "",
-          isModal:
-            article.closest('[role="dialog"]') !== null &&
-            article.closest('[role="dialog"]')?.getAttribute("aria-hidden") !== "true",
+          isModal,
         },
       ];
     });
