@@ -371,6 +371,8 @@ interface BrowserNode {
   querySelectorAll(selector: string): ArrayLike<BrowserNode>;
   cloneNode?(deep?: boolean): BrowserNode;
   remove?(): void;
+  setAttribute?(name: string, value: string): void;
+  ownerDocument?: { body?: { appendChild(node: BrowserNode): void } };
   click?(): void;
 }
 
@@ -528,12 +530,32 @@ export function extractLinkedInProfilePosts(root: BrowserNode): ObservedLinkedIn
           const clone = node.cloneNode?.(true) ?? node;
           for (const control of Array.from(
             clone.querySelectorAll(
-              "button, [role='button'], .feed-shared-inline-show-more-text__see-more-less-toggle",
+              "button, [role='button'], .feed-shared-inline-show-more-text__see-more-less-toggle, script, iframe, img, video, audio, source, link",
             ),
           )) {
             control.remove?.();
           }
-          return clone.innerText ?? "";
+          let attached = false;
+          try {
+            const fallbackDocument = (
+              globalThis as unknown as {
+                document?: { body?: { appendChild(node: BrowserNode): void } };
+              }
+            ).document;
+            const body = node.ownerDocument?.body ?? fallbackDocument?.body;
+            if (clone !== node && body) {
+              clone.setAttribute?.("aria-hidden", "true");
+              clone.setAttribute?.(
+                "style",
+                "position:fixed;left:-100000px;top:0;opacity:0;pointer-events:none;contain:layout style paint",
+              );
+              body.appendChild(clone);
+              attached = true;
+            }
+            return clone.innerText ?? "";
+          } finally {
+            if (attached) clone.remove?.();
+          }
         })
         .sort((a, b) => b.length - a.length)[0] ?? "";
     const author = owned(
@@ -562,12 +584,30 @@ export function bodyTextWithoutDirectControls(node: BrowserNode): string {
   const clone = node.cloneNode?.(true) ?? node;
   for (const control of Array.from(
     clone.querySelectorAll(
-      "button, [role='button'], .feed-shared-inline-show-more-text__see-more-less-toggle",
+      "button, [role='button'], .feed-shared-inline-show-more-text__see-more-less-toggle, script, iframe, img, video, audio, source, link",
     ),
   )) {
     control.remove?.();
   }
-  return clone.innerText ?? "";
+  let attached = false;
+  try {
+    const fallbackDocument = (
+      globalThis as unknown as { document?: { body?: { appendChild(node: BrowserNode): void } } }
+    ).document;
+    const body = node.ownerDocument?.body ?? fallbackDocument?.body;
+    if (clone !== node && body) {
+      clone.setAttribute?.("aria-hidden", "true");
+      clone.setAttribute?.(
+        "style",
+        "position:fixed;left:-100000px;top:0;opacity:0;pointer-events:none;contain:layout style paint",
+      );
+      body.appendChild(clone);
+      attached = true;
+    }
+    return clone.innerText ?? "";
+  } finally {
+    if (attached) clone.remove?.();
+  }
 }
 
 export function extractLinkedInVanityPermalink(

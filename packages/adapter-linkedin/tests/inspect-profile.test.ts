@@ -180,12 +180,29 @@ describe("LinkedIn read-only profile inspection", () => {
     outer.child("video", "video-player");
     const root = new FakeNode("");
     root.children.push(outer);
-    const serialized = Function(
-      `return (${extractLinkedInProfilePosts.toString()})`,
-    )() as typeof extractLinkedInProfilePosts;
-    expect(serialized(root)).toEqual([
-      expect.objectContaining({ body: BODY, hasNativeVideo: true }),
-    ]);
+    const documentBody = new FakeNode("");
+    const previousDocument = (globalThis as { document?: unknown }).document;
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: { body: documentBody },
+    });
+    try {
+      const serialized = Function(
+        `return (${extractLinkedInProfilePosts.toString()})`,
+      )() as typeof extractLinkedInProfilePosts;
+      expect(serialized(root)).toEqual([
+        expect.objectContaining({ body: BODY, hasNativeVideo: true }),
+      ]);
+      expect(documentBody.appendCount).toBe(1);
+      expect(documentBody.children).toHaveLength(0);
+    } finally {
+      if (previousDocument === undefined) delete (globalThis as { document?: unknown }).document;
+      else
+        Object.defineProperty(globalThis, "document", {
+          configurable: true,
+          value: previousDocument,
+        });
+    }
   });
 
   it("clicks plain more only on the direct-owned expected author/title activity", () => {
@@ -254,9 +271,13 @@ describe("LinkedIn read-only profile inspection", () => {
   });
 
   it("removes the direct-owned live control before exact body normalization", () => {
-    const body = new FakeNode(`${BODY}\n...more`, {}, "update-components-text");
+    const paragraphs = Array.from({ length: 7 }, (_, index) => `Paragraph ${index + 1}.`).join(
+      "\n\n",
+    );
+    const body = new FakeNode(`${paragraphs}\n...more`, {}, "update-components-text");
     body.child("...more", "button");
-    expect(bodyTextWithoutDirectControls(body)).toBe(BODY);
+    expect(bodyTextWithoutDirectControls(body)).toBe(paragraphs);
+    expect(bodyTextWithoutDirectControls(body).match(/\n\n/g)).toHaveLength(6);
   });
 
   it("recovers only copied same-author same-activity vanity URLs", () => {
@@ -430,6 +451,7 @@ class FakeNode {
   tagName = "div";
   href?: string;
   clickCount = 0;
+  appendCount = 0;
 
   constructor(
     public innerText: string,
@@ -459,6 +481,16 @@ class FakeNode {
 
   getAttribute(name: string): string | null {
     return this.attrs[name] ?? null;
+  }
+
+  setAttribute(name: string, value: string): void {
+    this.attrs[name] = value;
+  }
+
+  appendChild(node: FakeNode): void {
+    node.parentElement = this;
+    this.children.push(node);
+    this.appendCount += 1;
   }
 
   get attrsForTest(): Record<string, string> {
