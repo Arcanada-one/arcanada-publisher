@@ -376,7 +376,9 @@ describe("TelegramAdapter publish safety", () => {
     });
     const adapter = new TelegramAdapter({ transport });
 
-    await expect(safeMediaEdit(adapter)).resolves.toMatchObject({ edited: true });
+    await expect(safeMediaEdit(adapter, { text: "new caption\n" })).resolves.toMatchObject({
+      edited: true,
+    });
     expect(transport).toHaveBeenCalledTimes(4);
   });
 

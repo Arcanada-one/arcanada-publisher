@@ -181,23 +181,28 @@ export class TelegramAdapter extends BaseAdapter {
 
   async edit(input: EditInput): Promise<EditResult> {
     if (!input.text) throw new AdapterError(ErrorCode.MISSING_INPUT, "edit: text is required");
-    const { chatId, messageId } = parseMessageUrl(input.postUrl);
+    const normalizedInput = { ...input, text: normalizeTerminalLineEnding(input.text) };
+    const { chatId, messageId } = parseMessageUrl(normalizedInput.postUrl);
     if (!this.allowedLiveChatIds.has(chatId))
       throw new AdapterError(
         ErrorCode.NETWORK_GUARD,
         `telegram: live chat '${chatId}' is not operator-allowed; test channel ${TELEGRAM_TEST_CHAT_ID} is the default`,
       );
-    if (input.imagePath) return this.editMedia(input, chatId, messageId);
+    if (normalizedInput.imagePath) return this.editMedia(normalizedInput, chatId, messageId);
     let expectedBotId: number | undefined;
-    if (input.expectedContent || input.expectedMediaKind || input.expectedParentUrl) {
+    if (
+      normalizedInput.expectedContent ||
+      normalizedInput.expectedMediaKind ||
+      normalizedInput.expectedParentUrl
+    ) {
       const bot = requireResult<{ id: number }>(await this.transport("getMe", undefined), "getMe");
       expectedBotId = bot.id;
-      await this.assertCurrentMessage(input, chatId, messageId, bot.id);
+      await this.assertCurrentMessage(normalizedInput, chatId, messageId, bot.id);
     }
     const message = requireMessage(
       await this.transport(
         "editMessageText",
-        jsonBody({ chat_id: chatId, message_id: messageId, text: input.text }),
+        jsonBody({ chat_id: chatId, message_id: messageId, text: normalizedInput.text }),
       ),
       "editMessageText",
     );
@@ -207,15 +212,15 @@ export class TelegramAdapter extends BaseAdapter {
       (expectedBotId !== undefined &&
         !publisherSourceIdentityMatches(message, chatId, expectedBotId)) ||
       message.forward_origin ||
-      !replyParentMatches(message, chatId, input.expectedParentUrl) ||
-      message.text !== input.text
+      !replyParentMatches(message, chatId, normalizedInput.expectedParentUrl) ||
+      message.text !== normalizedInput.text
     )
       throw new AdapterError(ErrorCode.VERIFY_FAILED, "edit: returned text mismatch");
     return EditResultSchema.parse({
       ok: true,
       platform: "telegram",
       account: chatId,
-      postUrl: input.postUrl,
+      postUrl: normalizedInput.postUrl,
       edited: true,
     });
   }
