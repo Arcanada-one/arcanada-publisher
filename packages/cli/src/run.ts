@@ -257,7 +257,7 @@ async function runInspectProfilePost(
     profileUrl: args.profileUrl,
     expectedAuthorProfileUrl: args.expectedAuthorProfileUrl,
     ...(args.expectedContentFile
-      ? { expectedBody: readExactMutationText(args.expectedContentFile) }
+      ? { expectedBody: readInspectionOracle(args.expectedContentFile) }
       : { contentExcerpt: args.contentExcerpt! }),
     evidenceDir: args.evidenceDir,
     maxScrolls: args.maxScrolls,
@@ -382,6 +382,21 @@ function readText(args: ParsedArgs): string {
 
 function readExactMutationText(path: string): string {
   return readFileSync(path, "utf8").replace(/\r\n/g, "\n").replace(/\n$/, "");
+}
+
+function readInspectionOracle(path: string): string {
+  try {
+    return readExactMutationText(path);
+  } catch {
+    throw new AdapterError(
+      ErrorCode.MISSING_INPUT,
+      "inspect-profile-post: failed to read expected content file",
+      {
+        stage: "inspect-profile-post.read-expected-content",
+        failure: "EXPECTED_CONTENT_READ_FAILED",
+      },
+    );
+  }
 }
 
 function loadPolicy(path: string | undefined): PolicyConfig {

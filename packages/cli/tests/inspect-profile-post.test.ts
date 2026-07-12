@@ -18,15 +18,12 @@ describe("inspect-profile-post CLI", () => {
       authorProfileIdentity: "www.facebook.com/pavelvalentov",
       postBodySha256: "post-sha256",
       postBodyLength: 1234,
-      postBodyEvidencePath: "/private/post-body.txt",
-      screenshotPath: "/private/readback.png",
       comments: [
         {
           id: "1326931196274132",
           authorProfileIdentity: "www.facebook.com/pavelvalentov",
           bodySha256: "comment-sha256",
           bodyLength: 209,
-          bodyEvidencePath: "/private/comment-1326931196274132.txt",
         },
       ],
       coverage: { maxScrolls: 12, scrollsPerformed: 12, postsInspected: 18 },
@@ -59,6 +56,7 @@ describe("inspect-profile-post CLI", () => {
 
     expect(result.code).toBe(0);
     expect(result.message).not.toContain(secretBody);
+    expect(result.message).not.toContain(root);
     expect(JSON.parse(result.message)).toMatchObject({
       canonicalParentPermalink: "https://www.facebook.com/pavelvalentov/posts/pfbid-content-0377",
       comments: [{ id: "1326931196274132", bodySha256: "comment-sha256" }],
@@ -72,6 +70,30 @@ describe("inspect-profile-post CLI", () => {
       maxScrolls: 12,
       profile: "default",
     });
+  });
+
+  it("reports expected-content read failures without leaking the supplied path", async () => {
+    const secretPath = "/private/campaigns/CONTENT-0377/secret-body.txt";
+    const result = await run([
+      "inspect-profile-post",
+      "--platform",
+      "facebook",
+      "--profile-url",
+      "https://www.facebook.com/pavelvalentov",
+      "--expected-author-profile-url",
+      "https://www.facebook.com/pavelvalentov",
+      "--expected-content-file",
+      secretPath,
+      "--evidence-dir",
+      "/private/evidence",
+      "--max-scrolls",
+      "2",
+    ]);
+
+    expect(result.code).toBe(2);
+    expect(result.message).toContain("inspect-profile-post: failed to read expected content file");
+    expect(result.message).not.toContain(secretPath);
+    expect(inspectProfilePost).not.toHaveBeenCalled();
   });
 
   it("rejects non-Facebook inspection without constructing a mutation path", async () => {

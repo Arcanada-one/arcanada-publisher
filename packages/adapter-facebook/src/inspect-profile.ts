@@ -35,7 +35,6 @@ export interface InspectFacebookCommentSummary {
   authorProfileIdentity: string;
   bodySha256: string;
   bodyLength: number;
-  bodyEvidencePath: string;
 }
 
 export interface InspectFacebookProfilePostResult {
@@ -43,8 +42,6 @@ export interface InspectFacebookProfilePostResult {
   authorProfileIdentity: string;
   postBodySha256: string;
   postBodyLength: number;
-  postBodyEvidencePath: string;
-  screenshotPath: string;
   comments: InspectFacebookCommentSummary[];
   coverage: {
     maxScrolls: number;
@@ -157,11 +154,28 @@ async function runInspection(
         authorProfileIdentity: facebookProfileIdentity(comment.authorProfileHref),
         bodySha256: sha256(body),
         bodyLength: body.length,
-        bodyEvidencePath,
       });
     }
     await page.screenshot({ path: screenshotPath, fullPage: true });
     await chmod(screenshotPath, 0o600);
+    await writePrivate(
+      join(evidenceDir, "manifest.json"),
+      `${JSON.stringify(
+        {
+          version: 1,
+          canonicalParentPermalink: matched.canonicalPermalink,
+          authorProfileIdentity: expectedIdentity,
+          postBodyEvidencePath,
+          screenshotPath,
+          comments: matched.comments.map((comment) => ({
+            id: comment.id,
+            bodyEvidencePath: join(evidenceDir, `comment-${comment.id}.txt`),
+          })),
+        },
+        null,
+        2,
+      )}\n`,
+    );
   } catch (error) {
     if (error instanceof AdapterError) throw error;
     throw verifyError("failed to write private inspection evidence");
@@ -173,8 +187,6 @@ async function runInspection(
     authorProfileIdentity: expectedIdentity,
     postBodySha256: sha256(body),
     postBodyLength: body.length,
-    postBodyEvidencePath,
-    screenshotPath,
     comments,
     coverage,
   };
@@ -281,7 +293,7 @@ const defaultRecorder: InspectFacebookProfileRecorder = {
         parentElement: DomElement | null;
         closest(selector: string): DomElement | null;
         querySelector(selector: string): DomElement | null;
-        querySelectorAll(selector: string): DomElement[];
+        querySelectorAll(selector: string): ArrayLike<DomElement> & Iterable<DomElement>;
         compareDocumentPosition(other: DomElement): number;
         getAttribute(name: string): string | null;
       };
@@ -304,21 +316,19 @@ const defaultRecorder: InspectFacebookProfileRecorder = {
           '[data-ad-preview="message"], [data-ad-comet-preview="message"]',
         );
         if (preferred && preferred.closest('[role="article"]') === article) return preferred;
-        const candidates = article
-          .querySelectorAll('[dir="auto"]')
-          .filter(
-            (node) =>
-              node.closest('[role="article"]') === article &&
-              !node.closest('a[role="link"], strong') &&
-              !node
-                .querySelectorAll('[dir="auto"]')
-                .some((child) => child !== node && child.closest('[role="article"]') === article) &&
-              node.innerText.trim() !== "",
-          );
+        const candidates = Array.from(article.querySelectorAll('[dir="auto"]')).filter(
+          (node) =>
+            node.closest('[role="article"]') === article &&
+            !node.closest('a[role="link"], strong') &&
+            !Array.from(node.querySelectorAll('[dir="auto"]')).some(
+              (child) => child !== node && child.closest('[role="article"]') === article,
+            ) &&
+            node.innerText.trim() !== "",
+        );
         return candidates.sort((a, b) => b.innerText.length - a.innerText.length)[0] ?? null;
       };
       const authorHref = (article: DomElement, body: DomElement): string | null => {
-        for (const anchor of article.querySelectorAll('a[role="link"][href]')) {
+        for (const anchor of Array.from(article.querySelectorAll('a[role="link"][href]'))) {
           if (anchor.closest('[role="article"]') !== article) continue;
           if ((anchor.compareDocumentPosition(body) & 4) === 0) continue;
           if (!anchor.innerText.trim() && !anchor.getAttribute("aria-label")?.trim()) continue;
@@ -327,8 +337,8 @@ const defaultRecorder: InspectFacebookProfileRecorder = {
         return null;
       };
       const posts: ObservedFacebookProfilePost[] = [];
-      for (const article of bodyRoot.querySelectorAll('[role="article"]')) {
-        const permalinkAnchor = article.querySelectorAll("a[href]").find((anchor) => {
+      for (const article of Array.from(bodyRoot.querySelectorAll('[role="article"]'))) {
+        const permalinkAnchor = Array.from(article.querySelectorAll("a[href]")).find((anchor) => {
           if (anchor.closest('[role="article"]') !== article) return false;
           try {
             if (!anchor.href) return false;
@@ -349,7 +359,7 @@ const defaultRecorder: InspectFacebookProfileRecorder = {
         const headerHref = authorHref(article, body);
         if (!headerHref) continue;
         const comments = new Map<string, ObservedFacebookComment>();
-        for (const anchor of article.querySelectorAll('a[href*="comment_id="]')) {
+        for (const anchor of Array.from(article.querySelectorAll('a[href*="comment_id="]'))) {
           const commentArticle = anchor.closest('[role="article"]');
           if (!commentArticle || commentArticle === article) continue;
           if (commentArticle.parentElement?.closest('[role="article"]') !== article) continue;
