@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ErrorCode } from "@arcanada/publisher-core";
 import {
+  bodyTextWithoutDirectControls,
   expandMatchingLinkedInActivity,
+  extractLinkedInVanityPermalink,
   extractLinkedInProfilePosts,
   inspectLinkedInProfilePost,
   type ObservedLinkedInProfilePost,
@@ -32,6 +34,7 @@ function options(batches: ObservedLinkedInProfilePost[][]) {
       goto: async () => {},
       screenshot: async () => Buffer.from("png"),
       locator: () => ({ evaluate: async () => [] }),
+      waitForTimeout: async () => {},
     } as never,
     skipTeardown: true,
     __recorder: {
@@ -183,6 +186,59 @@ describe("LinkedIn read-only profile inspection", () => {
     expect(other.children[2]?.clickCount).toBe(0);
   });
 
+  it("recognizes the exact live verbose see-more label only on the owned activity", () => {
+    const outer = new FakeNode("", { "data-urn": `urn:li:activity:${ID}` });
+    outer.child("Building the Binary Is Only the Beginning…", "update-components-text");
+    outer.child("Pavel", "update-components-actor__meta-link", PROFILE);
+    const live = outer.child("", "button", undefined, undefined, undefined, {
+      "aria-label":
+        "See more, visually reveals content which is already detected by screen readers",
+    });
+    const root = new FakeNode("");
+    root.children.push(outer);
+    expect(
+      expandMatchingLinkedInActivity(root, {
+        expectedAuthorIdentity: "www.linkedin.com/in/pavelvalentov",
+        expectedTitle: "Building the Binary Is Only the Beginning",
+      }),
+    ).toBe(1);
+    expect(live.clickCount).toBe(1);
+  });
+
+  it("removes the direct-owned live control before exact body normalization", () => {
+    const body = new FakeNode(`${BODY}\n...more`, {}, "update-components-text");
+    body.child("...more", "button");
+    expect(bodyTextWithoutDirectControls(body)).toBe(BODY);
+  });
+
+  it("recovers only copied same-author same-activity vanity URLs", () => {
+    const root = new FakeNode("");
+    const canonical = new FakeNode(
+      "",
+      {
+        rel: "canonical",
+        href: `https://www.linkedin.com/posts/pavelvalentov_building-activity-${ID}-AbCd?utm_source=share`,
+      },
+      "",
+      "link",
+    );
+    canonical.href = canonical.getAttribute("href") ?? undefined;
+    root.children.push(canonical);
+    expect(
+      extractLinkedInVanityPermalink(root, {
+        expectedAuthorIdentity: "www.linkedin.com/in/pavelvalentov",
+        activityId: ID,
+      }),
+    ).toBe(`https://www.linkedin.com/posts/pavelvalentov_building-activity-${ID}-AbCd`);
+    canonical.href = `https://www.linkedin.com/posts/impostor_building-activity-${ID}-AbCd`;
+    expect(
+      extractLinkedInVanityPermalink(root, {
+        expectedAuthorIdentity: "www.linkedin.com/in/pavelvalentov",
+        activityId: ID,
+      }),
+    ).toBe("");
+  });
+
   it("rejects a foreign-host /in/ lookalike before clicking", () => {
     const outer = new FakeNode("", { "data-urn": `urn:li:activity:${ID}` });
     outer.child("Building the Binary Is Only the Beginning…", "update-components-text");
@@ -314,8 +370,9 @@ class FakeNode {
     href?: string,
     permalink?: string,
     onClick?: () => void,
+    attrs: Record<string, string> = {},
   ): FakeNode {
-    const node = new FakeNode(text, {}, className);
+    const node = new FakeNode(text, attrs, className);
     node.parentElement = this;
     if (href) node.href = href;
     if (permalink) node.href = permalink;
@@ -331,6 +388,29 @@ class FakeNode {
   click(): void {
     this.clickCount += 1;
     this.onClick?.();
+  }
+
+  cloneNode(deep = false): FakeNode {
+    const clone = new FakeNode(this.innerText, { ...this.attrs }, this.className, this.tagName);
+    clone.href = this.href;
+    if (deep) {
+      for (const child of this.children) {
+        const childClone = child.cloneNode(true);
+        childClone.parentElement = clone;
+        clone.children.push(childClone);
+      }
+    }
+    return clone;
+  }
+
+  remove(): void {
+    if (!this.parentElement) return;
+    const parent = this.parentElement;
+    parent.children = parent.children.filter((child) => child !== this);
+    if (this.className.includes("button") && parent.innerText.endsWith("\n...more")) {
+      parent.innerText = parent.innerText.slice(0, -8);
+    }
+    this.parentElement = null;
   }
 
   querySelectorAll(selector: string): FakeNode[] {
@@ -350,6 +430,11 @@ class FakeNode {
       if (selector === "a[href*='/posts/']") return Boolean(node.href?.includes("/posts/"));
       if (selector.startsWith("video")) return node.className.includes("video-player");
       if (selector === "button") return node.className.includes("button");
+      if (selector.includes("button")) return node.className.includes("button");
+      if (selector === "link[rel='canonical']")
+        return node.tagName === "link" && node.getAttribute("rel") === "canonical";
+      if (selector === "meta[property='og:url']")
+        return node.tagName === "meta" && node.getAttribute("property") === "og:url";
       return false;
     });
   }
