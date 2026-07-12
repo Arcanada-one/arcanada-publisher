@@ -87,7 +87,11 @@ describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
         __verifyPostVideo: async () => true,
       },
     );
-    expect(events).toEqual([`prepare:${vid}`, `prepare:${vid}`, "key:ControlOrMeta+v"]);
+    expect(events).toEqual([
+      `prepare:${vid}`,
+      `prepare:${vid}`,
+      `key:${process.platform === "darwin" ? "Meta+v" : "Control+v"}`,
+    ]);
   });
 
   it("throws VERIFY_FAILED when the published post carries NO video (oracle=false)", async () => {

@@ -304,14 +304,15 @@ async function runPublishFlow(
       // and the subsequent Cmd/Ctrl+V lands nowhere → media never attaches. A
       // direct paste into the focused `.ql-editor` ingests the clipboard POSIX
       // file as media (a <video>/<img> preview appears, Post enables) with no
-      // picker. ControlOrMeta is platform-neutral (Cmd on macOS, Ctrl elsewhere).
+      // picker. Use the concrete OS accelerator: macOS Chromium did not deliver
+      // a POSIX-file paste through the abstract ControlOrMeta alias.
       await editor.click();
       // Re-establish and verify at point of use, after focus and with no await or
       // clipboard write between this proof and the paste keystroke.
       if (!options.page || options.__prepareMediaClipboard) {
         (options.__prepareMediaClipboard ?? prepareMediaClipboard)(imagePaths[0]);
       }
-      await page.keyboard.press("ControlOrMeta+v");
+      await page.keyboard.press(process.platform === "darwin" ? "Meta+v" : "Control+v");
       // Wait for ingest: a <video> (or <img> for a still) preview appears. Video
       // transcodes server-side, much longer than an image — bounded poll.
       await page.waitForTimeout(hasVideo ? 6_000 : 3_000);
