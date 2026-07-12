@@ -43,6 +43,7 @@ function fakeVideoPublishPage(): never {
     isVisible: async () => true,
     count: async () => 1,
     click: async () => {},
+    evaluate: async () => true,
   };
   const page = {
     goto: async () => {},
@@ -59,7 +60,7 @@ function fakeVideoPublishPage(): never {
       // shadow-walk button clicks return true (control found + clicked).
       if (source.includes("hit.click()")) return true;
       // scoped video count (composer-side) → 1 (attached).
-      if (source.includes("scopeSels")) return 1;
+      if (source.includes("scopeSel")) return 1;
       // visible href collector → the activity URL (extraction succeeds).
       if (source.includes("offsetParent")) return [ACTIVITY_URL];
       // generic shadow count (post-publish oracle path, if ever reached) → 0.
@@ -119,6 +120,7 @@ describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
           isVisible: async () => true,
           count: async () => 1,
           click: async () => {},
+          evaluate: async () => true,
         }),
       }),
       locator: () => ({
@@ -127,6 +129,7 @@ describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
           isVisible: async () => true,
           count: async () => 1,
           click: async () => {},
+          evaluate: async () => true,
         }),
       }),
       isClosed: () => false,
@@ -141,7 +144,7 @@ describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
           }
           return true;
         }
-        if (source.includes("scopeSels")) return 1; // scoped video attached
+        if (source.includes("scopeSel")) return 1; // scoped video attached
         if (source.includes("offsetParent")) return [ACTIVITY_URL];
         return 0;
       },

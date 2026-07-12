@@ -30,7 +30,12 @@ import { cssSelectors, selectors } from "./selectors.js";
 import { launchSession, withScreenshotOnFail } from "./context.js";
 import { ACTIVITY_URN_RE, extractActivityUrn, pickFirstActivityHref } from "./url-extraction.js";
 import { classifyLiError, mapLiError } from "./errors.js";
-import { shadowClickButtonJs, scopedVideoCountJs, shadowCountJs } from "./dom-shadow.js";
+import {
+  markComposerScopeJs,
+  shadowClickButtonJs,
+  scopedVideoCountJs,
+  shadowCountJs,
+} from "./dom-shadow.js";
 
 // PUB-0031: .mp4 and .mov added so the generated cover+narration video attaches
 // via the same --image path on LinkedIn, mirroring the X adapter (PUB-0027).
@@ -267,6 +272,10 @@ async function runPublishFlow(
         ? editorCss
         : page.getByRole("textbox", { name: selectors.editor }).first();
     await editor.waitFor({ state: "visible", timeout: 15_000 });
+    const composerMarked = (await editor.evaluate(markComposerScopeJs())) as boolean;
+    if (!composerMarked) {
+      throw mapLiError("composer_not_found", { extra: { stage: "composer_scope_unresolved" } });
+    }
     // PUB-0033 (verified live 2026-06-26): the composer needs a moment to finish
     // initialising after it becomes visible — a paste issued immediately lands
     // nowhere and the media never attaches. A short settle before the first paste

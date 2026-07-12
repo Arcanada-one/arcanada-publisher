@@ -70,31 +70,52 @@ export function shadowCountJs(cssSelector: string): string {
  * video exists — the caller treats 0 as "not attached" and aborts.
  */
 export function scopedVideoCountJs(): string {
-  // Containers observed in the 2026 composer media sub-modal. Structural hooks
-  // first (locale-independent); we only count <video> that descends from one.
-  const SCOPES = [
-    "[data-test-media-preview]",
-    ".media-editor",
-    ".image-selector",
-    ".share-creation-state",
-    "[role='dialog']",
-    ".share-box",
-  ];
+  // `publish.ts` marks the exact composer container resolved from its editor.
+  // Counting only below that marker avoids false positives from feed players,
+  // messaging dialogs, or unrelated media modals.
+  const SCOPE = "[data-arcanada-publish-composer='true']";
   return `(function(){
     function walk(root, visit){ visit(root); var e=root.querySelectorAll?root.querySelectorAll('*'):[]; for(var i=0;i<e.length;i++) if(e[i].shadowRoot) walk(e[i].shadowRoot, visit); }
-    var scopeSels = ${JSON.stringify(SCOPES)};
-    var n=0;
+    function collectDeep(root, selector, found){
+      try { var matches=root.querySelectorAll(selector); for(var m=0;m<matches.length;m++) found.add(matches[m]); } catch(e){}
+      if(root.shadowRoot) collectDeep(root.shadowRoot, selector, found);
+      var elements=[];
+      try { elements=root.querySelectorAll('*'); } catch(e){}
+      for(var i=0;i<elements.length;i++){
+        if(elements[i].shadowRoot) collectDeep(elements[i].shadowRoot, selector, found);
+      }
+    }
+    var scopeSel = ${JSON.stringify(SCOPE)};
+    var videos=new Set();
     walk(document, function(r){
-      for(var s=0;s<scopeSels.length;s++){
-        var scopes;
-        try { scopes = r.querySelectorAll(scopeSels[s]); } catch(e){ continue; }
-        for(var i=0;i<scopes.length;i++){
-          try { n += scopes[i].querySelectorAll('video').length; } catch(e){}
-        }
+      var scopes=[];
+      try { scopes=r.querySelectorAll(scopeSel); } catch(e){}
+      for(var i=0;i<scopes.length;i++){
+        collectDeep(scopes[i], 'video', videos);
       }
     });
-    return n;
+    return videos.size;
   })()`;
+}
+
+/** Mark the exact post composer by walking upward from its resolved editor. */
+export function markComposerScopeJs(): string {
+  return `(element => {
+    var current=element;
+    while(current){
+      if(current.matches && current.matches("[role='dialog'], .share-creation-state, .share-box")){
+        current.setAttribute("data-arcanada-publish-composer", "true");
+        return true;
+      }
+      if(current.parentElement){
+        current=current.parentElement;
+        continue;
+      }
+      var root=current.getRootNode ? current.getRootNode() : null;
+      current=root && root.host ? root.host : null;
+    }
+    return false;
+  })`;
 }
 
 /**
