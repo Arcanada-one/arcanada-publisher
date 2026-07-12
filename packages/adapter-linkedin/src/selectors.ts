@@ -72,7 +72,7 @@ export const selectors = {
   // Aktionen / Steuerungsmenü öffnen» and FI «Lisää toimintoja» so the delete +
   // comment flows find the kebab regardless of UI language.
   editPostActionEn:
-    /^(Open control menu|Open options menu|More actions|More|Mehr Aktionen|Steuerungsmenü öffnen|Lisää toimintoja)/,
+    /^(Open control menu|Open options menu|More actions|More|Mehr Aktionen|Steuerungsmenü öffnen|Avaa hallintavalikko|Lisää toimintoja)/,
   editPostMenuItem: /^(Редактировать публикацию|Редактировать пост|Edit post|Beitrag bearbeiten)$/,
   // R10: LinkedIn tolerates in-place comment edit (unlike Facebook). The kebab
   // on a comment carries a per-author aria-label; `Edit` opens the inline editor
@@ -107,7 +107,7 @@ export const selectors = {
 // `confirmDelete`.
 export const shadowClickPatterns = {
   postControlMenu:
-    "/(Open control menu|Open options menu|More actions|More|Mehr Aktionen|Steuerungsmenü öffnen|Lisää toimintoja|Открыть меню|Действия|Параметры|Открыть панель управления|Дополнительно)/i",
+    "/(Open control menu|Open options menu|More actions|More|Mehr Aktionen|Steuerungsmenü öffnen|Avaa hallintavalikko|Lisää toimintoja|Открыть меню|Действия|Параметры|Открыть панель управления|Дополнительно)/i",
   deleteMenuItem:
     "/^(Delete post|Delete|Beitrag löschen|Löschen|Poista julkaisu|Poista|Удалить публикацию|Удалить пост|Удалить)$/i",
   confirmDelete: "/^(Delete|Löschen|Poista|Удалить)$/i",
