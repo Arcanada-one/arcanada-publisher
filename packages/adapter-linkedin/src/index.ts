@@ -41,6 +41,12 @@ import {
   type ComposerDiagnostics,
   type ComposerInspectOptions,
 } from "./composer-inspect.js";
+import {
+  inspectLinkedInProfilePost,
+  type InspectLinkedInProfilePostInput,
+  type InspectLinkedInProfilePostOptions,
+  type InspectLinkedInProfilePostResult,
+} from "./inspect-profile.js";
 
 export interface LinkedInAdapterOptions {
   loginContext?: LoginContext;
@@ -50,6 +56,7 @@ export interface LinkedInAdapterOptions {
   editOptions?: EditOptions;
   deleteOptions?: DeleteOptions;
   composerInspectOptions?: ComposerInspectOptions;
+  profileInspectOptions?: InspectLinkedInProfilePostOptions;
 }
 
 export class LinkedInAdapter extends BaseAdapter {
@@ -111,6 +118,12 @@ export class LinkedInAdapter extends BaseAdapter {
     return inspectComposerImpl(profile, this.opts.composerInspectOptions);
   }
 
+  async inspectProfilePost(
+    input: InspectLinkedInProfilePostInput,
+  ): Promise<InspectLinkedInProfilePostResult> {
+    return inspectLinkedInProfilePost(input, this.opts.profileInspectOptions);
+  }
+
   async comment(input: CommentInput): Promise<CommentResult> {
     return commentImpl(input, this.opts.commentOptions);
   }
@@ -146,3 +159,10 @@ export type { LinkedInEditInput } from "./edit.js";
 export type { EditCommentInput } from "./comment.js";
 export { isVideoPath, isAbortedPublish } from "./publish.js";
 export type { AbortedPublishResult } from "./publish.js";
+export { inspectLinkedInProfilePost } from "./inspect-profile.js";
+export type {
+  InspectLinkedInProfilePostInput,
+  InspectLinkedInProfilePostOptions,
+  InspectLinkedInProfilePostResult,
+  ObservedLinkedInProfilePost,
+} from "./inspect-profile.js";

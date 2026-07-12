@@ -17,7 +17,11 @@ export function makeAdapter(platform: Platform, args: ParsedArgs): Adapter {
       return new FacebookAdapter();
     case "linkedin":
       return args.headed
-        ? new LinkedInAdapter({ publishOptions: { headed: true } })
+        ? new LinkedInAdapter({
+            publishOptions: { headed: true },
+            commentOptions: { headed: true },
+            profileInspectOptions: { headed: true },
+          })
         : new LinkedInAdapter();
     case "x":
       // PUB-0033: --headed runs a visible browser so large video uploads settle

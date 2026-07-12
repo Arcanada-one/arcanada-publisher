@@ -54,7 +54,7 @@ describe("inspect-profile-post CLI", () => {
       "default",
     ]);
 
-    expect(result.code).toBe(0);
+    expect(result.code, result.message).toBe(0);
     expect(result.message).not.toContain(secretBody);
     expect(result.message).not.toContain(root);
     expect(JSON.parse(result.message)).toMatchObject({
@@ -124,7 +124,7 @@ describe("inspect-profile-post CLI", () => {
       "default",
     ]);
 
-    expect(result.code).toBe(0);
+    expect(result.code, result.message).toBe(0);
     expect(JSON.parse(result.message)).toMatchObject({
       authorHandle: "veritasarcanaai",
       matches: [{ statusId: "2076136745746272281" }],
@@ -139,23 +139,42 @@ describe("inspect-profile-post CLI", () => {
     });
   });
 
-  it("rejects non-Facebook inspection without constructing a mutation path", async () => {
+  it("routes exact content to the read-only LinkedIn inventory adapter", async () => {
+    const root = mkdtempSync(join(tmpdir(), "li-inspect-cli-"));
+    const bodyFile = join(root, "post.txt");
+    writeFileSync(bodyFile, "Exact LinkedIn campaign body\n");
+    inspectProfilePost.mockResolvedValueOnce({
+      canonicalParentPermalink:
+        "https://www.linkedin.com/posts/pavelvalentov_post-activity-7482676445432107008-AbCd",
+      activityUrl: "https://www.linkedin.com/feed/update/urn:li:activity:7482676445432107008/",
+      activityId: "7482676445432107008",
+      hasNativeVideo: true,
+    });
     const result = await run([
       "inspect-profile-post",
       "--platform",
       "linkedin",
       "--profile-url",
-      "https://www.facebook.com/pavelvalentov",
+      "https://www.linkedin.com/in/pavelvalentov/",
       "--expected-author-profile-url",
-      "https://www.facebook.com/pavelvalentov",
-      "--content-excerpt",
-      "unique excerpt",
+      "https://www.linkedin.com/in/pavelvalentov/",
+      "--expected-content-file",
+      bodyFile,
       "--evidence-dir",
-      "/private/evidence",
+      join(root, "evidence"),
       "--max-scrolls",
       "2",
     ]);
-    expect(result.code).not.toBe(0);
-    expect(inspectProfilePost).not.toHaveBeenCalled();
+    expect(result.code, result.message).toBe(0);
+    expect(JSON.parse(result.message)).toMatchObject({
+      activityId: "7482676445432107008",
+      hasNativeVideo: true,
+    });
+    expect(inspectProfilePost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedBody: "Exact LinkedIn campaign body",
+        profile: "default",
+      }),
+    );
   });
 });
