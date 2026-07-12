@@ -32,7 +32,7 @@ import { ACTIVITY_URN_RE, extractActivityUrn, pickFirstActivityHref } from "./ur
 import { classifyLiError, mapLiError } from "./errors.js";
 import {
   markComposerScopeJs,
-  shadowClickButtonJs,
+  shadowClickComposerButtonJs,
   scopedVideoCountJs,
   shadowCountJs,
 } from "./dom-shadow.js";
@@ -250,13 +250,8 @@ async function runPublishFlow(
     // (<div id="interop-outlet">), so a Playwright pointer-click on buttons
     // inside it is intercepted ("interop-outlet intercepts pointer events").
     // The reliable click is a DOM `.click()` issued from INSIDE the shadow tree
-    // via evaluate(); `shadowClickButtonJs` (src/dom-shadow.ts — shared with the
-    // delete/comment flows per PUB-0032) walks shadow roots and matches a control
-    // by accessible name / text (locale-tolerant). Used for «Add media», «Next/
-    // Done», and the final «Post» — NOT for media attach (media is pasted from
-    // the clipboard, never a file chooser, per §6.4). Returns false if no
-    // enabled match is found, so callers can poll.
-    const shadowClickJs = shadowClickButtonJs;
+    // via evaluate(); the scoped shadow walker matches the final Post control
+    // by locale-tolerant accessible name inside the exact marked composer.
     // PUB-0033: «Add media» and «Next/Done» are no longer clicked — media is
     // pasted directly into the editor (no sub-modal, no advance step). Only the
     // final «Post» is driven via the shadow-walk click.
@@ -371,7 +366,7 @@ async function runPublishFlow(
 
     // PUB-0031: the «Post» button is inside the interop-outlet shadow root too,
     // so a Playwright pointer-click is intercepted — click it via shadow-walk
-    // DOM click (shadowClickJs skips disabled buttons, so a disabled Post simply
+    // DOM click (the scoped walker skips disabled buttons, so a disabled Post simply
     // yields false and we keep polling). For a video the button stays disabled
     // until LinkedIn finishes finalising the upload, so poll a generous window.
     // R7: the share-creation API call is the publish confirmation; the DOM toast
@@ -386,7 +381,7 @@ async function runPublishFlow(
     let posted = false;
     const clickPost = async (): Promise<void> => {
       for (let i = 0; i < postMaxPolls; i++) {
-        posted = (await page.evaluate(shadowClickJs(POST_RE))) as boolean;
+        posted = (await page.evaluate(shadowClickComposerButtonJs(POST_RE))) as boolean;
         if (posted) return;
         await page.waitForTimeout(500);
       }
