@@ -2,9 +2,16 @@ import { describe, expect, it, vi } from "vitest";
 import { prepareMediaClipboard } from "../src/media-clipboard.js";
 
 function deps(source: string, returned: string, bytes = Buffer.from("video")) {
+  const payload = returned.trim().startsWith("{")
+    ? returned
+    : JSON.stringify({
+        path: returned.trim(),
+        types: ["public.file-url", "NSURLPboardType", "NSFilenamesPboardType"],
+        wrote: true,
+      });
   return {
     platform: "darwin" as const,
-    exec: vi.fn(() => returned) as never,
+    exec: vi.fn(() => payload) as never,
     realpath: vi.fn((path: string) => path) as never,
     stat: vi.fn(() => ({ size: bytes.length })) as never,
     read: vi.fn(() => bytes) as never,
@@ -21,6 +28,18 @@ describe("LinkedIn macOS media clipboard preflight", () => {
       expect.arrayContaining(["--", path]),
       expect.anything(),
     );
+  });
+
+  it("sets Finder-compatible modern and legacy pasteboard types", () => {
+    const path = "/tmp/video.mp4";
+    const d = deps(path, path);
+    prepareMediaClipboard(path, d);
+    const args = d.exec.mock.calls[0]?.[1] as string[];
+    const script = args.join(" ");
+    expect(script).toContain("public.file-url");
+    expect(script).toContain("NSURLPboardType");
+    expect(script).toContain("NSFilenamesPboardType");
+    expect(script).toContain("NSArray.arrayWithObject");
   });
 
   it("accepts a symlink input only when clipboard resolves to the same canonical file", () => {
