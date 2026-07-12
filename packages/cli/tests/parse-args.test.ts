@@ -104,6 +104,58 @@ describe("cli parse-args (V-AC-11 flag contract)", () => {
     expect(a.expectedContentFile).toBe("old.txt");
   });
 
+  it("parses the bounded Facebook read-only profile inspection contract", () => {
+    const a = parseArgs([
+      "inspect-profile-post",
+      "--platform",
+      "facebook",
+      "--profile-url",
+      "https://www.facebook.com/pavelvalentov",
+      "--expected-author-profile-url",
+      "https://www.facebook.com/pavelvalentov",
+      "--expected-content-file",
+      "post.txt",
+      "--evidence-dir",
+      "private-evidence",
+      "--max-scrolls",
+      "12",
+    ]);
+    expect(a.command).toBe("inspect-profile-post");
+    expect(a.profileUrl).toBe("https://www.facebook.com/pavelvalentov");
+    expect(a.expectedContentFile).toBe("post.txt");
+    expect(a.evidenceDir).toBe("private-evidence");
+    expect(a.maxScrolls).toBe(12);
+  });
+
+  it("requires exactly one inspection body oracle and a bounded positive scroll count", () => {
+    const base = [
+      "inspect-profile-post",
+      "--platform",
+      "facebook",
+      "--profile-url",
+      "https://www.facebook.com/pavelvalentov",
+      "--expected-author-profile-url",
+      "https://www.facebook.com/pavelvalentov",
+      "--evidence-dir",
+      "private-evidence",
+    ];
+    expect(() => parseArgs([...base, "--max-scrolls", "4"])).toThrow(/exactly one/i);
+    expect(() =>
+      parseArgs([
+        ...base,
+        "--expected-content-file",
+        "post.txt",
+        "--content-excerpt",
+        "unique excerpt",
+        "--max-scrolls",
+        "4",
+      ]),
+    ).toThrow(/exactly one/i);
+    expect(() =>
+      parseArgs([...base, "--content-excerpt", "unique excerpt", "--max-scrolls", "0"]),
+    ).toThrow(/1.*50/);
+  });
+
   it("parses Telegram read-before-edit media and parent oracles", () => {
     const a = parseArgs([
       "edit",

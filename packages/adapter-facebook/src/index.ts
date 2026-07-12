@@ -30,6 +30,12 @@ import {
 } from "./comment.js";
 import { edit as editImpl, type EditOptions, type FacebookEditInput } from "./edit.js";
 import { del as deleteImpl, type DeleteOptions } from "./delete.js";
+import {
+  inspectFacebookProfilePost as inspectFacebookProfilePostImpl,
+  type InspectFacebookProfileOptions,
+  type InspectFacebookProfilePostInput,
+  type InspectFacebookProfilePostResult,
+} from "./inspect-profile.js";
 
 export interface FacebookAdapterOptions {
   loginContext?: LoginContext;
@@ -38,6 +44,7 @@ export interface FacebookAdapterOptions {
   replaceCommentOptions?: ReplaceCommentOptions;
   editOptions?: EditOptions;
   deleteOptions?: DeleteOptions;
+  inspectProfileOptions?: InspectFacebookProfileOptions;
 }
 
 export class FacebookAdapter extends BaseAdapter {
@@ -70,6 +77,13 @@ export class FacebookAdapter extends BaseAdapter {
     return replaceCommentTextImpl(input, this.opts.replaceCommentOptions);
   }
 
+  /** Read-only bounded profile scan; not part of the mutation Adapter contract. */
+  async inspectProfilePost(
+    input: InspectFacebookProfilePostInput,
+  ): Promise<InspectFacebookProfilePostResult> {
+    return inspectFacebookProfilePostImpl(input, this.opts.inspectProfileOptions);
+  }
+
   async edit(input: EditInput | FacebookEditInput): Promise<EditResult> {
     return editImpl(input as FacebookEditInput, this.opts.editOptions);
   }
@@ -85,3 +99,9 @@ export { classifyFbError, mapFbError } from "./errors.js";
 export type { FbErrorType } from "./errors.js";
 export type { FacebookEditInput } from "./edit.js";
 export type { ReplaceCommentInput } from "./comment.js";
+export { inspectFacebookProfilePost } from "./inspect-profile.js";
+export type {
+  InspectFacebookProfilePostInput,
+  InspectFacebookProfilePostResult,
+  InspectFacebookCommentSummary,
+} from "./inspect-profile.js";
