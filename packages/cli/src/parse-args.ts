@@ -13,6 +13,7 @@ export type Command =
   | "publish"
   | "comment"
   | "replace-comment"
+  | "inspect-profile-post"
   | "edit"
   | "delete"
   | "inspect"
@@ -24,6 +25,7 @@ const COMMANDS = new Set<Command>([
   "publish",
   "comment",
   "replace-comment",
+  "inspect-profile-post",
   "edit",
   "delete",
   "inspect",
@@ -48,6 +50,14 @@ export interface ParsedArgs {
   expectedAuthorProfileUrl: string | undefined;
   expectedContent: string | undefined;
   expectedContentFile: string | undefined;
+  /** Facebook read-only profile surface to scan. */
+  profileUrl: string | undefined;
+  /** Explicit fallback excerpt; mutually exclusive with expectedContentFile. */
+  contentExcerpt: string | undefined;
+  /** Private 0700 evidence directory for raw inspection read-back. */
+  evidenceDir: string | undefined;
+  /** Bounded Facebook profile pagination count. */
+  maxScrolls: number | undefined;
   expectedMediaKind: "image" | "video" | "none" | undefined;
   videoWidth: number | undefined;
   videoHeight: number | undefined;
@@ -118,6 +128,10 @@ const VALUE_FLAGS = new Set([
   "--expected-author-profile-url",
   "--expected-content",
   "--expected-content-file",
+  "--profile-url",
+  "--content-excerpt",
+  "--evidence-dir",
+  "--max-scrolls",
   "--expected-media-kind",
   "--video-width",
   "--video-height",
@@ -172,6 +186,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     expectedAuthorProfileUrl: undefined,
     expectedContent: undefined,
     expectedContentFile: undefined,
+    profileUrl: undefined,
+    contentExcerpt: undefined,
+    evidenceDir: undefined,
+    maxScrolls: undefined,
     expectedMediaKind: undefined,
     videoWidth: undefined,
     videoHeight: undefined,
@@ -260,6 +278,24 @@ export function parseArgs(argv: string[]): ParsedArgs {
       case "--expected-content-file":
         out.expectedContentFile = value;
         break;
+      case "--profile-url":
+        out.profileUrl = value;
+        break;
+      case "--content-excerpt":
+        out.contentExcerpt = value;
+        break;
+      case "--evidence-dir":
+        out.evidenceDir = value;
+        break;
+      case "--max-scrolls": {
+        if (!/^\d+$/.test(value))
+          throw new CliParseError(`--max-scrolls must be an integer from 1 to 50, got '${value}'`);
+        const parsed = Number.parseInt(value, 10);
+        if (parsed < 1 || parsed > 50)
+          throw new CliParseError(`--max-scrolls must be an integer from 1 to 50, got '${value}'`);
+        out.maxScrolls = parsed;
+        break;
+      }
       case "--expected-media-kind":
         if (value !== "image" && value !== "video" && value !== "none")
           throw new CliParseError(
@@ -369,6 +405,21 @@ export function parseArgs(argv: string[]): ParsedArgs {
         out.waveformColors = value;
         break;
       }
+    }
+  }
+
+  if (out.command === "inspect-profile-post") {
+    const hasExact = Boolean(out.expectedContentFile);
+    const hasExcerpt = Boolean(out.contentExcerpt);
+    if (hasExact === hasExcerpt) {
+      throw new CliParseError(
+        "inspect-profile-post requires exactly one of --expected-content-file or --content-excerpt",
+      );
+    }
+    if (!out.profileUrl || !out.expectedAuthorProfileUrl || !out.evidenceDir || !out.maxScrolls) {
+      throw new CliParseError(
+        "inspect-profile-post requires --profile-url, --expected-author-profile-url, --evidence-dir, and --max-scrolls",
+      );
     }
   }
 

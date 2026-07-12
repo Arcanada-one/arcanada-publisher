@@ -76,6 +76,8 @@ async function dispatch(args: ParsedArgs): Promise<RunResult> {
       return runComment(platform, profile, args);
     case "replace-comment":
       return runReplaceComment(platform, profile, args);
+    case "inspect-profile-post":
+      return runInspectProfilePost(platform, profile, args);
     case "publish":
       return runPublish(platform, profile, args);
   }
@@ -217,6 +219,53 @@ async function runReplaceComment(
   return { code: ErrorCode.SUCCESS, message: `comment replaced: ${res.commentId}` };
 }
 
+async function runInspectProfilePost(
+  platform: Platform,
+  profile: string,
+  args: ParsedArgs,
+): Promise<RunResult> {
+  if (platform !== "facebook") {
+    return {
+      code: ErrorCode.INVALID_ARGS,
+      message: "inspect-profile-post is supported only for Facebook",
+    };
+  }
+  if (
+    !args.profileUrl ||
+    !args.expectedAuthorProfileUrl ||
+    !args.evidenceDir ||
+    !args.maxScrolls ||
+    (!args.expectedContentFile && !args.contentExcerpt)
+  ) {
+    return {
+      code: ErrorCode.MISSING_INPUT,
+      message: "inspect-profile-post is missing its required read-only oracle flags",
+    };
+  }
+  const adapter = makeAdapter(platform, args) as unknown as {
+    inspectProfilePost(input: {
+      profileUrl: string;
+      expectedAuthorProfileUrl: string;
+      expectedBody?: string;
+      contentExcerpt?: string;
+      evidenceDir: string;
+      maxScrolls: number;
+      profile: string;
+    }): Promise<unknown>;
+  };
+  const result = await adapter.inspectProfilePost({
+    profileUrl: args.profileUrl,
+    expectedAuthorProfileUrl: args.expectedAuthorProfileUrl,
+    ...(args.expectedContentFile
+      ? { expectedBody: readInspectionOracle(args.expectedContentFile) }
+      : { contentExcerpt: args.contentExcerpt! }),
+    evidenceDir: args.evidenceDir,
+    maxScrolls: args.maxScrolls,
+    profile,
+  });
+  return { code: ErrorCode.SUCCESS, message: JSON.stringify(result) };
+}
+
 async function runPublish(
   platform: Platform,
   profile: string,
@@ -333,6 +382,21 @@ function readText(args: ParsedArgs): string {
 
 function readExactMutationText(path: string): string {
   return readFileSync(path, "utf8").replace(/\r\n/g, "\n").replace(/\n$/, "");
+}
+
+function readInspectionOracle(path: string): string {
+  try {
+    return readExactMutationText(path);
+  } catch {
+    throw new AdapterError(
+      ErrorCode.MISSING_INPUT,
+      "inspect-profile-post: failed to read expected content file",
+      {
+        stage: "inspect-profile-post.read-expected-content",
+        failure: "EXPECTED_CONTENT_READ_FAILED",
+      },
+    );
+  }
 }
 
 function loadPolicy(path: string | undefined): PolicyConfig {

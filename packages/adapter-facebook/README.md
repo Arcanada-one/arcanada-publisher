@@ -99,6 +99,32 @@ confirmation, any detach, transport, add, or verification ambiguity returns an
 explicit `UNKNOWN` state with `reconcileRequired=true`; never retry that command
 blindly. UNKNOWN evidence contains text hashes and lengths, never full bodies.
 
+### Read-only profile post recovery
+
+Use `inspect-profile-post` when a stored permalink may be stale and the existing
+post must be located without publishing or editing anything. Exact full-body
+matching is the primary oracle:
+
+```bash
+packages/cli/dist/index.js inspect-profile-post \
+  --platform facebook \
+  --profile-url 'https://www.facebook.com/<profile-slug>' \
+  --expected-author-profile-url 'https://www.facebook.com/<profile-slug>' \
+  --expected-content-file complete-post-body.txt \
+  --evidence-dir private-evidence \
+  --max-scrolls 12 \
+  --profile default
+```
+
+`--content-excerpt` may replace `--expected-content-file` only when the caller
+explicitly requests the unique-excerpt fallback. Zero or multiple matches fail
+closed. The command scans at most `--max-scrolls`, requires the actual header
+profile anchor, copies the canonical post permalink from the DOM, and reports
+only hashes, lengths, identities, comment IDs, and coverage on stdout. Complete
+post/comment bodies and the screenshot are written only below the caller's
+private evidence directory (`0700` directory, `0600` files). The inspection
+module has no mutation controls.
+
 ## Error model
 
 All adapter failures throw `AdapterError(code, message, details)` with the
