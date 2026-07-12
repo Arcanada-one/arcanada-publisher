@@ -5,6 +5,7 @@ import {
   normalizeFacebookText,
   readFacebookPost,
   dedupeFacebookPostReadbacks,
+  resolveFacebookPostReadbacks,
 } from "../src/post-readback.js";
 
 const TARGET = "https://www.facebook.com/pavelvalentov/posts/pfbid123";
@@ -87,6 +88,30 @@ describe("Facebook exact post readback primitives", () => {
       ).rejects.toThrow(/ambiguous target evidence/);
     }
   });
+
+  it("selects one full modal over a title preview only when binding evidence matches", async () => {
+    const page = fakePageVariants([{ body: "Title" }, { body: "Title\n\nFull body", modal: true }]);
+    await expect(readFacebookPost(page as never, TARGET)).resolves.toMatchObject({
+      normalizedBody: "Title\n\nFull body",
+      canonicalPermalink: TARGET,
+      authorProfileIdentity: "www.facebook.com/pavelvalentov",
+      mediaIdentity: "https://www.facebook.com/photo/?fbid=hero",
+    });
+    expect(page.actions).toEqual(["expand"]);
+
+    for (const mismatch of [
+      { author: "https://www.facebook.com/impostor", modal: true },
+      { media: "https://www.facebook.com/photo/?fbid=other", modal: true },
+      { extraPermalink: "https://www.facebook.com/pavelvalentov/posts/other", modal: true },
+    ]) {
+      await expect(
+        readFacebookPost(fakePageVariants([{ body: "Title" }, mismatch]) as never, TARGET),
+      ).rejects.toThrow(/modal target binding differs/);
+    }
+    expect(() =>
+      resolveFacebookPostReadbacks([modalCandidate("one"), modalCandidate("two")]),
+    ).toThrow(/modal copies/);
+  });
 });
 
 class FakeList<T> implements Iterable<T> {
@@ -103,6 +128,7 @@ class FakeElement {
   href?: string;
   article: FakeElement | null = null;
   before: FakeElement | null = null;
+  dialog: FakeElement | null = null;
   constructor(
     readonly innerText = "",
     href?: string,
@@ -112,7 +138,9 @@ class FakeElement {
     if (href) this.href = href;
   }
   closest(selector: string): FakeElement | null {
-    return selector === '[role="article"]' ? this.article : null;
+    if (selector === '[role="article"]') return this.article;
+    if (selector === '[role="dialog"]') return this.dialog;
+    return null;
   }
   querySelector(selector: string): FakeElement | null {
     return this.one[selector] ?? null;
@@ -122,6 +150,9 @@ class FakeElement {
   }
   compareDocumentPosition(other: FakeElement): number {
     return this.before === other ? 4 : 0;
+  }
+  getAttribute(_name: string): string | null {
+    return null;
   }
 }
 
@@ -134,31 +165,55 @@ type ArticleVariant = {
   author?: string;
   media?: string | null;
   extraPermalink?: string;
+  modal?: boolean;
 };
 
 function fakePageVariants(variants: ArticleVariant[]) {
   const articles = variants.map((variant) => makeArticle(variant));
   const root = new FakeElement("", undefined, {}, { '[role="article"]': articles });
-  return {
+  const actions: string[] = [];
+  const page = {
+    actions,
     goto: async () => {},
-    getByRole: () => ({ count: async () => 0 }),
-    locator: () => ({
-      evaluate: async (fn: (root: FakeElement, target: string) => unknown, target: string) => {
-        const previous = (globalThis as { location?: unknown }).location;
-        Object.defineProperty(globalThis, "location", {
-          configurable: true,
-          value: { href: TARGET },
-        });
-        try {
-          return fn(root, target);
-        } finally {
-          if (previous === undefined) delete (globalThis as { location?: unknown }).location;
-          else
-            Object.defineProperty(globalThis, "location", { configurable: true, value: previous });
-        }
-      },
-    }),
+    locator: (selector: string) =>
+      selector === "body"
+        ? {
+            evaluate: async (
+              fn: (root: FakeElement, target: string) => unknown,
+              target: string,
+            ) => {
+              const previous = (globalThis as { location?: unknown }).location;
+              Object.defineProperty(globalThis, "location", {
+                configurable: true,
+                value: { href: TARGET },
+              });
+              try {
+                return fn(root, target);
+              } finally {
+                if (previous === undefined) delete (globalThis as { location?: unknown }).location;
+                else
+                  Object.defineProperty(globalThis, "location", {
+                    configurable: true,
+                    value: previous,
+                  });
+              }
+            },
+          }
+        : {
+            filter: function () {
+              return this;
+            },
+            getByRole: () => ({
+              count: async () => 1,
+              nth: () => ({
+                click: async () => {
+                  actions.push("expand");
+                },
+              }),
+            }),
+          },
   };
+  return page;
 }
 
 function makeArticle(variant: ArticleVariant): FakeElement {
@@ -166,6 +221,7 @@ function makeArticle(variant: ArticleVariant): FakeElement {
   const articleMany: Record<string, FakeElement[]> = {};
   const article = new FakeElement("", undefined, articleOne, articleMany);
   article.article = article;
+  if (variant.modal) article.dialog = new FakeElement();
   const body = new FakeElement(variant.body ?? "Title\n\nFull body");
   body.article = article;
   const avatar = new FakeElement(
@@ -192,4 +248,15 @@ function makeArticle(variant: ArticleVariant): FakeElement {
   if (mediaHref) anchors.push(photo);
   articleMany["a[href]"] = anchors;
   return article;
+}
+
+function modalCandidate(body: string) {
+  return {
+    canonicalPermalink: TARGET,
+    authorProfileIdentity: "www.facebook.com/pavelvalentov",
+    normalizedBody: body,
+    hasImage: true,
+    mediaIdentity: "https://www.facebook.com/photo/?fbid=hero",
+    isModal: true,
+  };
 }

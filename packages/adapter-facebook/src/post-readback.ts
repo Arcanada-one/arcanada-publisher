@@ -41,7 +41,11 @@ export async function readFacebookPost(
 ): Promise<FacebookPostReadback> {
   const target = canonicalFacebookPostUrl(targetUrl);
   await page.goto(target);
-  const expanders = page.getByRole("button", {
+  const postId = target.split("/").at(-1)!;
+  const targetArticles = page
+    .locator('[role="article"]')
+    .filter({ has: page.locator(`a[href*="/posts/${postId}"]`) });
+  const expanders = targetArticles.getByRole("button", {
     name: /^(See more|Показать ещё|Ещё|Näytä lisää)$/i,
   });
   for (let i = 0, count = await expanders.count().catch(() => 0); i < count; i += 1) {
@@ -58,6 +62,7 @@ export async function readFacebookPost(
       querySelector(selector: string): DomElement | null;
       querySelectorAll(selector: string): ArrayLike<DomElement> & Iterable<DomElement>;
       compareDocumentPosition(other: DomElement): number;
+      getAttribute(name: string): string | null;
     };
     const bodyRoot = root as unknown as DomElement;
     const browserLocation = (globalThis as unknown as { location: { href: string } }).location;
@@ -120,6 +125,9 @@ export async function readFacebookPost(
           body: body.innerText,
           hasImage: mediaUrl !== null,
           mediaIdentity: mediaUrl?.toString() ?? "",
+          isModal:
+            article.closest('[role="dialog"]') !== null &&
+            article.closest('[role="dialog"]')?.getAttribute("aria-hidden") !== "true",
         },
       ];
     });
@@ -131,7 +139,34 @@ export async function readFacebookPost(
     normalizedBody: normalizeFacebookText(match.body),
     hasImage: match.hasImage,
     mediaIdentity: match.mediaIdentity,
+    isModal: match.isModal,
   }));
+  return resolveFacebookPostReadbacks(candidates);
+}
+
+type CandidateReadback = FacebookPostReadback & { isModal?: boolean };
+
+export function resolveFacebookPostReadbacks(
+  candidates: CandidateReadback[],
+): FacebookPostReadback {
+  const modal = candidates.filter((candidate) => candidate.isModal === true);
+  if (modal.length > 1)
+    throw readbackError(`ambiguous target evidence across ${modal.length} modal copies`);
+  if (modal.length === 1) {
+    const authoritative = modal[0]!;
+    const sameBinding = candidates.every(
+      (candidate) =>
+        candidate.canonicalPermalink === authoritative.canonicalPermalink &&
+        candidate.authorProfileIdentity === authoritative.authorProfileIdentity &&
+        candidate.hasImage === authoritative.hasImage &&
+        candidate.mediaIdentity === authoritative.mediaIdentity,
+    );
+    if (!sameBinding) throw readbackError("modal target binding differs from background evidence");
+    if (!authoritative.hasImage || authoritative.mediaIdentity === "")
+      throw readbackError("target has no post media");
+    const { isModal: _ignored, ...result } = authoritative;
+    return result;
+  }
   return dedupeFacebookPostReadbacks(candidates);
 }
 
