@@ -72,7 +72,7 @@ describe("X profile duplicate inventory", () => {
       'a[href*="/status/"]': [permalink, mediaLink, nestedPermalink],
       'a[href*="/photo/"], a[href*="/video/"]': [mediaLink],
       video: [blobVideo],
-      'img[src*="media"]': [nestedImage, outerImage],
+      'img[src*="/media/"], img[src*="/ext_tw_video_thumb/"]': [nestedImage, outerImage],
       "div, span": [],
     };
 
@@ -82,7 +82,7 @@ describe("X profile duplicate inventory", () => {
       'a[href*="/status/"]': [nestedPermalink],
       'a[href*="/photo/"], a[href*="/video/"]': [],
       video: [],
-      'img[src*="media"]': [nestedImage],
+      'img[src*="/media/"], img[src*="/ext_tw_video_thumb/"]': [nestedImage],
       "div, span": [],
     };
     const posts = extractObservedXPostsFromDom([outer, nested] as never, "https://x.com/profile");
@@ -125,6 +125,12 @@ describe("X profile duplicate inventory", () => {
       "2076136745746272281",
       "2076136799106224156",
       "2076137000000000000",
+    ]);
+    expect(result.posts.map((post) => post.statusId)).toEqual([
+      "2076136745746272281",
+      "2076136799106224156",
+      "2076137000000000000",
+      "999",
     ]);
     expect(result.matches[1]).toMatchObject({
       articleIndex: 1,
