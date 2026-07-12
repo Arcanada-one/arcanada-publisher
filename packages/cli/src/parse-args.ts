@@ -12,6 +12,7 @@
 export type Command =
   | "publish"
   | "comment"
+  | "replace-comment"
   | "edit"
   | "delete"
   | "inspect"
@@ -22,6 +23,7 @@ export type Command =
 const COMMANDS = new Set<Command>([
   "publish",
   "comment",
+  "replace-comment",
   "edit",
   "delete",
   "inspect",
@@ -40,6 +42,10 @@ export interface ParsedArgs {
   profile: string | undefined;
   targetUrl: string | undefined;
   parentUrl: string | undefined;
+  /** Facebook-specific exact existing comment mutation target. */
+  commentId: string | undefined;
+  /** Facebook-specific stable profile URL oracle for safe comment replacement. */
+  expectedAuthorProfileUrl: string | undefined;
   expectedContent: string | undefined;
   expectedContentFile: string | undefined;
   expectedMediaKind: "image" | "video" | "none" | undefined;
@@ -108,6 +114,8 @@ const VALUE_FLAGS = new Set([
   "--profile",
   "--target-url",
   "--parent-url",
+  "--comment-id",
+  "--expected-author-profile-url",
   "--expected-content",
   "--expected-content-file",
   "--expected-media-kind",
@@ -160,6 +168,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     profile: undefined,
     targetUrl: undefined,
     parentUrl: undefined,
+    commentId: undefined,
+    expectedAuthorProfileUrl: undefined,
     expectedContent: undefined,
     expectedContentFile: undefined,
     expectedMediaKind: undefined,
@@ -237,6 +247,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
         break;
       case "--parent-url":
         out.parentUrl = value;
+        break;
+      case "--comment-id":
+        out.commentId = value;
+        break;
+      case "--expected-author-profile-url":
+        out.expectedAuthorProfileUrl = value;
         break;
       case "--expected-content":
         out.expectedContent = value;

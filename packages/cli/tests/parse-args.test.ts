@@ -82,6 +82,28 @@ describe("cli parse-args (V-AC-11 flag contract)", () => {
     expect(a.textFile).toBe("fixed.txt");
   });
 
+  it("parses safe Facebook replace-comment binding flags", () => {
+    const a = parseArgs([
+      "replace-comment",
+      "--platform",
+      "facebook",
+      "--parent-url",
+      "https://www.facebook.com/100/posts/1",
+      "--comment-id",
+      "1326931196274132",
+      "--expected-author-profile-url",
+      "https://www.facebook.com/pavelvalentov",
+      "--expected-content-file",
+      "old.txt",
+      "--text-file",
+      "new.txt",
+    ]);
+    expect(a.command).toBe("replace-comment");
+    expect(a.commentId).toBe("1326931196274132");
+    expect(a.expectedAuthorProfileUrl).toBe("https://www.facebook.com/pavelvalentov");
+    expect(a.expectedContentFile).toBe("old.txt");
+  });
+
   it("parses Telegram read-before-edit media and parent oracles", () => {
     const a = parseArgs([
       "edit",

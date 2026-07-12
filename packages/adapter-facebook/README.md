@@ -65,14 +65,39 @@ await adapter.edit({
   profile: "pavel-personal",
 });
 
-// Edit a comment instead of the post (Facebook-specific extension):
-await adapter.edit({
-  postUrl: result.postUrl,
+// Facebook comment text is replaced safely as delete-old + add-new. The
+// destructive step is bound to the exact parent, comment id, and old body.
+await adapter.replaceComment({
+  parentPostUrl: result.postUrl,
   commentId: commentResult.commentId,
-  text: "Updated comment body.",
+  expectedAuthorProfileUrl: "https://www.facebook.com/pavelvalentov",
+  oldText: "First comment with the canonical link.",
+  text: "Updated first comment body.",
   profile: "pavel-personal",
 });
 ```
+
+The unified CLI exposes the same fail-closed route. Keep the complete current
+comment and replacement bodies in files; the command removes one terminal
+newline from each file before exact comparison and submission:
+
+```bash
+packages/cli/dist/index.js replace-comment \
+  --platform facebook \
+  --parent-url 'https://www.facebook.com/<account>/posts/<post-id>' \
+  --comment-id '<numeric-comment-id>' \
+  --expected-author-profile-url 'https://www.facebook.com/<profile-slug>' \
+  --expected-content-file current-comment.txt \
+  --text-file replacement-comment.txt \
+  --profile default
+```
+
+If the parent, comment id, header profile-link identity, or complete current body
+differs from the rendered target comment, Publisher aborts before opening the
+delete menu. Body mentions and body links never count as author proof. After
+confirmation, any detach, transport, add, or verification ambiguity returns an
+explicit `UNKNOWN` state with `reconcileRequired=true`; never retry that command
+blindly. UNKNOWN evidence contains text hashes and lengths, never full bodies.
 
 ## Error model
 
