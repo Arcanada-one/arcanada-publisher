@@ -85,7 +85,6 @@ describe("Facebook exact post readback primitives", () => {
     });
     for (const changed of [
       { body: "different" },
-      { author: "https://www.facebook.com/impostor" },
       { media: "https://www.facebook.com/photo/?fbid=other" },
       { extraPermalink: "https://www.facebook.com/pavelvalentov/posts/pfbid-other" },
       { media: null },
@@ -107,7 +106,6 @@ describe("Facebook exact post readback primitives", () => {
     expect(page.actions).toEqual(["expand:0", "expand:1"]);
 
     for (const mismatch of [
-      { author: "https://www.facebook.com/impostor", modal: true },
       { media: "https://www.facebook.com/photo/?fbid=other", modal: true },
       { extraPermalink: "https://www.facebook.com/pavelvalentov/posts/other", modal: true },
     ]) {
@@ -158,6 +156,26 @@ describe("Facebook exact post readback primitives", () => {
       normalizedBody: "Title\n\nFull body",
     });
     expect(page.actions).toEqual(["expand:2"]);
+  });
+
+  it("excludes a shared-post wrapper whose header also links to the target", async () => {
+    const page = fakePageVariants([
+      {
+        author: "https://www.facebook.com/veaceslav.cunev",
+        permalink: "https://www.facebook.com/veaceslav.cunev/posts/shared-wrapper",
+        extraPermalink: TARGET,
+        body: "Outer shared-post commentary",
+        media: null,
+      },
+      { body: "Title\n\nFull body", modal: true },
+    ]);
+    await expect(readFacebookPost(page as never, TARGET)).resolves.toMatchObject({
+      canonicalPermalink: TARGET,
+      authorProfileIdentity: "www.facebook.com/pavelvalentov",
+      normalizedBody: "Title\n\nFull body",
+      hasImage: true,
+    });
+    expect(page.actions).toEqual(["expand:1"]);
   });
 
   it("does not expand an outer article whose selected message belongs to a nested article", async () => {
