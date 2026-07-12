@@ -332,7 +332,11 @@ export class TelegramAdapter extends BaseAdapter {
       throw new AdapterError(ErrorCode.VERIFY_FAILED, "edit: current source identity mismatch");
     const actual = current.caption ?? current.text ?? "";
     const currentKind = current.video ? "video" : current.photo?.length ? "image" : "none";
-    if (input.expectedContent && !actual.includes(input.expectedContent))
+    if (
+      input.expectedContent &&
+      actual !== input.expectedContent &&
+      !actual.endsWith(`\n\n${input.expectedContent}`)
+    )
       throw new AdapterError(ErrorCode.VERIFY_FAILED, "edit: current content oracle mismatch");
     if (input.expectedMediaKind && currentKind !== input.expectedMediaKind)
       throw new AdapterError(ErrorCode.VERIFY_FAILED, "edit: current media oracle mismatch");

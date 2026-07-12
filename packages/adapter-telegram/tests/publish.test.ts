@@ -443,6 +443,18 @@ describe("TelegramAdapter publish safety", () => {
     expect(transport).not.toHaveBeenCalled();
   });
 
+  it("rejects a prefix collision instead of accepting a changed Publisher marker", async () => {
+    const transport = mediaEditTransport(telegramEditedVideo(), {
+      probeCaption: "old caption\n\n#PUB_0029_uniqueX",
+    });
+    const adapter = new TelegramAdapter({ transport });
+
+    await expect(safeMediaEdit(adapter)).rejects.toMatchObject({
+      code: ErrorCode.VERIFY_FAILED,
+    });
+    expect(transport).toHaveBeenCalledTimes(3);
+  });
+
   it.each([
     {
       name: "destination reply metadata is ignored",
@@ -554,6 +566,7 @@ function mediaEditTransport(
     originChatId?: number;
     deleteConfirmed?: boolean;
     probeHasDestinationReply?: boolean;
+    probeCaption?: string;
   } = {},
 ) {
   const transport = vi
@@ -572,7 +585,7 @@ function mediaEditTransport(
           message_id: 501,
           chat: { id: Number(TELEGRAM_TEST_CHAT_ID), username: "probe" },
           from: { id: 42 },
-          caption: "old caption\n\n#PUB_0029_unique",
+          caption: options.probeCaption ?? "old caption\n\n#PUB_0029_unique",
           photo: [{ file_id: "old-photo", width: 800, height: 400 }],
           forward_origin: {
             type: "channel",
