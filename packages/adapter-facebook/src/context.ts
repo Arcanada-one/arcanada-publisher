@@ -3,8 +3,8 @@
 //
 // chromium.launchPersistentContext wrapper with screenshot-on-fail artefacts.
 
-import { mkdirSync, existsSync } from "node:fs";
-import { join, resolve, isAbsolute } from "node:path";
+import { chmodSync, mkdirSync, existsSync } from "node:fs";
+import { basename, join, resolve, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, type BrowserContext, type Page } from "playwright";
 import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
@@ -31,8 +31,9 @@ export function resolveArtifactsDir(override?: string): string {
       : resolve(process.cwd(), override)
     : join(PACKAGE_ROOT, "artifacts");
   if (!existsSync(target)) {
-    mkdirSync(target, { recursive: true });
+    mkdirSync(target, { recursive: true, mode: 0o700 });
   }
+  chmodSync(target, 0o700);
   return target;
 }
 
@@ -72,6 +73,7 @@ export async function screenshotOnFail(
   const target = join(artefactsDir, artifactFilename(stage, "png"));
   try {
     await page.screenshot({ path: target, fullPage: true });
+    chmodSync(target, 0o600);
     return target;
   } catch {
     return null;
@@ -91,7 +93,7 @@ export async function withScreenshotOnFail<T>(
     const shot = await screenshotOnFail(page, stage, artefactsDir);
     if (err instanceof AdapterError) {
       if (shot && err.details && typeof err.details === "object") {
-        (err.details as Record<string, unknown>)["screenshot"] = shot;
+        (err.details as Record<string, unknown>)["artifactId"] = basename(shot);
       }
       throw err;
     }
@@ -100,8 +102,7 @@ export async function withScreenshotOnFail<T>(
       `unhandled error during '${stage}': ${err instanceof Error ? err.message : String(err)}`,
       {
         stage,
-        screenshot: shot ?? undefined,
-        cause: err instanceof Error ? err.message : String(err),
+        artifactId: shot ? basename(shot) : undefined,
       },
     );
   }

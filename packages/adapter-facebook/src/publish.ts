@@ -9,7 +9,8 @@
 // fake page without a browser.
 
 import { statSync, existsSync } from "node:fs";
-import { extname, resolve as resolvePath } from "node:path";
+import { basename, extname, resolve as resolvePath } from "node:path";
+import { createHash } from "node:crypto";
 import { type Page } from "playwright";
 import {
   AdapterError,
@@ -42,9 +43,8 @@ const IMAGE_RERENDER_SETTLE_MS = 10_000;
 
 /** Result of the R7 pre-submit composer snapshot. */
 export interface PreSubmitSnapshot {
-  hasText: boolean;
-  hasImage: boolean;
-  normalizedBody?: string;
+  normalizedBody: string;
+  attachments: Array<{ name: string; size: number }>;
 }
 
 /**
@@ -67,7 +67,7 @@ export interface PublishStepRecorder {
    */
   submitAndConfirm(page: Page, publishedText?: string): Promise<string>;
   /** R7/R11: re-open the post and confirm text + image round-trip. */
-  postVerify(page: Page, postUrl: string): Promise<FacebookPostReadback | boolean>;
+  postVerify(page: Page, postUrl: string): Promise<FacebookPostReadback>;
 }
 
 export interface PublishOptions {
@@ -176,16 +176,18 @@ async function runPublishFlow(
 
     // R7: pre-submit snapshot — both text and image must be present, else ABORT.
     const snap = await steps.preSubmitSnapshot(page, input);
-    const exactComposerBody =
-      snap.normalizedBody ?? (snap.hasText ? normalizeFacebookText(input.text) : "");
-    if (!snap.hasText || exactComposerBody !== normalizeFacebookText(input.text)) {
+    if (snap.normalizedBody !== normalizeFacebookText(input.text)) {
       throw new AdapterError(
         ErrorCode.VERIFY_FAILED,
         "publish: pre-submit snapshot found no text in the composer — aborting (R7)",
         { fbErrorType: "verify_mismatch", stage: "pre_submit_text" },
       );
     }
-    if (!snap.hasImage) {
+    const expectedAttachments = imagePaths.map((path) => ({
+      name: basename(path),
+      size: statSync(path).size,
+    }));
+    if (JSON.stringify(snap.attachments) !== JSON.stringify(expectedAttachments)) {
       throw new AdapterError(
         ErrorCode.VERIFY_FAILED,
         "publish: pre-submit snapshot found no image in the composer — aborting (R7)",
@@ -196,33 +198,33 @@ async function runPublishFlow(
     // R7: submit and confirm via the GraphQL network response, not the DOM.
     // PUB-0030: pass the published body so the step can disambiguate the
     // just-published post from older posts in the /me feed.
-    const postUrl = await steps.submitAndConfirm(page, input.text);
-
-    // R7/R11: post-submit verify the published post round-trips (text+image).
-    let verified: FacebookPostReadback | boolean;
     try {
-      verified = await steps.postVerify(page, postUrl);
-    } catch {
-      throw unknownPublish(postUrl);
+      const postUrl = await steps.submitAndConfirm(page, input.text);
+      const expectedAuthor = facebookProfileIdentity(
+        input.expectedAuthorProfileUrl ?? "https://www.facebook.com/100012345",
+      );
+      const verified = await steps.postVerify(page, postUrl);
+      if (
+        verified.normalizedBody !== normalizeFacebookText(input.text) ||
+        verified.authorProfileIdentity !== expectedAuthor ||
+        !verified.hasImage ||
+        verified.mediaIdentity === "" ||
+        verified.canonicalPermalink !== canonicalFacebookPostUrl(postUrl)
+      ) {
+        throw new Error("post-submit mismatch");
+      }
+      return PublishResultSchema.parse({
+        ok: true,
+        platform: "facebook",
+        account: extractAccountFromUrl(postUrl),
+        postUrl,
+        attachments: imagePaths.map((src) => ({ kind: "image" as const, src })),
+        commentIds: [],
+      });
+    } catch (error) {
+      if (error instanceof AdapterError && error.details?.["unknown"] === true) throw error;
+      throw unknownPublish();
     }
-    const expectedAuthor = facebookProfileIdentity(input.expectedAuthorProfileUrl!);
-    const exact =
-      typeof verified === "object"
-        ? verified.normalizedBody === normalizeFacebookText(input.text) &&
-          verified.authorProfileIdentity === expectedAuthor &&
-          verified.hasImage &&
-          verified.canonicalPermalink === canonicalFacebookPostUrl(postUrl)
-        : verified;
-    if (!exact) throw unknownPublish(postUrl);
-
-    return PublishResultSchema.parse({
-      ok: true,
-      platform: "facebook",
-      account: extractAccountFromUrl(postUrl),
-      postUrl,
-      attachments: imagePaths.map((src) => ({ kind: "image" as const, src })),
-      commentIds: [],
-    });
   });
 }
 
@@ -261,16 +263,22 @@ const defaultSteps: PublishStepRecorder = {
     await typeMultiline(page, text, { submit: false });
   },
 
-  async preSubmitSnapshot(page: Page, input: PublishInput): Promise<PreSubmitSnapshot> {
+  async preSubmitSnapshot(page: Page, _input: PublishInput): Promise<PreSubmitSnapshot> {
     const composerText = await page
       .getByRole("textbox")
       .last()
       .innerText()
       .catch(() => "");
     const normalizedBody = normalizeFacebookText(composerText);
-    const hasText = normalizedBody === normalizeFacebookText(input.text);
-    const hasImage = (await page.locator('[role="img"], img[src^="blob:"]').count()) > 0;
-    return { hasText, hasImage, normalizedBody };
+    const attachments = await page
+      .locator('input[type="file"]')
+      .first()
+      .evaluate((input) => {
+        const files = (input as unknown as { files?: ArrayLike<{ name: string; size: number }> })
+          .files;
+        return files ? Array.from(files).map((file) => ({ name: file.name, size: file.size })) : [];
+      });
+    return { normalizedBody, attachments };
   },
 
   async submitAndConfirm(page: Page, publishedText?: string): Promise<string> {
@@ -316,12 +324,12 @@ const defaultSteps: PublishStepRecorder = {
   },
 };
 
-function unknownPublish(postUrl: string): AdapterError {
+function unknownPublish(): AdapterError {
   return new AdapterError(ErrorCode.VERIFY_FAILED, "publish: state unknown after submit", {
     unknown: true,
     reconcileRequired: true,
     stage: "post_submit_verify",
-    postUrl,
+    artifactId: createHash("sha256").update("facebook-publish-unknown").digest("hex").slice(0, 16),
   });
 }
 

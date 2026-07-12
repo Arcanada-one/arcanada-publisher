@@ -6,6 +6,7 @@ export interface FacebookPostReadback {
   authorProfileIdentity: string;
   normalizedBody: string;
   hasImage: boolean;
+  mediaIdentity: string;
 }
 
 export function normalizeFacebookText(value: string): string {
@@ -94,12 +95,27 @@ export async function readFacebookPost(
         }
       });
       if (!author) return [];
+      const mediaAnchor = anchors.find((anchor) => {
+        if (anchor.closest('[role="article"]') !== article || !anchor.href) return false;
+        if (Array.from(anchor.querySelectorAll("img")).length === 0) return false;
+        try {
+          const url = new URL(anchor.href, browserLocation.href);
+          return url.pathname.includes("/photo") || url.pathname === "/photo.php";
+        } catch {
+          return false;
+        }
+      });
+      if (!mediaAnchor?.href) return [];
+      const mediaUrl = new URL(mediaAnchor.href, browserLocation.href);
+      mediaUrl.searchParams.delete("__cft__[0]");
+      mediaUrl.searchParams.delete("__tn__");
       return [
         {
           canonicalPermalink: expected,
           authorProfileHref: author.href!,
           body: body.innerText,
-          hasImage: Array.from(article.querySelectorAll("img")).length > 0,
+          hasImage: true,
+          mediaIdentity: mediaUrl.toString(),
         },
       ];
     });
@@ -112,6 +128,7 @@ export async function readFacebookPost(
     authorProfileIdentity: facebookProfileIdentity(match.authorProfileHref),
     normalizedBody: normalizeFacebookText(match.body),
     hasImage: match.hasImage,
+    mediaIdentity: match.mediaIdentity,
   };
 }
 

@@ -20,6 +20,7 @@ describe("context — helpers (Class B pure functions)", () => {
     expect(out).toBe(target);
     expect(existsSync(target)).toBe(true);
     expect(statSync(target).isDirectory()).toBe(true);
+    expect(statSync(target).mode & 0o777).toBe(0o700);
   });
 
   it("resolveArtifactsDir is idempotent on an existing directory", () => {

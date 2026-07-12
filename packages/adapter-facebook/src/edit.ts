@@ -139,29 +139,30 @@ async function editPostFlow(page: Page, input: FacebookEditInput): Promise<EditR
         postUrl: input.postUrl,
       });
     }
-    await save.first().click();
-    await page.waitForTimeout(3_000);
-    let after;
     try {
-      after = await readFacebookPost(page, target);
-    } catch {
-      throw unknownEdit(target);
+      await save.first().click();
+      await page.waitForTimeout(3_000);
+      const after = await readFacebookPost(page, target);
+      if (
+        after.canonicalPermalink !== target ||
+        after.authorProfileIdentity !== expectedAuthor ||
+        after.normalizedBody !== normalizeFacebookText(input.text!) ||
+        !after.hasImage ||
+        after.mediaIdentity !== before.mediaIdentity
+      ) {
+        throw new Error("post-edit mismatch");
+      }
+      return EditResultSchema.parse({
+        ok: true,
+        platform: "facebook",
+        account: extractAccountFromUrl(target),
+        postUrl: target,
+        edited: true,
+      });
+    } catch (error) {
+      if (error instanceof AdapterError && error.details?.["unknown"] === true) throw error;
+      throw unknownEdit();
     }
-    if (
-      after.canonicalPermalink !== target ||
-      after.authorProfileIdentity !== expectedAuthor ||
-      after.normalizedBody !== normalizeFacebookText(input.text!) ||
-      !after.hasImage
-    ) {
-      throw unknownEdit(target);
-    }
-    return EditResultSchema.parse({
-      ok: true,
-      platform: "facebook",
-      account: extractAccountFromUrl(target),
-      postUrl: target,
-      edited: true,
-    });
   });
 }
 
@@ -179,11 +180,11 @@ async function editCommentFlow(_page: Page, input: FacebookEditInput): Promise<E
   );
 }
 
-function unknownEdit(postUrl: string): AdapterError {
+function unknownEdit(): AdapterError {
   return new AdapterError(ErrorCode.VERIFY_FAILED, "edit-post: state unknown after save", {
     unknown: true,
     reconcileRequired: true,
     stage: "post_edit_verify",
-    postUrl,
+    artifactId: "facebook-edit-unknown",
   });
 }
