@@ -289,6 +289,32 @@ describe("LinkedIn read-only profile inspection", () => {
     expect(bodyTextWithoutDirectControls(body).match(/\n\n/g)).toHaveLength(6);
   });
 
+  it("does not strip legitimate or unowned terminal text", () => {
+    const legitimateMore = new FakeNode(
+      "A legitimate final line\nmore",
+      {},
+      "update-components-text",
+    );
+    legitimateMore.child("...more", "button");
+    expect(bodyTextWithoutDirectControls(legitimateMore)).toBe("A legitimate final line\nmore");
+
+    const anymore = new FakeNode("This matters anymore", {}, "update-components-text");
+    anymore.child("more", "button");
+    expect(bodyTextWithoutDirectControls(anymore)).toBe("This matters anymore");
+
+    const ariaOnly = new FakeNode("Body\n...more", {}, "update-components-text");
+    ariaOnly.child("", "button", undefined, undefined, undefined, {
+      "aria-label":
+        "See more, visually reveals content which is already detected by screen readers",
+    });
+    expect(bodyTextWithoutDirectControls(ariaOnly)).toBe("Body\n...more");
+
+    const nestedBody = new FakeNode("Body\n...more", {}, "update-components-text");
+    const nested = nestedBody.child("", "mini-update");
+    nested.child("...more", "button");
+    expect(bodyTextWithoutDirectControls(nestedBody)).toBe("Body\n...more");
+  });
+
   it("recovers only copied same-author same-activity vanity URLs", () => {
     const root = new FakeNode("");
     const canonical = new FakeNode(

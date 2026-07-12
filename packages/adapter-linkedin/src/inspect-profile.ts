@@ -531,6 +531,17 @@ export function extractLinkedInProfilePosts(root: BrowserNode): ObservedLinkedIn
               "button, [role='button'], .feed-shared-inline-show-more-text__see-more-less-toggle",
             ),
           )) {
+            let owner = control.parentElement;
+            let directOwned = false;
+            while (owner) {
+              if (owner === node) {
+                directOwned = true;
+                break;
+              }
+              if (isBoundary(owner)) break;
+              owner = owner.parentElement;
+            }
+            if (!directOwned) continue;
             const aria = (control.getAttribute("aria-label") ?? "").normalize("NFKC").trim();
             const visual = (control.innerText ?? control.textContent ?? "")
               .normalize("NFKC")
@@ -541,14 +552,11 @@ export function extractLinkedInProfilePosts(root: BrowserNode): ObservedLinkedIn
               )
             )
               continue;
-            for (const suffix of [visual, "...more", "…more", "more"]
-              .filter(Boolean)
-              .sort((a, b) => b.length - a.length)) {
-              const endTrimmed = text.trimEnd();
-              if (!endTrimmed.endsWith(suffix)) continue;
-              text = endTrimmed.slice(0, -suffix.length).trimEnd();
-              break;
-            }
+            if (!visual) continue;
+            const endTrimmed = text.trimEnd();
+            const terminalUiLine = `\n${visual}`;
+            if (endTrimmed.endsWith(terminalUiLine))
+              text = endTrimmed.slice(0, -terminalUiLine.length).trimEnd();
           }
           return text;
         })
@@ -577,11 +585,31 @@ export function extractLinkedInProfilePosts(root: BrowserNode): ObservedLinkedIn
 
 export function bodyTextWithoutDirectControls(node: BrowserNode): string {
   let text = node.innerText ?? "";
+  const isBoundary = (candidate: BrowserNode): boolean => {
+    const raw = candidate.getAttribute("data-urn") ?? candidate.getAttribute("data-id") ?? "";
+    return (
+      /urn:li:activity:\d+/.test(raw) ||
+      /^urn:li:comment/.test(raw) ||
+      candidate.tagName.toLowerCase() === "article" ||
+      /comments-comment-item|mini-update/i.test(candidate.className ?? "")
+    );
+  };
   for (const control of Array.from(
     node.querySelectorAll(
       "button, [role='button'], .feed-shared-inline-show-more-text__see-more-less-toggle",
     ),
   )) {
+    let owner = control.parentElement;
+    let directOwned = false;
+    while (owner) {
+      if (owner === node) {
+        directOwned = true;
+        break;
+      }
+      if (isBoundary(owner)) break;
+      owner = owner.parentElement;
+    }
+    if (!directOwned) continue;
     const aria = (control.getAttribute("aria-label") ?? "").normalize("NFKC").trim();
     const visual = (control.innerText ?? control.textContent ?? "").normalize("NFKC").trim();
     if (
@@ -590,14 +618,11 @@ export function bodyTextWithoutDirectControls(node: BrowserNode): string {
       )
     )
       continue;
-    for (const suffix of [visual, "...more", "…more", "more"]
-      .filter(Boolean)
-      .sort((a, b) => b.length - a.length)) {
-      const endTrimmed = text.trimEnd();
-      if (!endTrimmed.endsWith(suffix)) continue;
-      text = endTrimmed.slice(0, -suffix.length).trimEnd();
-      break;
-    }
+    if (!visual) continue;
+    const endTrimmed = text.trimEnd();
+    const terminalUiLine = `\n${visual}`;
+    if (endTrimmed.endsWith(terminalUiLine))
+      text = endTrimmed.slice(0, -terminalUiLine.length).trimEnd();
   }
   return text;
 }
