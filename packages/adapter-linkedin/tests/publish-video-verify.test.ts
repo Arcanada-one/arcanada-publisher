@@ -72,6 +72,81 @@ function fakeVideoPublishPage(): never {
 }
 
 describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
+  it("uses CDP only after clipboard preview exhaustion and requires second scoped preview", async () => {
+    const vid = makeVideo();
+    const page = fakeVideoPublishPage() as unknown as {
+      evaluate(source: string | ((...args: never[]) => unknown)): Promise<unknown>;
+    };
+    let dragged = false;
+    let beforeDragPolls = 0;
+    const originalEvaluate = page.evaluate.bind(page);
+    page.evaluate = async (source) => {
+      if (typeof source === "string" && source.includes("scopeSel")) {
+        if (!dragged) beforeDragPolls += 1;
+        return dragged ? 1 : 0;
+      }
+      return originalEvaluate(source);
+    };
+    const result = await publish(
+      { text: "never typed", imagePath: vid, profile: "p1" },
+      {
+        profileManager: makeProfiles(),
+        page: page as never,
+        abortAfterMedia: true,
+        __dispatchVideoDragDrop: async () => {
+          dragged = true;
+        },
+      },
+    );
+    expect(beforeDragPolls).toBe(360);
+    expect(result).toMatchObject({ aborted: true, mediaAttached: true });
+  });
+
+  it("fails closed when CDP drop still produces no scoped preview", async () => {
+    const vid = makeVideo();
+    const stages: string[] = [];
+    const page = fakeVideoPublishPage() as unknown as {
+      evaluate(source: string | ((...args: never[]) => unknown)): Promise<unknown>;
+      keyboard: { insertText: ReturnType<typeof vi.fn> };
+    };
+    page.keyboard.insertText = vi.fn(async () => {});
+    const originalEvaluate = page.evaluate.bind(page);
+    page.evaluate = async (source) =>
+      typeof source === "string" && source.includes("scopeSel") ? 0 : originalEvaluate(source);
+    await expect(
+      publish(
+        { text: "never typed", imagePath: vid, profile: "p1" },
+        {
+          profileManager: makeProfiles(),
+          page: page as never,
+          abortAfterMedia: true,
+          __dispatchVideoDragDrop: async () => {},
+          __onStage: (stage) => stages.push(stage),
+        },
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.PUBLISH_BUTTON_ABSENT });
+    expect(page.keyboard.insertText).not.toHaveBeenCalled();
+    expect(stages).not.toContain("text_insert");
+    expect(stages).not.toContain("post_click");
+  });
+
+  it("runtime publish surface contains no file-picker or setInputFiles path", () => {
+    const source = publish.toString();
+    expect(source).not.toContain("setInputFiles");
+    expect(source).not.toContain("filechooser");
+  });
+
+  it("attachment smoke rejects multiple videos before browser IO", async () => {
+    const first = makeVideo();
+    const second = makeVideo();
+    await expect(
+      publish(
+        { text: "unused", imagePaths: [first, second], profile: "p1" },
+        { profileManager: makeProfiles(), page: fakeVideoPublishPage(), abortAfterMedia: true },
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
+  });
+
   it("production focus callback resolves nested shadow activeElement", () => {
     const editor = {
       ownerDocument: { activeElement: null as never },

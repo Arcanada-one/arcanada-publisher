@@ -174,7 +174,16 @@ this fixed order. It is the operator-confirmed sequence and avoids the failure m
    pasting body or comment text, READ BACK what actually landed in the field before
    submitting. (Real incident: a comment field received a stray task-id "TUNE-0443" because
    another process replaced the clipboard; it was caught on read-back, cleared, and re-pasted.)
-4. **After publishing, re-verify against the live account** (§6.2): the post carries the
+
+4. **LinkedIn Chromium fallback — scoped CDP drag only after clipboard failure.** If an
+   exact, focus-proven clipboard paste produces no scoped video preview, Publisher may dispatch
+   CDP `dragEnter` → `dragOver` → `drop` with exactly one validated video realpath at the centre
+   of the exact marked editor. The scoped video preview remains mandatory before any text or
+   Post click. File pickers and `setInputFiles` remain forbidden. The fallback requires the
+   same canonical path/size/SHA proof and unique composer scope as clipboard publishing. Run
+   the attachment-only smoke first; a full publish is allowed only after that smoke renders a
+   scoped video preview and closes without typing or clicking Post.
+5. **After publishing, re-verify against the live account** (§6.2): the post carries the
    **video** (play control / duration, not a still image), the text is complete, and the
    author is our account.
 
