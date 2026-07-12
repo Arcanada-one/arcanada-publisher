@@ -59,11 +59,26 @@ export async function readFacebookPost(
           return null;
         }
       };
-      return Array.from(
-        (
-          node as unknown as { querySelectorAll(s: string): ArrayLike<{ href?: string }> }
-        ).querySelectorAll("a[href]"),
-      ).some((anchor) => anchor.href && canonical(anchor.href) === expected);
+      type OwnedNode = {
+        href?: string;
+        closest(selector: string): OwnedNode | null;
+        querySelector(selector: string): OwnedNode | null;
+        querySelectorAll(selector: string): ArrayLike<OwnedNode>;
+        compareDocumentPosition(other: OwnedNode): number;
+        contains(child: OwnedNode): boolean;
+      };
+      const articleNode = node as unknown as OwnedNode;
+      const message = articleNode.querySelector(
+        '[data-ad-preview="message"], [data-ad-comet-preview="message"]',
+      );
+      if (!message) return false;
+      return Array.from(articleNode.querySelectorAll("a[href]")).some(
+        (anchor) =>
+          anchor.closest('[role="article"]') === articleNode &&
+          !message.contains(anchor) &&
+          (anchor.compareDocumentPosition(message) & 4) !== 0 &&
+          Boolean(anchor.href && canonical(anchor.href) === expected),
+      );
     }, target);
     if (!isExactTarget) continue;
     const expanders = article.getByRole("button", {
@@ -87,6 +102,7 @@ export async function readFacebookPost(
       getAttribute(name: string): string | null;
       isConnected: boolean;
       getBoundingClientRect(): { width: number; height: number };
+      contains(child: DomElement): boolean;
     };
     const bodyRoot = root as unknown as DomElement;
     const browserLocation = (globalThis as unknown as { location: { href: string } }).location;
@@ -103,21 +119,25 @@ export async function readFacebookPost(
     };
     const matches = Array.from(bodyRoot.querySelectorAll('[role="article"]')).flatMap((article) => {
       const anchors = Array.from(article.querySelectorAll("a[href]"));
+      const body = article.querySelector(
+        '[data-ad-preview="message"], [data-ad-comet-preview="message"]',
+      );
+      if (!body || body.closest('[role="article"]') !== article) return [];
+      const ownedAnchors = anchors.filter(
+        (anchor) =>
+          anchor.closest('[role="article"]') === article &&
+          !body.contains(anchor) &&
+          (anchor.compareDocumentPosition(body) & 4) !== 0,
+      );
       const postPermalinks = Array.from(
         new Set(
-          anchors
+          ownedAnchors
             .flatMap((anchor) => (anchor.href ? [canonical(anchor.href)] : []))
             .filter((value): value is string => value !== null),
         ),
       ).sort();
       if (!postPermalinks.includes(expected)) return [];
-      const body = article.querySelector(
-        '[data-ad-preview="message"], [data-ad-comet-preview="message"]',
-      );
-      if (!body || body.closest('[role="article"]') !== article) return [];
-      const author = anchors.find((anchor) => {
-        if (anchor.closest('[role="article"]') !== article) return false;
-        if ((anchor.compareDocumentPosition(body) & 4) === 0) return false;
+      const author = ownedAnchors.find((anchor) => {
         try {
           if (!anchor.href) return false;
           const url = new URL(anchor.href, browserLocation.href);
@@ -128,8 +148,8 @@ export async function readFacebookPost(
         }
       });
       if (!author) return [];
-      const mediaAnchor = anchors.find((anchor) => {
-        if (anchor.closest('[role="article"]') !== article || !anchor.href) return false;
+      const mediaAnchor = ownedAnchors.find((anchor) => {
+        if (!anchor.href) return false;
         if (Array.from(anchor.querySelectorAll("img")).length === 0) return false;
         try {
           const url = new URL(anchor.href, browserLocation.href);
