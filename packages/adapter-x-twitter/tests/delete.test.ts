@@ -8,6 +8,7 @@ import {
   del,
   statusIdFromUrl,
   locateTargetArticle,
+  waitForExactStatusState,
 } from "../src/delete.js";
 
 function makeProfiles(): ProfileManager {
@@ -116,6 +117,27 @@ describe("x delete — read-before-delete (R13 / V-AC-9)", () => {
 });
 
 describe("PUB-0033 — target the EXACT tweet on a reply permalink (thread bug)", () => {
+  it("waits for a definitive present/absent state instead of treating initial zero articles as absent", async () => {
+    const waitForFunction = vi.fn(async (_fn, input, options) => {
+      expect(input).toEqual({ statusId: "777", handle: "paxbeach" });
+      expect(options).toEqual({ timeout: 15_000 });
+      return { jsonValue: async () => "present" };
+    });
+    await expect(
+      waitForExactStatusState({ waitForFunction } as never, "777", "PaxBeach"),
+    ).resolves.toBe("present");
+    expect(waitForFunction).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when status loading never reaches present or definitive not-found", async () => {
+    await expect(
+      waitForExactStatusState(
+        { waitForFunction: async () => Promise.reject(new Error("timeout")) } as never,
+        "777",
+        "paxbeach",
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+  });
   it("statusIdFromUrl extracts the numeric id", () => {
     expect(statusIdFromUrl("https://x.com/VeritasArcanaAI/status/2070279076003057839")).toBe(
       "2070279076003057839",
