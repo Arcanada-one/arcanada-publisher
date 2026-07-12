@@ -31,19 +31,22 @@ export interface InspectXProfilePostInput {
 
 export interface InspectXProfilePostResult {
   authorHandle: string;
-  matches: Array<{
-    statusId: string;
-    canonicalUrl: string;
-    createdAt: string;
-    articleIndex: number;
-    isReply: boolean;
-    bodySha256: string;
-    bodyLength: number;
-    relatedStatusIds: string[];
-    mediaIdentitySha256: string;
-    mediaIdentifierCount: number;
-  }>;
+  posts: InspectXPostSummary[];
+  matches: InspectXPostSummary[];
   coverage: { maxScrolls: number; scrollsPerformed: number; postsInspected: number };
+}
+
+export interface InspectXPostSummary {
+  statusId: string;
+  canonicalUrl: string;
+  createdAt: string;
+  articleIndex: number;
+  isReply: boolean;
+  bodySha256: string;
+  bodyLength: number;
+  relatedStatusIds: string[];
+  mediaIdentitySha256: string;
+  mediaIdentifierCount: number;
 }
 
 export interface InspectXProfileRecorder {
@@ -123,24 +126,27 @@ async function runInspection(
   const screenshotPath = join(evidenceDir, "readback.png");
   await page.screenshot({ path: screenshotPath, fullPage: true });
   await chmod(screenshotPath, 0o600);
+  const posts = [...observed.values()];
   await writePrivate(
     join(evidenceDir, "manifest.json"),
-    `${JSON.stringify({ version: 1, profileHandle: expectedHandle, matches, screenshotPath }, null, 2)}\n`,
+    `${JSON.stringify({ version: 2, profileHandle: expectedHandle, posts, matches, screenshotPath }, null, 2)}\n`,
   );
+  const summarize = (post: ObservedXProfilePost): InspectXPostSummary => ({
+    statusId: post.statusId,
+    canonicalUrl: post.canonicalUrl,
+    createdAt: post.createdAt,
+    articleIndex: post.articleIndex,
+    isReply: post.isReply,
+    bodySha256: sha256(normalize(post.body)),
+    bodyLength: normalize(post.body).length,
+    relatedStatusIds: post.relatedStatusIds,
+    mediaIdentitySha256: sha256([...post.mediaIdentifiers].sort().join("\n")),
+    mediaIdentifierCount: post.mediaIdentifiers.length,
+  });
   return {
     authorHandle: expectedHandle,
-    matches: matches.map((post) => ({
-      statusId: post.statusId,
-      canonicalUrl: post.canonicalUrl,
-      createdAt: post.createdAt,
-      articleIndex: post.articleIndex,
-      isReply: post.isReply,
-      bodySha256: sha256(normalize(post.body)),
-      bodyLength: normalize(post.body).length,
-      relatedStatusIds: post.relatedStatusIds,
-      mediaIdentitySha256: sha256([...post.mediaIdentifiers].sort().join("\n")),
-      mediaIdentifierCount: post.mediaIdentifiers.length,
-    })),
+    posts: posts.map(summarize),
+    matches: matches.map(summarize),
     coverage: { maxScrolls: input.maxScrolls, scrollsPerformed, postsInspected: observed.size },
   };
 }
@@ -200,7 +206,7 @@ export function extractObservedXPostsFromDom(
       ...[...article.querySelectorAll("video")]
         .filter((video) => video.closest("article") === article)
         .map((video) => stableMediaUrl(video.getAttribute("poster") ?? "")),
-      ...[...article.querySelectorAll('img[src*="media"]')]
+      ...[...article.querySelectorAll('img[src*="/media/"], img[src*="/ext_tw_video_thumb/"]')]
         .filter((image) => image.closest("article") === article)
         .map((image) => stableMediaUrl(image.getAttribute("src") ?? "")),
     ].filter(Boolean);
