@@ -36,6 +36,11 @@ import {
 } from "./comment.js";
 import { edit as editImpl, type EditOptions, type LinkedInEditInput } from "./edit.js";
 import { del as deleteImpl, type DeleteOptions } from "./delete.js";
+import {
+  inspectComposer as inspectComposerImpl,
+  type ComposerDiagnostics,
+  type ComposerInspectOptions,
+} from "./composer-inspect.js";
 
 export interface LinkedInAdapterOptions {
   loginContext?: LoginContext;
@@ -44,6 +49,7 @@ export interface LinkedInAdapterOptions {
   editCommentOptions?: EditCommentOptions;
   editOptions?: EditOptions;
   deleteOptions?: DeleteOptions;
+  composerInspectOptions?: ComposerInspectOptions;
 }
 
 export class LinkedInAdapter extends BaseAdapter {
@@ -87,6 +93,10 @@ export class LinkedInAdapter extends BaseAdapter {
       throw new Error("publishDryRunNoPost(): flow did not abort before posting");
     }
     return result as AbortedPublishResult;
+  }
+
+  async inspectComposer(profile = "default"): Promise<ComposerDiagnostics> {
+    return inspectComposerImpl(profile, this.opts.composerInspectOptions);
   }
 
   async comment(input: CommentInput): Promise<CommentResult> {
