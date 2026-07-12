@@ -219,14 +219,15 @@ export class TelegramAdapter extends BaseAdapter {
     if (
       !input.expectedContent?.match(/^#PUB_0029_[A-Za-z0-9]+$/) ||
       !input.expectedMediaKind ||
-      input.expectedParentUrl === undefined
+      input.expectedParentUrl !== undefined
     )
       throw new AdapterError(
-        ErrorCode.MISSING_INPUT,
-        "edit: Telegram media replacement requires a Publisher marker, expectedMediaKind, and explicit parent oracle",
+        ErrorCode.INVALID_ARGS,
+        "edit: Telegram media replacement requires a Publisher marker and expectedMediaKind; parent oracle is unsupported",
       );
     const bot = requireResult<{ id: number }>(await this.transport("getMe", undefined), "getMe");
-    await this.assertCurrentMessage(input, chatId, messageId, bot.id);
+    const current = await this.forwardProbe(chatId, messageId);
+    this.assertCurrentArtifact(input, current, chatId, bot.id);
     const bytes = await readFile(input.imagePath!);
     const attachmentKind = mediaKind(input.imagePath!);
     const body = new FormData();
@@ -259,7 +260,6 @@ export class TelegramAdapter extends BaseAdapter {
       message.message_id !== messageId ||
       !publisherSourceIdentityMatches(message, chatId, bot.id) ||
       message.forward_origin ||
-      !replyParentMatches(message, chatId, input.expectedParentUrl) ||
       actual !== input.text ||
       returnedKind !== attachmentKind ||
       (attachmentKind === "video" &&
@@ -317,6 +317,17 @@ export class TelegramAdapter extends BaseAdapter {
       .filter((message) => message.message_id === messageId && chatMatches(message, chatId))
       .at(-1);
     const current = fromUpdates ?? (await this.forwardProbe(chatId, messageId));
+    this.assertCurrentArtifact(input, current, chatId, botId);
+    if (!replyParentMatches(current, chatId, input.expectedParentUrl))
+      throw new AdapterError(ErrorCode.VERIFY_FAILED, "edit: current reply-parent oracle mismatch");
+  }
+
+  private assertCurrentArtifact(
+    input: EditInput,
+    current: TelegramMessage,
+    chatId: string,
+    botId: number,
+  ): void {
     if (!publisherSourceIdentityMatches(current, chatId, botId) || current.forward_origin)
       throw new AdapterError(ErrorCode.VERIFY_FAILED, "edit: current source identity mismatch");
     const actual = current.caption ?? current.text ?? "";
@@ -325,8 +336,6 @@ export class TelegramAdapter extends BaseAdapter {
       throw new AdapterError(ErrorCode.VERIFY_FAILED, "edit: current content oracle mismatch");
     if (input.expectedMediaKind && currentKind !== input.expectedMediaKind)
       throw new AdapterError(ErrorCode.VERIFY_FAILED, "edit: current media oracle mismatch");
-    if (!replyParentMatches(current, chatId, input.expectedParentUrl))
-      throw new AdapterError(ErrorCode.VERIFY_FAILED, "edit: current reply-parent oracle mismatch");
   }
 
   private async forwardProbe(chatId: string, messageId: number): Promise<TelegramMessage> {
@@ -383,7 +392,13 @@ export class TelegramAdapter extends BaseAdapter {
         "forwardMessage: returned forward_origin does not match the exact source target",
         { chatId, messageId, probeMessageId: probe.message_id },
       );
-    const { forward_origin: _forwardOrigin, ...sourceSnapshot } = probe;
+    // reply_to_message belongs to the probe destination and is not evidence of
+    // the source post's parent. Never synthesize/rebrand it as source metadata.
+    const {
+      forward_origin: _forwardOrigin,
+      reply_to_message: _probeReply,
+      ...sourceSnapshot
+    } = probe;
     return {
       ...sourceSnapshot,
       message_id: origin.message_id,
