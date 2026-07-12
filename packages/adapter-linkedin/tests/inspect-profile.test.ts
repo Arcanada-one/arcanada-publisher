@@ -31,6 +31,7 @@ function options(batches: ObservedLinkedInProfilePost[][]) {
     page: {
       goto: async () => {},
       screenshot: async () => Buffer.from("png"),
+      locator: () => ({ evaluate: async () => [] }),
     } as never,
     skipTeardown: true,
     __recorder: {
@@ -98,6 +99,16 @@ describe("LinkedIn read-only profile inspection", () => {
       await expect(
         inspectLinkedInProfilePost(input(evidenceDir), options([candidates])),
       ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+      expect(statSync(evidenceDir).mode & 0o777).toBe(0o700);
+      expect(statSync(join(evidenceDir, "failure-manifest.json")).mode & 0o777).toBe(0o600);
+      expect(statSync(join(evidenceDir, "failure-readback.png")).mode & 0o777).toBe(0o600);
+      const manifest = JSON.parse(readFileSync(join(evidenceDir, "failure-manifest.json"), "utf8"));
+      expect(manifest.candidates[0]).toMatchObject({
+        activityId: ID,
+        bodySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        bodyLength: BODY.length,
+      });
+      expect(JSON.stringify(manifest)).not.toContain(BODY);
     }
   });
 
