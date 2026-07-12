@@ -309,6 +309,7 @@ export function expandMatchingLinkedInActivity(
   const identity = (href: string): string => {
     try {
       const parsed = new URL(href, "https://www.linkedin.com");
+      if (!/^(www\.)?linkedin\.com$/i.test(parsed.hostname)) return "";
       const match = /^\/in\/([^/]+)\/?$/.exec(parsed.pathname);
       return match ? `www.linkedin.com/in/${match[1]!.toLowerCase()}` : "";
     } catch {
@@ -317,6 +318,17 @@ export function expandMatchingLinkedInActivity(
   };
   let clicked = 0;
   for (const container of containers) {
+    let ancestor = container.parentElement;
+    let nestedActivity = false;
+    while (ancestor && ancestor !== root) {
+      const raw = ancestor.getAttribute("data-urn") ?? ancestor.getAttribute("data-id") ?? "";
+      if (/urn:li:activity:\d+/.test(raw)) {
+        nestedActivity = true;
+        break;
+      }
+      ancestor = ancestor.parentElement;
+    }
+    if (nestedActivity) continue;
     const owned = (selector: string): BrowserNode[] =>
       Array.from(container.querySelectorAll(selector)).filter((node) => isOwned(node, container));
     const author = owned(
@@ -372,6 +384,17 @@ export function extractLinkedInProfilePosts(root: BrowserNode): ObservedLinkedIn
     return current === container;
   };
   for (const container of containers) {
+    let ancestor = container.parentElement;
+    let nestedActivity = false;
+    while (ancestor && ancestor !== root) {
+      const raw = ancestor.getAttribute("data-urn") ?? ancestor.getAttribute("data-id") ?? "";
+      if (/urn:li:activity:\d+/.test(raw)) {
+        nestedActivity = true;
+        break;
+      }
+      ancestor = ancestor.parentElement;
+    }
+    if (nestedActivity) continue;
     const raw = container.getAttribute("data-urn") ?? container.getAttribute("data-id") ?? "";
     const id = /urn:li:activity:(\d+)/.exec(raw)?.[1];
     if (!id || seen.has(id)) continue;

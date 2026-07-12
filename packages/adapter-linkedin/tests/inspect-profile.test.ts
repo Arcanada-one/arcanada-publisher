@@ -170,6 +170,87 @@ describe("LinkedIn read-only profile inspection", () => {
     expect(nested.children[0]?.clickCount).toBe(0);
     expect(other.children[2]?.clickCount).toBe(0);
   });
+
+  it("rejects a foreign-host /in/ lookalike before clicking", () => {
+    const outer = new FakeNode("", { "data-urn": `urn:li:activity:${ID}` });
+    outer.child("Building the Binary Is Only the Beginning…", "update-components-text");
+    outer.child(
+      "Pavel",
+      "update-components-actor__meta-link",
+      "https://example.test/in/pavelvalentov/",
+    );
+    const more = outer.child("more", "button");
+    const root = new FakeNode("");
+    root.children.push(outer);
+    expect(
+      expandMatchingLinkedInActivity(root, {
+        expectedAuthorIdentity: "www.linkedin.com/in/pavelvalentov",
+        expectedTitle: "Building the Binary Is Only the Beginning",
+      }),
+    ).toBe(0);
+    expect(more.clickCount).toBe(0);
+  });
+
+  it("exercises the production evaluator while excluding all nested boundary kinds", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "li-inspect-live-dom-")), "evidence");
+    const outer = new FakeNode("", { "data-urn": `urn:li:activity:${ID}` });
+    const body = outer.child(
+      "Building the Binary Is Only the Beginning…",
+      "update-components-text",
+    );
+    outer.child("Pavel", "update-components-actor__meta-link", PROFILE);
+    outer.child(
+      "time",
+      "",
+      undefined,
+      `https://www.linkedin.com/posts/pavel_post-activity-${ID}-AbCd`,
+    );
+    outer.child("video", "video-player");
+    outer.child("more", "button", undefined, undefined, () => {
+      body.innerText = BODY;
+    });
+    const boundaries = [
+      new FakeNode("", { "data-urn": "urn:li:activity:999" }),
+      new FakeNode("", { "data-id": "urn:li:comment:(urn:li:activity:999,1)" }),
+      new FakeNode("", {}, "", "article"),
+      new FakeNode("", {}, "mini-update"),
+    ];
+    for (const boundary of boundaries) {
+      boundary.parentElement = outer;
+      outer.children.push(boundary);
+      boundary.child(BODY, "update-components-text");
+      boundary.child(
+        "Impostor",
+        "update-components-actor__meta-link",
+        "https://www.linkedin.com/in/impostor/",
+      );
+      boundary.child("video", "video-player");
+      boundary.child("more", "button");
+    }
+    const root = new FakeNode("");
+    root.children.push(outer);
+    const page = {
+      goto: async () => {},
+      locator: () => ({
+        evaluate: async (fn: (node: FakeNode, arg?: unknown) => unknown, arg?: unknown) =>
+          fn(root, arg),
+      }),
+      waitForTimeout: async () => {},
+      evaluate: async () => {},
+      screenshot: async () => Buffer.from("png"),
+    } as never;
+
+    const result = await inspectLinkedInProfilePost(input(evidenceDir), {
+      page,
+      skipTeardown: true,
+    });
+    expect(result).toMatchObject({
+      activityId: ID,
+      hasNativeVideo: true,
+      postBodyLength: BODY.length,
+    });
+    for (const boundary of boundaries) expect(boundary.children[3]?.clickCount).toBe(0);
+  });
 });
 
 class FakeNode {
@@ -180,16 +261,26 @@ class FakeNode {
   clickCount = 0;
 
   constructor(
-    readonly innerText: string,
+    public innerText: string,
     private readonly attrs: Record<string, string> = {},
     readonly className = "",
-  ) {}
+    tagName = "div",
+  ) {
+    this.tagName = tagName;
+  }
 
-  child(text: string, className = "", href?: string, permalink?: string): FakeNode {
+  child(
+    text: string,
+    className = "",
+    href?: string,
+    permalink?: string,
+    onClick?: () => void,
+  ): FakeNode {
     const node = new FakeNode(text, {}, className);
     node.parentElement = this;
     if (href) node.href = href;
     if (permalink) node.href = permalink;
+    node.onClick = onClick;
     this.children.push(node);
     return node;
   }
@@ -200,6 +291,7 @@ class FakeNode {
 
   click(): void {
     this.clickCount += 1;
+    this.onClick?.();
   }
 
   querySelectorAll(selector: string): FakeNode[] {
@@ -207,7 +299,9 @@ class FakeNode {
       node.children.flatMap((child) => [child, ...descendants(child)]);
     return descendants(this).filter((node) => {
       if (selector.includes("urn:li:activity"))
-        return /urn:li:activity:/.test(node.getAttribute("data-urn") ?? "");
+        return /urn:li:activity:/.test(
+          node.getAttribute("data-urn") ?? node.getAttribute("data-id") ?? "",
+        );
       if (selector.includes("update-components-text"))
         return node.className.includes("update-components-text");
       if (selector.includes("update-components-actor"))
@@ -220,4 +314,6 @@ class FakeNode {
       return false;
     });
   }
+
+  private onClick?: () => void;
 }
