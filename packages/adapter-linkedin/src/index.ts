@@ -95,6 +95,17 @@ export class LinkedInAdapter extends BaseAdapter {
     return result as AbortedPublishResult;
   }
 
+  async inspectMediaAttachment(input: PublishInput): Promise<AbortedPublishResult> {
+    const result = await publishImpl(input, {
+      ...this.opts.publishOptions,
+      abortAfterMedia: true,
+    });
+    if (!(result as AbortedPublishResult).aborted) {
+      throw new Error("inspectMediaAttachment(): flow did not abort after media preview");
+    }
+    return result as AbortedPublishResult;
+  }
+
   async inspectComposer(profile = "default"): Promise<ComposerDiagnostics> {
     return inspectComposerImpl(profile, this.opts.composerInspectOptions);
   }
