@@ -392,9 +392,7 @@ async function runPublishFlow(
         // otherwise the validated attachment remains visible while the verifier
         // searches a detached pre-drop scope and reports a false failure.
         if (!(await markCurrentComposer())) return 0;
-        return (await page.evaluate(
-          scopedMediaAttachmentCountJs(expectedMediaName),
-        )) as number;
+        return (await page.evaluate(scopedMediaAttachmentCountJs(expectedMediaName))) as number;
       };
       for (let i = 0; i < maxPolls; i++) {
         if (hasVideo) {
