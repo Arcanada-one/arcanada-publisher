@@ -236,7 +236,8 @@ const defaultSteps: PublishStepRecorder = {
     } catch (cause) {
       const blob = await safeContent(page);
       const klass = classifyFbError(blob);
-      throw mapFbError(klass !== "unknown" ? klass : "not_logged_in", { cause });
+      void cause;
+      throw mapFbError(klass !== "unknown" ? klass : "not_logged_in");
     }
     await composer.click();
     const dialog = page

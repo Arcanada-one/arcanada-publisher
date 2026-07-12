@@ -53,12 +53,37 @@ export function mapFbError(
     fbErrorType === "unknown" ? ErrorCode.INTERNAL_PANIC : MAPPING[fbErrorType];
   const baseMessage =
     fbErrorType === "unknown" ? "Unrecognised fb-publish error type" : MESSAGES[fbErrorType];
-  const finalMessage = detail?.message ? `${baseMessage}: ${detail.message}` : baseMessage;
-  return new AdapterError(code, finalMessage, {
-    fbErrorType,
-    ...(detail?.cause !== undefined ? { cause: serializeCause(detail.cause) } : {}),
-    ...(detail?.extra ?? {}),
-  });
+  return new AdapterError(
+    code,
+    baseMessage,
+    sanitizeDetails({
+      fbErrorType,
+      ...(detail?.extra ?? {}),
+    }),
+  );
+}
+
+const SAFE_DETAIL_KEY =
+  /^(stage|code|artifactId|unknown|reconcileRequired|fbErrorType|[A-Za-z0-9]*(Id|Ids|Hash|Sha256|Length|Lengths))$/;
+
+export function sanitizeAdapterError(error: AdapterError, artifactId?: string): AdapterError {
+  const details = sanitizeDetails(error.details ?? {});
+  if (artifactId) details["artifactId"] = artifactId;
+  return new AdapterError(error.code, error.message, details);
+}
+
+function sanitizeDetails(details: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(details).filter(
+      ([key, value]) =>
+        SAFE_DETAIL_KEY.test(key) &&
+        (typeof value === "string" ||
+          typeof value === "number" ||
+          typeof value === "boolean" ||
+          (Array.isArray(value) &&
+            value.every((item) => ["string", "number", "boolean"].includes(typeof item)))),
+    ),
+  );
 }
 
 /**
@@ -89,11 +114,4 @@ export function classifyFbError(blob: string): FbErrorType {
     return "runtime_error";
   }
   return "unknown";
-}
-
-function serializeCause(cause: unknown): unknown {
-  if (cause instanceof Error) {
-    return { name: cause.name, message: cause.message };
-  }
-  return cause;
 }

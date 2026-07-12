@@ -8,6 +8,7 @@ import { basename, join, resolve, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, type BrowserContext, type Page } from "playwright";
 import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
+import { sanitizeAdapterError } from "./errors.js";
 
 const PACKAGE_ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
 
@@ -92,10 +93,7 @@ export async function withScreenshotOnFail<T>(
   } catch (err) {
     const shot = await screenshotOnFail(page, stage, artefactsDir);
     if (err instanceof AdapterError) {
-      if (shot && err.details && typeof err.details === "object") {
-        (err.details as Record<string, unknown>)["artifactId"] = basename(shot);
-      }
-      throw err;
+      throw sanitizeAdapterError(err, shot ? basename(shot) : undefined);
     }
     throw new AdapterError(ErrorCode.INTERNAL_PANIC, `unhandled error during '${stage}'`, {
       stage,
