@@ -17,6 +17,8 @@ import { selectors, shadowClickPatterns } from "./selectors.js";
 import { launchSession, withScreenshotOnFail } from "./context.js";
 import { shadowClickButtonJs, shadowFindActivityUrnJs } from "./dom-shadow.js";
 
+const DELETE_TARGET_ATTR = "data-arcanada-delete-target";
+
 const LINKEDIN_HOSTNAME = "www.linkedin.com";
 
 export interface DeleteOptions {
@@ -92,35 +94,40 @@ export async function defaultReadContent(page: Page, input: DeleteInput): Promis
   await page.goto(input.targetUrl, { waitUntil: "domcontentloaded" });
   await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
   await page.waitForTimeout(4_000);
-  // PUB-0032: the post container selector `[data-urn*="urn:li:activity"],
-  // article` drifted on the 2026 UI (locator.waitFor timed out). Try the
-  // structural locator first; if it does not render, fall back to a body-wide
-  // innerText read so the read-before-delete oracle still has text to match
-  // (the oracle compares `expectedContent` against this — a superset is safe,
-  // a miss is not). A shadow-aware probe confirms the activity container exists
-  // before we commit to the body-wide read.
-  const article = page.locator('[data-urn*="urn:li:activity"], article').first();
-  let articleVisible = false;
-  try {
-    await article.waitFor({ state: "visible", timeout: 5_000 });
-    articleVisible = true;
-  } catch {
-    // Fall through: current LinkedIn post pages may omit data-urn/article.
+  // LinkedIn can auto-translate an English post into the account language
+  // (observed FI: "Näytä alkuperäinen"). The expected-content oracle is the
+  // operator-approved original, so restore the original before reading it.
+  const showOriginal = page.getByRole("button", { name: selectors.showOriginal });
+  const showOriginalCount = await showOriginal.count().catch(() => 0);
+  for (let index = 0; index < showOriginalCount; index++) {
+    const button = showOriginal.nth(index);
+    if (await button.isVisible().catch(() => false)) await button.click();
   }
-  if (articleVisible) {
-    const text = (await article.innerText()) ?? "";
-    if (text.includes(input.expectedContent)) return text;
-    throw new AdapterError(
-      ErrorCode.VERIFY_FAILED,
-      "delete: visible target container does not match expectedContent — aborting without deletion",
-      { targetUrl: input.targetUrl, liErrorType: "verify_mismatch" },
-    );
-  }
+  if (showOriginalCount > 0) await page.waitForTimeout(1_000);
+  // The 2026 UI may omit data-urn/article on vanity post pages. Read the page
+  // region, then bind expectedContent to one unique container that owns a post
+  // control. Never trust `.first()`: an unrelated first post can contain the
+  // expected text in a nested comment/repost.
   const main = page.locator("main").first();
   const region = (await main.count()) > 0 ? main : page.locator("body").first();
   await region.waitFor({ state: "visible", timeout: 5_000 });
   const text = (await region.innerText()) ?? "";
-  if (text.includes(input.expectedContent)) return text;
+  if (text.includes(input.expectedContent)) {
+    const marked = (await page.evaluate(
+      markDeleteTargetJs(
+        input.expectedContent,
+        DELETE_TARGET_ATTR,
+        `(?:${selectors.editPostActionEn.source})|(?:${selectors.editPostActionRu.source})`,
+        activityIdFromUrl(input.targetUrl),
+      ),
+    )) as number;
+    if (marked === 1) return text;
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "delete: expected content is not bound to exactly one post control — aborting without deletion",
+      { targetUrl: input.targetUrl, liErrorType: "verify_mismatch", candidateCount: marked },
+    );
+  }
   const urn = (await page.evaluate(shadowFindActivityUrnJs()).catch(() => null)) as string | null;
   throw new AdapterError(
     ErrorCode.VERIFY_FAILED,
@@ -131,22 +138,62 @@ export async function defaultReadContent(page: Page, input: DeleteInput): Promis
   );
 }
 
-async function defaultPerformDelete(page: Page, _input: DeleteInput): Promise<void> {
+export function markDeleteTargetJs(
+  expected: string,
+  attr: string,
+  menuPattern: string,
+  activityId: string | null = null,
+): string {
+  return `(() => {
+    const expected = ${JSON.stringify(expected)};
+    const attr = ${JSON.stringify(attr)};
+    const re = new RegExp(${JSON.stringify(menuPattern)}, "i");
+    const candidates = Array.from(document.querySelectorAll('[data-urn*="urn:li:activity"], article, div')).filter((element) =>
+      (element.innerText || "").includes(expected) &&
+      Array.from(element.querySelectorAll("button")).some((button) =>
+        re.test(button.getAttribute("aria-label") || button.innerText || "")
+      )
+    );
+    const activityId = ${JSON.stringify(activityId)};
+    const activityMatches = activityId ? candidates.filter((candidate) =>
+      (candidate.getAttribute("data-urn") || "").includes("urn:li:activity:" + activityId)
+    ) : [];
+    const pool = activityMatches.length > 0 ? activityMatches : candidates;
+    const leafMost = pool.filter((candidate) =>
+      !pool.some((other) => other !== candidate && candidate.contains(other))
+    );
+    if (leafMost.length !== 1) return leafMost.length;
+    leafMost[0].setAttribute(attr, "true");
+    return 1;
+  })()`;
+}
+
+function activityIdFromUrl(targetUrl: string): string | null {
+  return (
+    targetUrl.match(/urn:li:activity:(\d+)/)?.[1] ?? targetUrl.match(/activity-(\d+)/)?.[1] ?? null
+  );
+}
+
+export async function defaultPerformDelete(page: Page, _input: DeleteInput): Promise<void> {
   // PUB-0032: the «...» control-menu → Delete → confirm choreography drifted on
   // the 2026 UI (the kebab aria-label localized and the menu may sit behind the
   // interop-outlet shadow root, where a Playwright pointer-click is intercepted).
   // Each step tries the role/aria locator first (fast, structural) and falls back
   // to a shadow-walk DOM `.click()` with multi-locale text matching when the
   // locator does not resolve.
-  await clickWithShadowFallback(
-    page,
-    page
-      .getByRole("button", { name: selectors.editPostActionRu })
-      .or(page.getByRole("button", { name: selectors.editPostActionEn }))
-      .first(),
-    shadowClickPatterns.postControlMenu,
-    "delete_control_menu",
-  );
+  const target = page.locator(`[${DELETE_TARGET_ATTR}="true"]`);
+  if ((await target.count()) !== 1)
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "delete: verified target marker is absent or ambiguous — aborting without deletion",
+      { liErrorType: "verify_mismatch" },
+    );
+  const targetMenu = target
+    .getByRole("button", { name: selectors.editPostActionRu })
+    .or(target.getByRole("button", { name: selectors.editPostActionEn }))
+    .first();
+  await targetMenu.waitFor({ state: "visible", timeout: 6_000 });
+  await targetMenu.click();
 
   await clickWithShadowFallback(
     page,

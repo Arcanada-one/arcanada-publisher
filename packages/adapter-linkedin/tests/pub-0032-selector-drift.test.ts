@@ -93,24 +93,35 @@ describe("comment — composer selector drift fallback (PUB-0032)", () => {
   });
 });
 
-describe("delete — control-menu shadow-walk fallback (PUB-0032)", () => {
-  it("uses the shadow-walk DOM click when the role locators all miss (drift)", async () => {
-    const shadowClicks: string[] = [];
+describe("delete — verified target control binding (PUB-0032)", () => {
+  it("opens the menu inside the verified target before using global menu controls", async () => {
+    const clicks: string[] = [];
+    const targetButton = {
+      first: () => targetButton,
+      or: () => targetButton,
+      waitFor: async () => {},
+      click: async () => {
+        clicks.push("target-menu");
+      },
+    };
+    const target = {
+      count: async () => 1,
+      getByRole: () => targetButton,
+    };
+    const globalControl = {
+      first: () => globalControl,
+      waitFor: async () => {},
+      click: async () => {
+        clicks.push("global-control");
+      },
+    };
     const page = {
       goto: async () => {},
-      // All role/menuitem/button locators miss → forces the shadow-walk path.
-      getByRole: () => failingLocator(),
-      locator: () => failingLocator(),
+      getByRole: () => globalControl,
+      locator: (selector: string) =>
+        selector.includes("data-arcanada-delete-target") ? target : failingLocator(),
       isClosed: () => false,
       waitForTimeout: async () => {},
-      evaluate: async (src: string) => {
-        // shadow-walk button click → record which stage pattern fired, return true.
-        if (src.includes("hit.click()")) {
-          shadowClicks.push("clicked");
-          return true;
-        }
-        return 0;
-      },
     } as unknown as never;
 
     // read-before-delete is injected so the flow reaches the destructive choreography.
@@ -128,18 +139,26 @@ describe("delete — control-menu shadow-walk fallback (PUB-0032)", () => {
       },
     );
     expect(res.deleted).toBe(true);
-    // three shadow-walk clicks: control-menu, delete menu-item, confirm.
-    expect(shadowClicks).toHaveLength(3);
+    expect(clicks).toEqual(["target-menu", "global-control", "global-control"]);
   });
 
-  it("throws PUBLISH_BUTTON_ABSENT when neither locator nor shadow-walk finds the control", async () => {
+  it("fails closed before any global control when the verified target marker is absent", async () => {
+    const globalClick = vi.fn(async () => {});
+    const globalControl = {
+      first: () => globalControl,
+      waitFor: async () => {},
+      click: globalClick,
+    };
+    const missingTarget = {
+      count: async () => 0,
+      getByRole: () => failingLocator(),
+    };
     const page = {
       goto: async () => {},
-      getByRole: () => failingLocator(),
-      locator: () => failingLocator(),
+      getByRole: () => globalControl,
+      locator: () => missingTarget,
       isClosed: () => false,
       waitForTimeout: async () => {},
-      evaluate: async () => false, // shadow-walk never finds the control either
     } as unknown as never;
 
     await expect(
@@ -151,6 +170,7 @@ describe("delete — control-menu shadow-walk fallback (PUB-0032)", () => {
           __readContent: async () => "x — full text",
         },
       ),
-    ).rejects.toMatchObject({ code: ErrorCode.PUBLISH_BUTTON_ABSENT });
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    expect(globalClick).not.toHaveBeenCalled();
   });
 });

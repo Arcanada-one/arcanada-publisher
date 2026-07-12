@@ -84,6 +84,7 @@ export const selectors = {
   deleteMenuItem:
     /^(Удалить публикацию|Удалить пост|Удалить|Delete post|Delete|Beitrag löschen|Löschen|Poista julkaisu|Poista)$/,
   confirmDelete: /^(Удалить|Delete|Löschen|Poista)$/,
+  showOriginal: /^(Show original|Näytä alkuperäinen|Original anzeigen|Показать оригинал)$/,
   loginEmail: /^(Email or phone|Эл\.? адрес или номер телефона)$/,
   // PUB-0033: the bare token `verifications` was a false-positive magnet — it
   // appears in the ordinary logged-in feed (profile "Verifications" section,
