@@ -71,6 +71,25 @@ function fakeVideoPublishPage(): never {
 }
 
 describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
+  it("prepares the exact clipboard twice, with the second check immediately before paste", async () => {
+    const vid = makeVideo();
+    const events: string[] = [];
+    const page = fakeVideoPublishPage() as unknown as {
+      keyboard: { press(key: string): Promise<void>; insertText(text: string): Promise<void> };
+    };
+    page.keyboard.press = async (key: string) => events.push(`key:${key}`);
+    await publish(
+      { text: "clipboard ordering", imagePath: vid, profile: "p1" },
+      {
+        profileManager: makeProfiles(),
+        page: page as never,
+        __prepareMediaClipboard: (path) => events.push(`prepare:${path}`),
+        __verifyPostVideo: async () => true,
+      },
+    );
+    expect(events).toEqual([`prepare:${vid}`, `prepare:${vid}`, "key:ControlOrMeta+v"]);
+  });
+
   it("throws VERIFY_FAILED when the published post carries NO video (oracle=false)", async () => {
     const verify = vi.fn(async () => false);
     const vid = makeVideo();
