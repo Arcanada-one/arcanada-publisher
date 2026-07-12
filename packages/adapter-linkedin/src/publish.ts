@@ -267,7 +267,10 @@ async function runPublishFlow(
         ? editorCss
         : page.getByRole("textbox", { name: selectors.editor }).first();
     await editor.waitFor({ state: "visible", timeout: 15_000 });
-    const composerMarked = (await editor.evaluate(markComposerScopeJs())) as boolean;
+    const composerMarked = (await editor.evaluate((element, source) => {
+      const marker = new Function(`return ${source}`)() as (node: typeof element) => boolean;
+      return marker(element);
+    }, markComposerScopeJs())) as boolean;
     if (!composerMarked) {
       throw mapLiError("composer_not_found", { extra: { stage: "composer_scope_unresolved" } });
     }
