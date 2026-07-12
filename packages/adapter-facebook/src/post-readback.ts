@@ -93,6 +93,14 @@ function extractFacebookArticleEvidence(node: unknown, expected: string) {
     }
   });
   if (!author) return null;
+  const expectedOwner = new URL(expected).pathname.split("/").filter(Boolean)[0]?.toLowerCase();
+  const authorUrl = new URL(author.href!, browserLocation.href);
+  const authorParts = authorUrl.pathname.split("/").filter(Boolean);
+  if (
+    authorUrl.pathname !== "/profile.php" &&
+    (authorParts.length !== 1 || authorParts[0]?.toLowerCase() !== expectedOwner)
+  )
+    return null;
   const mediaAnchor = ownedAttachmentAnchors.find((anchor) => {
     if (!anchor.href) return false;
     if (Array.from(anchor.querySelectorAll("img")).length === 0) return false;
