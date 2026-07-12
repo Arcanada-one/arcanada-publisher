@@ -88,7 +88,7 @@ async function runDeleteFlow(
   });
 }
 
-async function defaultReadContent(page: Page, input: DeleteInput): Promise<string> {
+export async function defaultReadContent(page: Page, input: DeleteInput): Promise<string> {
   await page.goto(input.targetUrl, { waitUntil: "domcontentloaded" });
   await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
   await page.waitForTimeout(4_000);
@@ -100,12 +100,21 @@ async function defaultReadContent(page: Page, input: DeleteInput): Promise<strin
   // a miss is not). A shadow-aware probe confirms the activity container exists
   // before we commit to the body-wide read.
   const article = page.locator('[data-urn*="urn:li:activity"], article').first();
+  let articleVisible = false;
   try {
     await article.waitFor({ state: "visible", timeout: 5_000 });
-    const text = (await article.innerText()) ?? "";
-    if (text.includes(input.expectedContent)) return text;
+    articleVisible = true;
   } catch {
     // Fall through: current LinkedIn post pages may omit data-urn/article.
+  }
+  if (articleVisible) {
+    const text = (await article.innerText()) ?? "";
+    if (text.includes(input.expectedContent)) return text;
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "delete: visible target container does not match expectedContent — aborting without deletion",
+      { targetUrl: input.targetUrl, liErrorType: "verify_mismatch" },
+    );
   }
   const main = page.locator("main").first();
   const region = (await main.count()) > 0 ? main : page.locator("body").first();
