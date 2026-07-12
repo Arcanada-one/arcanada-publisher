@@ -30,6 +30,7 @@ import { cssSelectors, selectors } from "./selectors.js";
 import { launchSession, withScreenshotOnFail } from "./context.js";
 import { ACTIVITY_URN_RE, extractActivityUrn, pickFirstActivityHref } from "./url-extraction.js";
 import { classifyLiError, mapLiError } from "./errors.js";
+import { prepareMediaClipboard } from "./media-clipboard.js";
 import {
   markComposerScopeJs,
   shadowClickComposerButtonJs,
@@ -122,6 +123,8 @@ export interface PublishOptions {
    * with a headed browser so the operator can watch the composer populate.
    */
   abortBeforePost?: boolean;
+  /** Test seam and point-of-use clipboard ownership hook. */
+  __prepareMediaClipboard?: (path: string) => unknown;
 }
 
 export async function publish(
@@ -151,6 +154,11 @@ export async function publish(
       attachments: attachmentsFor(safeImagePaths),
       commentIds: [],
     });
+  }
+
+  const clipboardPreparer = options.__prepareMediaClipboard ?? prepareMediaClipboard;
+  if (safeImagePaths.length > 0 && (!options.page || options.__prepareMediaClipboard)) {
+    clipboardPreparer(safeImagePaths[0]);
   }
 
   const profiles = options.profileManager ?? new ProfileManager();
@@ -298,6 +306,11 @@ async function runPublishFlow(
       // file as media (a <video>/<img> preview appears, Post enables) with no
       // picker. ControlOrMeta is platform-neutral (Cmd on macOS, Ctrl elsewhere).
       await editor.click();
+      // Re-establish and verify at point of use, after focus and with no await or
+      // clipboard write between this proof and the paste keystroke.
+      if (!options.page || options.__prepareMediaClipboard) {
+        (options.__prepareMediaClipboard ?? prepareMediaClipboard)(imagePaths[0]);
+      }
       await page.keyboard.press("ControlOrMeta+v");
       // Wait for ingest: a <video> (or <img> for a still) preview appears. Video
       // transcodes server-side, much longer than an image — bounded poll.
