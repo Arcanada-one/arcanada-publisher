@@ -25,12 +25,19 @@ import { login as loginImpl, type LoginContext } from "./login.js";
 import { publish as publishImpl, type PublishOptions } from "./publish.js";
 import { comment as commentImpl, type CommentOptions } from "./comment.js";
 import { del as deleteImpl, type DeleteOptions } from "./delete.js";
+import {
+  inspectXProfilePosts,
+  type InspectXProfileOptions,
+  type InspectXProfilePostInput,
+  type InspectXProfilePostResult,
+} from "./inspect-profile.js";
 
 export interface XAdapterOptions {
   loginContext?: LoginContext;
   publishOptions?: PublishOptions;
   commentOptions?: CommentOptions;
   deleteOptions?: DeleteOptions;
+  inspectProfileOptions?: InspectXProfileOptions;
 }
 
 export class XAdapter extends BaseAdapter {
@@ -64,6 +71,10 @@ export class XAdapter extends BaseAdapter {
 
   async delete(input: DeleteInput): Promise<DeleteResult> {
     return deleteImpl(input, this.opts.deleteOptions);
+  }
+
+  async inspectProfilePost(input: InspectXProfilePostInput): Promise<InspectXProfilePostResult> {
+    return inspectXProfilePosts(input, this.opts.inspectProfileOptions);
   }
 }
 
