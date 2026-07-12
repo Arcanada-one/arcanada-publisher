@@ -2,7 +2,7 @@
 // Read the rendered target → compare against expectedContent → only then delete
 // (caret → Delete → confirm). A mismatch fails closed with no DOM mutation.
 
-import { type Page } from "playwright";
+import { type Locator, type Page } from "playwright";
 import {
   AdapterError,
   ErrorCode,
@@ -22,8 +22,9 @@ export interface DeleteOptions {
   page?: Page;
   /** Test seam: read the rendered target text (defaults to tweet-body read). */
   __readContent?: (page: Page, input: DeleteInput) => Promise<string>;
+  __readBinding?: (page: Page, input: DeleteInput) => Promise<TargetBinding>;
   /** Test seam: perform the destructive caret → Delete → confirm flow. */
-  __performDelete?: (page: Page, input: DeleteInput) => Promise<void>;
+  __performDelete?: (page: Page, input: DeleteInput, article?: Locator) => Promise<void>;
   skipTeardown?: boolean;
 }
 
@@ -62,9 +63,13 @@ async function runDeleteFlow(
   options: DeleteOptions,
 ): Promise<DeleteResult> {
   return withScreenshotOnFail(page, "delete", async () => {
-    const readContent = options.__readContent ?? defaultReadContent;
-    const seen = await readContent(page, input);
-    if (!seen.includes(input.expectedContent)) {
+    const binding = options.__readContent
+      ? null
+      : await (options.__readBinding ?? readTargetBinding)(page, input);
+    const seen = options.__readContent
+      ? await options.__readContent(page, input)
+      : binding!.content;
+    if (normalizeExact(seen) !== normalizeExact(input.expectedContent)) {
       throw new AdapterError(
         ErrorCode.VERIFY_FAILED,
         "delete: rendered content does not match expectedContent — aborting without deletion",
@@ -73,7 +78,7 @@ async function runDeleteFlow(
     }
 
     const performDelete = options.__performDelete ?? defaultPerformDelete;
-    await performDelete(page, input);
+    await performDelete(page, input, binding?.article);
 
     return DeleteResultSchema.parse({
       ok: true,
@@ -111,22 +116,83 @@ export function locateTargetArticle(page: Page, input: DeleteInput) {
   return page.locator("article").first();
 }
 
-async function defaultReadContent(page: Page, input: DeleteInput): Promise<string> {
-  await page.goto(input.targetUrl);
-  const article = locateTargetArticle(page, input);
-  await article.waitFor({ state: "visible", timeout: 10_000 });
-  // Prefer the body text node; fall back to the whole article when absent.
-  const body = article.locator('[data-testid="tweetText"]').first();
-  if ((await body.count()) > 0) {
-    return (await body.innerText()) ?? "";
-  }
-  return (await article.innerText()) ?? "";
+export interface TargetBinding {
+  article: Locator;
+  content: string;
 }
 
-async function defaultPerformDelete(page: Page, input: DeleteInput): Promise<void> {
+async function readTargetBinding(page: Page, input: DeleteInput): Promise<TargetBinding> {
+  await page.goto(input.targetUrl);
+  const id = statusIdFromUrl(input.targetUrl);
+  const target = new URL(input.targetUrl);
+  if (!id) throw new AdapterError(ErrorCode.VERIFY_FAILED, "delete: numeric status id missing");
+  const expectedHandle = target.pathname.split("/").filter(Boolean)[0]!.toLowerCase();
+  const bindings = await page.locator("article").evaluateAll(
+    (articles, expected) => {
+      const browserLocation = (globalThis as unknown as { location: { href: string } }).location;
+      return articles.flatMap((article, index) => {
+        const time = [...article.querySelectorAll("time[datetime]")].find(
+          (candidate) => candidate.closest("article") === article,
+        );
+        const anchor = time?.closest("a[href]");
+        const href = anchor?.getAttribute("href");
+        if (!href || anchor?.closest("article") !== article) return [];
+        const match = /^\/([^/]+)\/status\/(\d+)/.exec(
+          new URL(href, browserLocation.href).pathname,
+        );
+        if (!match || match[2] !== expected.id || match[1]!.toLowerCase() !== expected.handle)
+          return [];
+        const isReply = [...article.querySelectorAll("div, span")].some(
+          (candidate) =>
+            candidate.closest("article") === article &&
+            /^(Replying to|В ответ)/i.test(
+              ((candidate as unknown as { innerText?: string }).innerText ?? "").trim(),
+            ),
+        );
+        return [{ index, isReply }];
+      });
+    },
+    { id, handle: expectedHandle },
+  );
+  const bindingIndex = assertSafeTargetBinding(bindings, input.kind, input.targetUrl);
+  const article = page.locator("article").nth(bindingIndex);
+  await article.waitFor({ state: "visible", timeout: 10_000 });
+  const content = await article.evaluate((articleNode) => {
+    const bodies = [...articleNode.querySelectorAll('[data-testid="tweetText"]')].filter(
+      (candidate) => candidate.closest("article") === articleNode,
+    );
+    return bodies.length === 1 ? (bodies[0] as unknown as { innerText: string }).innerText : null;
+  });
+  if (content === null)
+    throw new AdapterError(ErrorCode.VERIFY_FAILED, "delete: expected one owned tweet body");
+  return { article, content };
+}
+
+export function assertSafeTargetBinding(
+  bindings: Array<{ index: number; isReply: boolean }>,
+  kind: DeleteInput["kind"],
+  targetUrl: string,
+): number {
+  if (bindings.length !== 1 || (kind === "post" && bindings[0]!.isReply)) {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "delete: exact status/author/parent-post binding mismatch — aborting",
+      { targetUrl, bindings, xErrorType: "verify_mismatch" },
+    );
+  }
+  return bindings[0]!.index;
+}
+
+async function defaultPerformDelete(
+  page: Page,
+  input: DeleteInput,
+  verifiedArticle?: Locator,
+): Promise<void> {
   // PUB-0033: open the caret WITHIN the target article so a reply permalink
   // does not act on the parent post's menu.
-  const article = locateTargetArticle(page, input);
+  if (!verifiedArticle)
+    throw new AdapterError(ErrorCode.VERIFY_FAILED, "delete: verified article binding missing");
+  const article = verifiedArticle;
   const caret = article.locator(selectors.caret).first();
   await caret.waitFor({ state: "visible", timeout: 10_000 });
   await caret.click();
@@ -136,7 +202,58 @@ async function defaultPerformDelete(page: Page, input: DeleteInput): Promise<voi
   const confirm = page.getByRole("button", { name: /^(Delete|Удалить)$/, exact: true });
   await confirm.first().waitFor({ state: "visible", timeout: 5_000 });
   await confirm.first().click();
-  await page.waitForTimeout(3_000);
+  await page.goto(input.targetUrl);
+  const id = statusIdFromUrl(input.targetUrl);
+  if (!id) throw new AdapterError(ErrorCode.VERIFY_FAILED, "delete: numeric status id missing");
+  let outcome: "present" | "absent";
+  try {
+    const result = await page.waitForFunction(
+      (expectedId) => {
+        type DomElement = {
+          innerText: string;
+          querySelectorAll(selector: string): DomElement[];
+          closest(selector: string): DomElement | null;
+          getAttribute(name: string): string | null;
+        };
+        const browser = globalThis as unknown as {
+          document: { querySelectorAll(selector: string): DomElement[]; body: DomElement };
+        };
+        const exactPrimary = [...browser.document.querySelectorAll("article")].some((article) => {
+          const time = [...article.querySelectorAll("time[datetime]")].find(
+            (candidate) => candidate.closest("article") === article,
+          );
+          const href = time?.closest("a[href]")?.getAttribute("href") ?? "";
+          return new RegExp(`/status/${expectedId}(?:$|[/?])`).test(href);
+        });
+        if (exactPrimary) return "present";
+        return /(This Post was deleted|Hmm.*page doesn.t exist|Этот пост удален|Страница не существует)/i.test(
+          browser.document.body.innerText,
+        )
+          ? "absent"
+          : null;
+      },
+      id,
+      { timeout: 10_000 },
+    );
+    outcome = (await result.jsonValue()) as "present" | "absent";
+  } catch {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "delete: post-delete state remained inconclusive",
+      { targetUrl: input.targetUrl, xErrorType: "verify_mismatch" },
+    );
+  }
+  if (outcome !== "absent") {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "delete: target status still renders after delete",
+      { targetUrl: input.targetUrl, xErrorType: "verify_mismatch" },
+    );
+  }
+}
+
+function normalizeExact(value: string): string {
+  return value.normalize("NFKC").replace(/\r\n/g, "\n").trim();
 }
 
 function assertTargetHost(targetUrl: string): void {

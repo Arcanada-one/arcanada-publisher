@@ -93,16 +93,26 @@ async function runDelete(
   profile: string,
   args: ParsedArgs,
 ): Promise<RunResult> {
-  if (!args.targetUrl || !args.expectedContent) {
+  if (!args.targetUrl || (!args.expectedContent && !args.expectedContentFile)) {
     return {
       code: ErrorCode.MISSING_INPUT,
-      message: "delete requires --target-url and --expected-content (read-before-delete)",
+      message:
+        "delete requires --target-url and exactly one of --expected-content or --expected-content-file",
     };
   }
+  if (args.expectedContent && args.expectedContentFile) {
+    return {
+      code: ErrorCode.INVALID_ARGS,
+      message: "delete accepts only one content oracle",
+    };
+  }
+  const expectedContent = args.expectedContentFile
+    ? readDeleteOracle(args.expectedContentFile)
+    : args.expectedContent!;
   const res = await makeAdapter(platform, args).delete({
     targetUrl: args.targetUrl,
     kind: "post",
-    expectedContent: args.expectedContent,
+    expectedContent,
     profile,
   });
   return { code: ErrorCode.SUCCESS, message: `deleted ${res.targetUrl}` };
@@ -196,7 +206,7 @@ async function runReplaceComment(
   profile: string,
   args: ParsedArgs,
 ): Promise<RunResult> {
-  if (platform !== "facebook") {
+  if (platform !== "facebook" && platform !== "x") {
     return {
       code: ErrorCode.INVALID_ARGS,
       message: "replace-comment is supported only for Facebook",
@@ -241,10 +251,10 @@ async function runInspectProfilePost(
   profile: string,
   args: ParsedArgs,
 ): Promise<RunResult> {
-  if (platform !== "facebook") {
+  if (platform !== "facebook" && platform !== "x") {
     return {
       code: ErrorCode.INVALID_ARGS,
-      message: "inspect-profile-post is supported only for Facebook",
+      message: "inspect-profile-post is supported only for Facebook and X",
     };
   }
   if (
@@ -419,6 +429,21 @@ function readInspectionOracle(path: string): string {
       "inspect-profile-post: failed to read expected content file",
       {
         stage: "inspect-profile-post.read-expected-content",
+        failure: "EXPECTED_CONTENT_READ_FAILED",
+      },
+    );
+  }
+}
+
+function readDeleteOracle(path: string): string {
+  try {
+    return readExactMutationText(path);
+  } catch {
+    throw new AdapterError(
+      ErrorCode.MISSING_INPUT,
+      "delete: failed to read expected content file",
+      {
+        stage: "delete.read-expected-content",
         failure: "EXPECTED_CONTENT_READ_FAILED",
       },
     );

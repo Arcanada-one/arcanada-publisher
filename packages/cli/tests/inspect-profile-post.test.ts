@@ -96,6 +96,49 @@ describe("inspect-profile-post CLI", () => {
     expect(inspectProfilePost).not.toHaveBeenCalled();
   });
 
+  it("routes exact content to the read-only X inventory adapter", async () => {
+    const root = mkdtempSync(join(tmpdir(), "x-inspect-cli-"));
+    const bodyFile = join(root, "post.txt");
+    writeFileSync(bodyFile, "Exact X campaign body\n");
+    inspectProfilePost.mockResolvedValueOnce({
+      authorHandle: "veritasarcanaai",
+      matches: [{ statusId: "2076136745746272281", bodySha256: "sha" }],
+      coverage: { maxScrolls: 4, scrollsPerformed: 4, postsInspected: 12 },
+    });
+
+    const result = await run([
+      "inspect-profile-post",
+      "--platform",
+      "x",
+      "--profile-url",
+      "https://x.com/VeritasArcanaAI",
+      "--expected-author-profile-url",
+      "https://x.com/VeritasArcanaAI",
+      "--expected-content-file",
+      bodyFile,
+      "--evidence-dir",
+      join(root, "evidence"),
+      "--max-scrolls",
+      "4",
+      "--profile",
+      "default",
+    ]);
+
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.message)).toMatchObject({
+      authorHandle: "veritasarcanaai",
+      matches: [{ statusId: "2076136745746272281" }],
+    });
+    expect(inspectProfilePost).toHaveBeenCalledWith({
+      profileUrl: "https://x.com/VeritasArcanaAI",
+      expectedAuthorProfileUrl: "https://x.com/VeritasArcanaAI",
+      expectedBody: "Exact X campaign body",
+      evidenceDir: join(root, "evidence"),
+      maxScrolls: 4,
+      profile: "default",
+    });
+  });
+
   it("rejects non-Facebook inspection without constructing a mutation path", async () => {
     const result = await run([
       "inspect-profile-post",

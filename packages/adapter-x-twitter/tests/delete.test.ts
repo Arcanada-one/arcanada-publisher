@@ -3,7 +3,12 @@ import { mkdtempSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AdapterError, ErrorCode, ProfileManager } from "@arcanada/publisher-core";
-import { del, statusIdFromUrl, locateTargetArticle } from "../src/delete.js";
+import {
+  assertSafeTargetBinding,
+  del,
+  statusIdFromUrl,
+  locateTargetArticle,
+} from "../src/delete.js";
 
 function makeProfiles(): ProfileManager {
   const root = mkdtempSync(join(tmpdir(), "pub-0017-x-del-"));
@@ -37,13 +42,53 @@ describe("x delete — read-before-delete (R13 / V-AC-9)", () => {
       {
         profileManager: makeProfiles(),
         page: { dummy: true } as never,
-        __readContent: async () => "hello world — full rendered tweet",
+        __readContent: async () => "hello world",
         __performDelete: performDelete as never,
       },
     );
     expect(performDelete).toHaveBeenCalledTimes(1);
     expect(res.deleted).toBe(true);
     expect(res.targetUrl).toBe(TARGET);
+  });
+
+  it("delete: rejects a substring-only match", async () => {
+    const performDelete = vi.fn(async () => {});
+    await expect(
+      del(
+        { targetUrl: TARGET, kind: "post", expectedContent: "hello world", profile: "p1" },
+        {
+          profileManager: makeProfiles(),
+          page: { dummy: true } as never,
+          __readContent: async () => "hello world — another post",
+          __performDelete: performDelete as never,
+        },
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    expect(performDelete).not.toHaveBeenCalled();
+  });
+
+  it("passes the exact verified article binding into the destructive step", async () => {
+    const article = { marker: "verified" } as never;
+    const performDelete = vi.fn(async (_page, _input, boundArticle) => {
+      expect(boundArticle).toBe(article);
+    });
+    await del(
+      { targetUrl: TARGET, kind: "post", expectedContent: "hello world", profile: "p1" },
+      {
+        profileManager: makeProfiles(),
+        page: { dummy: true } as never,
+        __readBinding: async () => ({ article, content: "hello world" }),
+        __performDelete: performDelete as never,
+      },
+    );
+    expect(performDelete).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a structurally identified reply even when it renders at article index zero", () => {
+    expect(() => assertSafeTargetBinding([{ index: 0, isReply: true }], "post", TARGET)).toThrow(
+      /parent-post binding mismatch/,
+    );
+    expect(assertSafeTargetBinding([{ index: 4, isReply: false }], "post", TARGET)).toBe(4);
   });
 
   it("delete: rejects empty expectedContent with MISSING_INPUT", async () => {
