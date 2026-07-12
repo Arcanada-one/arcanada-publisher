@@ -9,13 +9,22 @@
 //
 // PUB-0027: `video` subcommand added for animated cover video generation.
 
-export type Command = "publish" | "comment" | "edit" | "delete" | "login" | "server" | "video";
+export type Command =
+  | "publish"
+  | "comment"
+  | "edit"
+  | "delete"
+  | "inspect"
+  | "login"
+  | "server"
+  | "video";
 
 const COMMANDS = new Set<Command>([
   "publish",
   "comment",
   "edit",
   "delete",
+  "inspect",
   "login",
   "server",
   "video",
@@ -32,7 +41,11 @@ export interface ParsedArgs {
   targetUrl: string | undefined;
   parentUrl: string | undefined;
   expectedContent: string | undefined;
+  expectedContentFile: string | undefined;
   expectedMediaKind: "image" | "video" | "none" | undefined;
+  videoWidth: number | undefined;
+  videoHeight: number | undefined;
+  videoDuration: number | undefined;
   bind: string | undefined;
   /** Loopback port for the `server` command (undefined → server default). */
   port: number | undefined;
@@ -96,7 +109,11 @@ const VALUE_FLAGS = new Set([
   "--target-url",
   "--parent-url",
   "--expected-content",
+  "--expected-content-file",
   "--expected-media-kind",
+  "--video-width",
+  "--video-height",
+  "--video-duration",
   "--bind",
   "--port",
   "--subreddit",
@@ -144,7 +161,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
     targetUrl: undefined,
     parentUrl: undefined,
     expectedContent: undefined,
+    expectedContentFile: undefined,
     expectedMediaKind: undefined,
+    videoWidth: undefined,
+    videoHeight: undefined,
+    videoDuration: undefined,
     bind: undefined,
     port: undefined,
     subreddit: undefined,
@@ -220,6 +241,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
       case "--expected-content":
         out.expectedContent = value;
         break;
+      case "--expected-content-file":
+        out.expectedContentFile = value;
+        break;
       case "--expected-media-kind":
         if (value !== "image" && value !== "video" && value !== "none")
           throw new CliParseError(
@@ -227,6 +251,19 @@ export function parseArgs(argv: string[]): ParsedArgs {
           );
         out.expectedMediaKind = value;
         break;
+      case "--video-width":
+      case "--video-height":
+      case "--video-duration": {
+        if (!/^\d+$/.test(value))
+          throw new CliParseError(`${flag} must be a positive integer, got '${value}'`);
+        const parsed = Number.parseInt(value, 10);
+        if (!Number.isInteger(parsed) || parsed <= 0)
+          throw new CliParseError(`${flag} must be a positive integer, got '${value}'`);
+        if (flag === "--video-width") out.videoWidth = parsed;
+        else if (flag === "--video-height") out.videoHeight = parsed;
+        else out.videoDuration = parsed;
+        break;
+      }
       case "--bind":
         out.bind = value;
         break;

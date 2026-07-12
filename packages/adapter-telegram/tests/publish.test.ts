@@ -367,12 +367,18 @@ describe("TelegramAdapter publish safety", () => {
         type: "video",
         media: "attach://media_file",
         caption: "new caption",
+        width: 1280,
+        height: 720,
+        duration: 245,
+        supports_streaming: true,
       });
       return telegramEditedVideo();
     });
     const adapter = new TelegramAdapter({ transport });
 
-    await expect(safeMediaEdit(adapter)).resolves.toMatchObject({ edited: true });
+    await expect(safeMediaEdit(adapter, { text: "new caption\n" })).resolves.toMatchObject({
+      edited: true,
+    });
     expect(transport).toHaveBeenCalledTimes(4);
   });
 
@@ -443,6 +449,17 @@ describe("TelegramAdapter publish safety", () => {
     expect(transport).not.toHaveBeenCalled();
   });
 
+  it("authorizes a correction from exact inspected full content to a different caption", async () => {
+    const transport = mediaEditTransport(telegramEditedVideo(), {
+      probeCaption: "old exact full content",
+    });
+    const adapter = new TelegramAdapter({ transport });
+
+    await expect(
+      safeMediaEdit(adapter, { expectedContent: "old exact full content" }),
+    ).resolves.toMatchObject({ edited: true });
+  });
+
   it("rejects a prefix collision instead of accepting a changed Publisher marker", async () => {
     const transport = mediaEditTransport(telegramEditedVideo(), {
       probeCaption: "old caption\n\n#PUB_0029_uniqueX",
@@ -464,8 +481,13 @@ describe("TelegramAdapter publish safety", () => {
       resolves: true,
     },
     {
-      name: "wrong returned byte size",
+      name: "transformed returned byte size",
       mutation: telegramEditedVideo({ fileSize: 5 }),
+      resolves: true,
+    },
+    {
+      name: "wrong returned dimensions",
+      mutation: telegramEditedVideo({ width: 320 }),
       resolves: false,
     },
   ])("handles $name without treating it as source-parent proof", async ({ mutation, resolves }) => {
@@ -532,6 +554,30 @@ describe("TelegramAdapter publish safety", () => {
     ).resolves.toMatchObject({ postUrl: "https://t.me/c/3855619081/209", edited: true });
   });
 
+  it("inspects exact Telegram video metadata through a cleaned forward probe", async () => {
+    const transport = mediaEditTransport(telegramEditedVideo(), {
+      probeVideo: true,
+      skipGetMe: true,
+    });
+    const adapter = new TelegramAdapter({ transport });
+
+    await expect(adapter.inspect("https://t.me/c/3855619081/208")).resolves.toMatchObject({
+      chatId: TELEGRAM_TEST_CHAT_ID,
+      messageId: 208,
+      marker: "#PUB_0029_unique",
+      mediaKind: "video",
+      video: {
+        file_id: "current-video",
+        file_name: "telegram-ru.mp4",
+        file_size: 19_000,
+        width: 320,
+        height: 320,
+        duration: 0,
+      },
+    });
+    expect(transport).toHaveBeenCalledTimes(2);
+  });
+
   it("deletes the probe and stops before source edit when forward_origin mismatches", async () => {
     const transport = mediaEditTransport(telegramEditedVideo(), { originChatId: -100999 });
     const adapter = new TelegramAdapter({ transport });
@@ -545,6 +591,19 @@ describe("TelegramAdapter publish safety", () => {
     const adapter = new TelegramAdapter({ transport });
 
     await expect(safeMediaEdit(adapter)).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    expect(transport).toHaveBeenCalledTimes(3);
+  });
+
+  it("preserves probeMessageId when deleteMessage response is malformed", async () => {
+    const transport = mediaEditTransport(telegramEditedVideo(), {
+      deleteResponse: { ok: true, result: {} },
+    });
+    const adapter = new TelegramAdapter({ transport });
+
+    await expect(safeMediaEdit(adapter)).rejects.toMatchObject({
+      code: ErrorCode.VERIFY_FAILED,
+      details: { probeMessageId: 501, method: "deleteMessage" },
+    });
     expect(transport).toHaveBeenCalledTimes(3);
   });
 });
@@ -566,54 +625,67 @@ function mediaEditTransport(
     originChatId?: number;
     deleteConfirmed?: boolean;
     probeHasDestinationReply?: boolean;
+    probeVideo?: boolean;
     probeCaption?: string;
+    skipGetMe?: boolean;
+    deleteResponse?: unknown;
   } = {},
 ) {
-  const transport = vi
-    .fn()
-    .mockResolvedValueOnce({ ok: true, result: { id: 42 } })
-    .mockImplementationOnce(async (method: string, body: URLSearchParams) => {
-      expect(method).toBe("forwardMessage");
-      expect(Object.fromEntries(body)).toEqual({
-        chat_id: TELEGRAM_TEST_CHAT_ID,
-        from_chat_id: TELEGRAM_TEST_CHAT_ID,
-        message_id: "208",
-      });
-      return {
-        ok: true,
-        result: {
-          message_id: 501,
-          chat: { id: Number(TELEGRAM_TEST_CHAT_ID), username: "probe" },
-          from: { id: 42 },
-          caption: options.probeCaption ?? "old caption\n\n#PUB_0029_unique",
-          photo: [{ file_id: "old-photo", width: 800, height: 400 }],
-          forward_origin: {
-            type: "channel",
-            chat: {
-              id: options.originChatId ?? Number(TELEGRAM_TEST_CHAT_ID),
-              username: "test",
-            },
-            message_id: 208,
-          },
-          ...(options.probeHasDestinationReply
-            ? {
-                reply_to_message: {
-                  message_id: 999,
-                  chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
-                },
-              }
-            : {}),
-        },
-      };
-    })
-    .mockImplementationOnce(async (method: string, body: URLSearchParams) => {
-      expect(method).toBe("deleteMessage");
-      expect(Object.fromEntries(body)).toEqual({
-        chat_id: TELEGRAM_TEST_CHAT_ID,
-        message_id: "501",
-      });
-      return { ok: true, result: options.deleteConfirmed ?? true };
+  const transport = vi.fn();
+  if (!options.skipGetMe) transport.mockResolvedValueOnce({ ok: true, result: { id: 42 } });
+  transport.mockImplementationOnce(async (method: string, body: URLSearchParams) => {
+    expect(method).toBe("forwardMessage");
+    expect(Object.fromEntries(body)).toEqual({
+      chat_id: TELEGRAM_TEST_CHAT_ID,
+      from_chat_id: TELEGRAM_TEST_CHAT_ID,
+      message_id: "208",
     });
+    return {
+      ok: true,
+      result: {
+        message_id: 501,
+        chat: { id: Number(TELEGRAM_TEST_CHAT_ID), username: "probe" },
+        from: { id: 42 },
+        caption: options.probeCaption ?? "old caption\n\n#PUB_0029_unique",
+        ...(options.probeVideo
+          ? {
+              video: {
+                file_id: "current-video",
+                file_name: "telegram-ru.mp4",
+                file_size: 19_000,
+                width: 320,
+                height: 320,
+                duration: 0,
+              },
+            }
+          : { photo: [{ file_id: "old-photo", width: 800, height: 400 }] }),
+        forward_origin: {
+          type: "channel",
+          chat: {
+            id: options.originChatId ?? Number(TELEGRAM_TEST_CHAT_ID),
+            username: "test",
+          },
+          message_id: 208,
+        },
+        ...(options.probeHasDestinationReply
+          ? {
+              reply_to_message: {
+                message_id: 999,
+                chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
+              },
+            }
+          : {}),
+      },
+    };
+  });
+  transport.mockImplementationOnce(async (method: string, body: URLSearchParams) => {
+    expect(method).toBe("deleteMessage");
+    expect(Object.fromEntries(body)).toEqual({
+      chat_id: TELEGRAM_TEST_CHAT_ID,
+      message_id: "501",
+    });
+    return options.deleteResponse ?? { ok: true, result: options.deleteConfirmed ?? true };
+  });
   if (mutation instanceof Error) return transport.mockRejectedValueOnce(mutation);
   if (typeof mutation === "function") return transport.mockImplementationOnce(mutation);
   return transport.mockResolvedValueOnce(mutation);
@@ -629,6 +701,9 @@ function safeMediaEdit(
     imagePath: makeMedia("telegram-ru.mp4"),
     expectedContent: "#PUB_0029_unique",
     expectedMediaKind: "image",
+    videoWidth: 1280,
+    videoHeight: 720,
+    videoDuration: 245,
     ...overrides,
     profile: "",
   });
@@ -637,6 +712,7 @@ function safeMediaEdit(
 function telegramEditedVideo(
   overrides: {
     fileSize?: number;
+    width?: number;
     reply_to_message?: { message_id: number; chat: { id: number } };
   } = {},
 ) {
@@ -651,7 +727,7 @@ function telegramEditedVideo(
       video: {
         file_id: "new-video",
         file_size: overrides.fileSize ?? 4,
-        width: 1280,
+        width: overrides.width ?? 1280,
         height: 720,
         duration: 245,
         file_name: "telegram-ru.mp4",

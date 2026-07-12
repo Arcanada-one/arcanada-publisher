@@ -47,6 +47,9 @@ export interface EditInput {
   expectedMediaKind?: "image" | "video" | "none";
   /** Explicit read-before-edit reply-parent oracle: exact URL or `none`. */
   expectedParentUrl?: string | "none";
+  videoWidth?: number;
+  videoHeight?: number;
+  videoDuration?: number;
   profile: string;
 }
 
