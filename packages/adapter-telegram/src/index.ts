@@ -252,8 +252,6 @@ export class TelegramAdapter extends BaseAdapter {
   ): Promise<EditResult> {
     if (
       !input.expectedContent?.trim() ||
-      (!input.expectedContent.match(/^#PUB_0029_[A-Za-z0-9]+$/) &&
-        input.expectedContent !== input.text) ||
       !input.expectedMediaKind ||
       input.expectedParentUrl !== undefined ||
       (mediaKind(input.imagePath!) === "video" &&
@@ -438,12 +436,22 @@ export class TelegramAdapter extends BaseAdapter {
     } catch (cause) {
       throw probeUnknownState("deleteMessage", chatId, messageId, cause, probe.message_id);
     }
-    const deleted = requireResult<boolean>(deleteResult, "deleteMessage");
+    let deleted: boolean;
+    try {
+      deleted = requireResult<boolean>(deleteResult, "deleteMessage");
+    } catch (cause) {
+      throw probeUnknownState("deleteMessage", chatId, messageId, cause, probe.message_id);
+    }
     if (deleted !== true)
       throw new AdapterError(
         ErrorCode.VERIFY_FAILED,
         "deleteMessage: Telegram probe deletion not confirmed; source edit blocked",
-        { unknown: true, reconcileRequired: true, probeMessageId: probe.message_id },
+        {
+          unknown: true,
+          reconcileRequired: true,
+          method: "deleteMessage",
+          probeMessageId: probe.message_id,
+        },
       );
     const origin = probe.forward_origin;
     if (

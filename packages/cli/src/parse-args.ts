@@ -254,6 +254,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
       case "--video-width":
       case "--video-height":
       case "--video-duration": {
+        if (!/^\d+$/.test(value))
+          throw new CliParseError(`${flag} must be a positive integer, got '${value}'`);
         const parsed = Number.parseInt(value, 10);
         if (!Number.isInteger(parsed) || parsed <= 0)
           throw new CliParseError(`${flag} must be a positive integer, got '${value}'`);

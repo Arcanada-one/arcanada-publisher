@@ -449,6 +449,17 @@ describe("TelegramAdapter publish safety", () => {
     expect(transport).not.toHaveBeenCalled();
   });
 
+  it("authorizes a correction from exact inspected full content to a different caption", async () => {
+    const transport = mediaEditTransport(telegramEditedVideo(), {
+      probeCaption: "old exact full content",
+    });
+    const adapter = new TelegramAdapter({ transport });
+
+    await expect(
+      safeMediaEdit(adapter, { expectedContent: "old exact full content" }),
+    ).resolves.toMatchObject({ edited: true });
+  });
+
   it("rejects a prefix collision instead of accepting a changed Publisher marker", async () => {
     const transport = mediaEditTransport(telegramEditedVideo(), {
       probeCaption: "old caption\n\n#PUB_0029_uniqueX",
@@ -582,6 +593,19 @@ describe("TelegramAdapter publish safety", () => {
     await expect(safeMediaEdit(adapter)).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
     expect(transport).toHaveBeenCalledTimes(3);
   });
+
+  it("preserves probeMessageId when deleteMessage response is malformed", async () => {
+    const transport = mediaEditTransport(telegramEditedVideo(), {
+      deleteResponse: { ok: true, result: {} },
+    });
+    const adapter = new TelegramAdapter({ transport });
+
+    await expect(safeMediaEdit(adapter)).rejects.toMatchObject({
+      code: ErrorCode.VERIFY_FAILED,
+      details: { probeMessageId: 501, method: "deleteMessage" },
+    });
+    expect(transport).toHaveBeenCalledTimes(3);
+  });
 });
 
 function makeImage(): string {
@@ -604,6 +628,7 @@ function mediaEditTransport(
     probeVideo?: boolean;
     probeCaption?: string;
     skipGetMe?: boolean;
+    deleteResponse?: unknown;
   } = {},
 ) {
   const transport = vi.fn();
@@ -659,7 +684,7 @@ function mediaEditTransport(
       chat_id: TELEGRAM_TEST_CHAT_ID,
       message_id: "501",
     });
-    return { ok: true, result: options.deleteConfirmed ?? true };
+    return options.deleteResponse ?? { ok: true, result: options.deleteConfirmed ?? true };
   });
   if (mutation instanceof Error) return transport.mockRejectedValueOnce(mutation);
   if (typeof mutation === "function") return transport.mockImplementationOnce(mutation);

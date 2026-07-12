@@ -137,6 +137,10 @@ describe("cli parse-args (V-AC-11 flag contract)", () => {
     expect([edit.videoWidth, edit.videoHeight, edit.videoDuration]).toEqual([1280, 720, 245]);
   });
 
+  it.each(["1280px", "1.5", "12junk"])("rejects malformed video metadata %s", (value) => {
+    expect(() => parseArgs(["edit", "--video-width", value])).toThrow(CliParseError);
+  });
+
   it("parses the net-new server command with --bind + --port", () => {
     const a = parseArgs(["server", "--bind", "127.0.0.1", "--port", "8787"]);
     expect(a.command).toBe("server");
