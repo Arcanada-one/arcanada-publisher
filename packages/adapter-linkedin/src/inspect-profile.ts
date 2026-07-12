@@ -524,7 +524,17 @@ export function extractLinkedInProfilePosts(root: BrowserNode): ObservedLinkedIn
       owned(
         ".update-components-text, [data-testid='main-feed-activity-card__commentary'], .feed-shared-update-v2__description",
       )
-        .map(bodyTextWithoutDirectControls)
+        .map((node) => {
+          const clone = node.cloneNode?.(true) ?? node;
+          for (const control of Array.from(
+            clone.querySelectorAll(
+              "button, [role='button'], .feed-shared-inline-show-more-text__see-more-less-toggle",
+            ),
+          )) {
+            control.remove?.();
+          }
+          return clone.innerText ?? "";
+        })
         .sort((a, b) => b.length - a.length)[0] ?? "";
     const author = owned(
       ".update-components-actor__meta-link[href*='/in/'], .update-components-actor__container-link[href*='/in/']",
