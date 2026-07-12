@@ -70,6 +70,9 @@ describe("selectors — RU/EN composer & action regex", () => {
     expect(selectors.editPostActionEn.test("Mehr Aktionen")).toBe(true);
     expect(selectors.editPostActionEn.test("Steuerungsmenü öffnen")).toBe(true);
     expect(selectors.editPostActionEn.test("Lisää toimintoja")).toBe(true);
+    expect(
+      selectors.editPostActionEn.test("Avaa hallintavalikko tekijän Pavel Valentov julkaisulle"),
+    ).toBe(true);
     expect(selectors.editPostActionEn.test("More actions")).toBe(true);
   });
 
@@ -87,6 +90,7 @@ describe("selectors — RU/EN composer & action regex", () => {
     const ctl = compileSource(shadowClickPatterns.postControlMenu);
     expect(ctl.test("Mehr Aktionen")).toBe(true);
     expect(ctl.test("Open control menu")).toBe(true);
+    expect(ctl.test("Avaa hallintavalikko tekijän Pavel Valentov julkaisulle")).toBe(true);
     expect(ctl.test("Открыть меню")).toBe(true);
 
     const del = compileSource(shadowClickPatterns.deleteMenuItem);

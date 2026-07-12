@@ -88,8 +88,10 @@ async function runDeleteFlow(
   });
 }
 
-async function defaultReadContent(page: Page, input: DeleteInput): Promise<string> {
-  await page.goto(input.targetUrl);
+export async function defaultReadContent(page: Page, input: DeleteInput): Promise<string> {
+  await page.goto(input.targetUrl, { waitUntil: "domcontentloaded" });
+  await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
+  await page.waitForTimeout(4_000);
   // PUB-0032: the post container selector `[data-urn*="urn:li:activity"],
   // article` drifted on the 2026 UI (locator.waitFor timed out). Try the
   // structural locator first; if it does not render, fall back to a body-wide
@@ -98,25 +100,35 @@ async function defaultReadContent(page: Page, input: DeleteInput): Promise<strin
   // a miss is not). A shadow-aware probe confirms the activity container exists
   // before we commit to the body-wide read.
   const article = page.locator('[data-urn*="urn:li:activity"], article').first();
+  let articleVisible = false;
   try {
-    await article.waitFor({ state: "visible", timeout: 10_000 });
-    return (await article.innerText()) ?? "";
+    await article.waitFor({ state: "visible", timeout: 5_000 });
+    articleVisible = true;
   } catch {
-    // Structural fallback: confirm the activity URN is present somewhere in the
-    // (possibly shadow-nested) DOM, then read the whole document body. This keeps
-    // the read-before-delete guard intact when the article wrapper class drifts.
-    const urn = (await page.evaluate(shadowFindActivityUrnJs())) as string;
-    if (!urn) {
-      throw new AdapterError(
-        ErrorCode.VERIFY_FAILED,
-        "delete: post container not found — cannot run read-before-delete oracle",
-        { targetUrl: input.targetUrl, liErrorType: "verify_mismatch" },
-      );
-    }
-    const body = page.locator("body").first();
-    await body.waitFor({ state: "visible", timeout: 5_000 });
-    return (await body.innerText()) ?? "";
+    // Fall through: current LinkedIn post pages may omit data-urn/article.
   }
+  if (articleVisible) {
+    const text = (await article.innerText()) ?? "";
+    if (text.includes(input.expectedContent)) return text;
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "delete: visible target container does not match expectedContent — aborting without deletion",
+      { targetUrl: input.targetUrl, liErrorType: "verify_mismatch" },
+    );
+  }
+  const main = page.locator("main").first();
+  const region = (await main.count()) > 0 ? main : page.locator("body").first();
+  await region.waitFor({ state: "visible", timeout: 5_000 });
+  const text = (await region.innerText()) ?? "";
+  if (text.includes(input.expectedContent)) return text;
+  const urn = (await page.evaluate(shadowFindActivityUrnJs()).catch(() => null)) as string | null;
+  throw new AdapterError(
+    ErrorCode.VERIFY_FAILED,
+    urn
+      ? "delete: rendered post does not match expectedContent — aborting without deletion"
+      : "delete: post not found or not rendered — aborting without deletion",
+    { targetUrl: input.targetUrl, liErrorType: "verify_mismatch" },
+  );
 }
 
 async function defaultPerformDelete(page: Page, _input: DeleteInput): Promise<void> {
