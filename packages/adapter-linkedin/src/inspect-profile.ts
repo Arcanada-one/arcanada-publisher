@@ -141,7 +141,10 @@ async function runInspection(
   if (!matched.hasNativeVideo) return fail("exact post match has no native video");
   const id = activityId(matched.activityUrl);
   if (!id) return fail("exact post match has no activity id");
-  if (!isVanityPermalink(matched.vanityPermalink, id)) {
+  const vanityPermalink = isVanityPermalink(matched.vanityPermalink, id, expectedIdentity)
+    ? matched.vanityPermalink
+    : await recoverVanityPermalink(page, matched.activityUrl, expectedIdentity, id);
+  if (!isVanityPermalink(vanityPermalink, id, expectedIdentity)) {
     return fail("exact post match has no bound vanity permalink");
   }
 
@@ -159,7 +162,7 @@ async function runInspection(
       `${JSON.stringify(
         {
           version: 1,
-          canonicalParentPermalink: matched.vanityPermalink,
+          canonicalParentPermalink: vanityPermalink,
           activityUrl: matched.activityUrl,
           activityId: id,
           authorProfileIdentity: expectedIdentity,
@@ -177,7 +180,7 @@ async function runInspection(
   }
   const body = normalizeExact(matched.body);
   return {
-    canonicalParentPermalink: matched.vanityPermalink,
+    canonicalParentPermalink: vanityPermalink,
     activityUrl: matched.activityUrl,
     activityId: id,
     authorProfileIdentity: expectedIdentity,
@@ -241,17 +244,32 @@ function activityId(rawUrl: string): string | null {
   );
 }
 
-function isVanityPermalink(rawUrl: string, id: string): boolean {
+function isVanityPermalink(rawUrl: string, id: string, expectedAuthorIdentity: string): boolean {
   try {
     const parsed = new URL(rawUrl);
+    const authorSlug = expectedAuthorIdentity.split("/in/")[1]?.toLowerCase() ?? "";
     return (
       /^(www\.)?linkedin\.com$/i.test(parsed.hostname) &&
-      parsed.pathname.startsWith("/posts/") &&
+      parsed.pathname.toLowerCase().startsWith(`/posts/${authorSlug}_`) &&
       parsed.pathname.includes(`-${id}-`)
     );
   } catch {
     return false;
   }
+}
+
+async function recoverVanityPermalink(
+  page: Page,
+  activityUrl: string,
+  expectedAuthorIdentity: string,
+  id: string,
+): Promise<string> {
+  await page.goto(activityUrl, { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(1_000);
+  return page.locator("html").evaluate(extractLinkedInVanityPermalink, {
+    expectedAuthorIdentity,
+    activityId: id,
+  });
 }
 
 function normalizeExact(value: string): string {
@@ -351,6 +369,8 @@ interface BrowserNode {
   textContent?: string | null;
   getAttribute(name: string): string | null;
   querySelectorAll(selector: string): ArrayLike<BrowserNode>;
+  cloneNode?(deep?: boolean): BrowserNode;
+  remove?(): void;
   click?(): void;
 }
 
@@ -444,7 +464,12 @@ export function expandMatchingLinkedInActivity(
         .normalize("NFKC")
         .trim()
         .toLowerCase();
-      if (!/^(more|see more|…more|näytä lisää|показать ещё)$/.test(label)) continue;
+      if (
+        !/^(more|see more|see more, visually reveals content which is already detected by screen readers|…more|näytä lisää|показать ещё)$/.test(
+          label,
+        )
+      )
+        continue;
       button.click?.();
       clicked += 1;
     }
@@ -499,7 +524,7 @@ export function extractLinkedInProfilePosts(root: BrowserNode): ObservedLinkedIn
       owned(
         ".update-components-text, [data-testid='main-feed-activity-card__commentary'], .feed-shared-update-v2__description",
       )
-        .map((node) => node.innerText ?? "")
+        .map(bodyTextWithoutDirectControls)
         .sort((a, b) => b.length - a.length)[0] ?? "";
     const author = owned(
       ".update-components-actor__meta-link[href*='/in/'], .update-components-actor__container-link[href*='/in/']",
@@ -521,4 +546,71 @@ export function extractLinkedInProfilePosts(root: BrowserNode): ObservedLinkedIn
     });
   }
   return out;
+}
+
+export function bodyTextWithoutDirectControls(node: BrowserNode): string {
+  const clone = node.cloneNode?.(true) ?? node;
+  for (const control of Array.from(
+    clone.querySelectorAll(
+      "button, [role='button'], .feed-shared-inline-show-more-text__see-more-less-toggle",
+    ),
+  )) {
+    control.remove?.();
+  }
+  return clone.innerText ?? "";
+}
+
+export function extractLinkedInVanityPermalink(
+  root: BrowserNode,
+  expected: { expectedAuthorIdentity: string; activityId: string },
+): string {
+  const authorSlug = expected.expectedAuthorIdentity.split("/in/")[1]?.toLowerCase() ?? "";
+  const valid = (raw: string): string => {
+    try {
+      const parsed = new URL(raw, "https://www.linkedin.com");
+      if (!/^(www\.)?linkedin\.com$/i.test(parsed.hostname)) return "";
+      const path = decodeURIComponent(parsed.pathname);
+      if (!path.startsWith(`/posts/${authorSlug}_`) || !path.includes(`-${expected.activityId}-`))
+        return "";
+      parsed.search = "";
+      parsed.hash = "";
+      return parsed.toString();
+    } catch {
+      return "";
+    }
+  };
+  for (const link of Array.from(root.querySelectorAll("link[rel='canonical']"))) {
+    const value = valid(link.href ?? link.getAttribute("href") ?? "");
+    if (value) return value;
+  }
+  for (const meta of Array.from(root.querySelectorAll("meta[property='og:url']"))) {
+    const value = valid(meta.getAttribute("content") ?? "");
+    if (value) return value;
+  }
+  const activitySelector = "[data-urn*='urn:li:activity'], [data-id*='urn:li:activity']";
+  for (const container of Array.from(root.querySelectorAll(activitySelector))) {
+    const raw = container.getAttribute("data-urn") ?? container.getAttribute("data-id") ?? "";
+    if (/urn:li:activity:(\d+)/.exec(raw)?.[1] !== expected.activityId) continue;
+    const author = Array.from(
+      container.querySelectorAll(
+        ".update-components-actor__meta-link[href*='/in/'], .update-components-actor__container-link[href*='/in/']",
+      ),
+    )[0];
+    let authorIdentity = "";
+    try {
+      const parsed = new URL(author?.href ?? "", "https://www.linkedin.com");
+      const match = /^\/in\/([^/]+)\/?$/.exec(parsed.pathname);
+      if (/^(www\.)?linkedin\.com$/i.test(parsed.hostname) && match) {
+        authorIdentity = `www.linkedin.com/in/${match[1]!.toLowerCase()}`;
+      }
+    } catch {
+      authorIdentity = "";
+    }
+    if (authorIdentity !== expected.expectedAuthorIdentity) continue;
+    for (const anchor of Array.from(container.querySelectorAll("a[href*='/posts/']"))) {
+      const value = valid(anchor.href ?? "");
+      if (value) return value;
+    }
+  }
+  return "";
 }
