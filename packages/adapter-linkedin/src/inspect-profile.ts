@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { chmod, mkdir, open } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Page } from "playwright";
@@ -51,6 +52,8 @@ export interface InspectLinkedInProfilePostOptions {
   headed?: boolean;
   skipTeardown?: boolean;
   __recorder?: InspectLinkedInProfileRecorder;
+  __copyLinkRecorder?: CopyLinkRecorder;
+  __clipboard?: TextClipboard;
 }
 
 export async function inspectLinkedInProfilePost(
@@ -62,7 +65,15 @@ export async function inspectLinkedInProfilePost(
   if (linkedInProfileIdentity(input.profileUrl) !== expectedIdentity) {
     throw verifyError("profile surface does not match expected author identity");
   }
-  if (options.page) return runInspection(options.page, input, expectedIdentity, options.__recorder);
+  if (options.page)
+    return runInspection(
+      options.page,
+      input,
+      expectedIdentity,
+      options.__recorder,
+      options.__copyLinkRecorder,
+      options.__clipboard,
+    );
 
   const profiles = options.profileManager ?? new ProfileManager();
   const profileDir = profiles.ensureProfileExists("linkedin", input.profile);
@@ -71,7 +82,14 @@ export async function inspectLinkedInProfilePost(
     ...(options.headed !== undefined ? { headed: options.headed } : {}),
   });
   try {
-    return await runInspection(session.page, input, expectedIdentity, options.__recorder);
+    return await runInspection(
+      session.page,
+      input,
+      expectedIdentity,
+      options.__recorder,
+      options.__copyLinkRecorder,
+      options.__clipboard,
+    );
   } finally {
     if (!options.skipTeardown) await session.close();
   }
@@ -82,6 +100,8 @@ async function runInspection(
   input: InspectLinkedInProfilePostInput,
   expectedIdentity: string,
   recorder?: InspectLinkedInProfileRecorder,
+  copyLinkRecorder: CopyLinkRecorder = defaultCopyLinkRecorder,
+  clipboard: TextClipboard = defaultTextClipboard,
 ): Promise<InspectLinkedInProfilePostResult> {
   const activeRecorder = recorder ?? createDefaultRecorder();
   const activitySurface = `${input.profileUrl.replace(/\/$/, "")}/recent-activity/all/`;
@@ -143,7 +163,14 @@ async function runInspection(
   if (!id) return fail("exact post match has no activity id");
   const vanityPermalink = isVanityPermalink(matched.vanityPermalink, id, expectedIdentity)
     ? matched.vanityPermalink
-    : await recoverVanityPermalink(page, matched.activityUrl, expectedIdentity, id);
+    : await recoverVanityPermalink(
+        page,
+        matched.activityUrl,
+        expectedIdentity,
+        id,
+        copyLinkRecorder,
+        clipboard,
+      );
   if (!isVanityPermalink(vanityPermalink, id, expectedIdentity)) {
     return fail("exact post match has no bound vanity permalink");
   }
@@ -263,14 +290,65 @@ async function recoverVanityPermalink(
   activityUrl: string,
   expectedAuthorIdentity: string,
   id: string,
+  copyLinkRecorder: CopyLinkRecorder,
+  clipboard: TextClipboard,
 ): Promise<string> {
   await page.goto(activityUrl, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1_000);
-  return page.locator("html").evaluate(extractLinkedInVanityPermalink, {
+  const copiedFromDom = await page.locator("html").evaluate(extractLinkedInVanityPermalink, {
     expectedAuthorIdentity,
     activityId: id,
   });
+  if (copiedFromDom) return copiedFromDom;
+  return copyVanityFromActivityMenu(page, expectedAuthorIdentity, id, copyLinkRecorder, clipboard);
 }
+
+export interface TextClipboard {
+  read(): Promise<string>;
+  write(value: string): Promise<void>;
+}
+
+export interface CopyLinkRecorder {
+  copy(page: Page, activityId: string): Promise<void>;
+}
+
+export async function copyVanityFromActivityMenu(
+  page: Page,
+  expectedAuthorIdentity: string,
+  id: string,
+  recorder: CopyLinkRecorder = defaultCopyLinkRecorder,
+  clipboard: TextClipboard = defaultTextClipboard,
+): Promise<string> {
+  const snapshot = await clipboard.read();
+  try {
+    await recorder.copy(page, id);
+    await page.waitForTimeout(500);
+    const copied = (await clipboard.read()).trim();
+    return isVanityPermalink(copied, id, expectedAuthorIdentity) ? copied : "";
+  } finally {
+    await clipboard.write(snapshot);
+  }
+}
+
+const defaultTextClipboard: TextClipboard = {
+  async read() {
+    return execFileSync("pbpaste", [], { encoding: "utf8" });
+  },
+  async write(value) {
+    execFileSync("pbcopy", [], { input: value, encoding: "utf8" });
+  },
+};
+
+const defaultCopyLinkRecorder: CopyLinkRecorder = {
+  async copy(page, id) {
+    const clicked = await page.locator("body").evaluate(clickExactActivityMenu, id);
+    if (!clicked) throw verifyError("exact direct-owned activity menu was not found");
+    const item = page.getByRole("menuitem", { name: "Copy link to post", exact: true });
+    if ((await item.count()) !== 1)
+      throw verifyError("exact Copy link to post menu item was not unique");
+    await item.click();
+  },
+};
 
 function normalizeExact(value: string): string {
   return value.normalize("NFKC").replace(/\r\n/g, "\n").trim();
@@ -372,6 +450,44 @@ interface BrowserNode {
   cloneNode?(deep?: boolean): BrowserNode;
   remove?(): void;
   click?(): void;
+}
+
+export function clickExactActivityMenu(root: BrowserNode, expectedId: string): boolean {
+  const containers = Array.from(
+    root.querySelectorAll("[data-urn*='urn:li:activity'], [data-id*='urn:li:activity']"),
+  ).filter((container) => {
+    const raw = container.getAttribute("data-urn") ?? container.getAttribute("data-id") ?? "";
+    return /urn:li:activity:(\d+)/.exec(raw)?.[1] === expectedId;
+  });
+  if (containers.length !== 1) return false;
+  const container = containers[0]!;
+  const isBoundary = (node: BrowserNode): boolean => {
+    const raw = node.getAttribute("data-urn") ?? node.getAttribute("data-id") ?? "";
+    return (
+      /urn:li:activity:\d+/.test(raw) ||
+      /^urn:li:comment/.test(raw) ||
+      node.tagName.toLowerCase() === "article" ||
+      /comments-comment-item|mini-update/i.test(node.className ?? "")
+    );
+  };
+  const directOwned = (node: BrowserNode): boolean => {
+    let owner = node.parentElement;
+    while (owner && owner !== container) {
+      if (isBoundary(owner)) return false;
+      owner = owner.parentElement;
+    }
+    return owner === container;
+  };
+  const menus = Array.from(container.querySelectorAll("button"))
+    .filter(directOwned)
+    .filter((button) =>
+      /^open control menu for post by .+$/i.test(
+        (button.getAttribute("aria-label") ?? "").normalize("NFKC").trim(),
+      ),
+    );
+  if (menus.length !== 1) return false;
+  menus[0]!.click?.();
+  return true;
 }
 
 export function inspectLinkedInExpanders(

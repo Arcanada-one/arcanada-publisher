@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import { ErrorCode } from "@arcanada/publisher-core";
 import {
   bodyTextWithoutDirectControls,
+  clickExactActivityMenu,
+  copyVanityFromActivityMenu,
   expandMatchingLinkedInActivity,
   extractLinkedInVanityPermalink,
   extractLinkedInProfilePosts,
@@ -29,6 +31,7 @@ function post(overrides: Partial<ObservedLinkedInProfilePost> = {}): ObservedLin
 
 function options(batches: ObservedLinkedInProfilePost[][]) {
   let scan = 0;
+  let clipboardValue = "original";
   return {
     page: {
       goto: async () => {},
@@ -40,6 +43,13 @@ function options(batches: ObservedLinkedInProfilePost[][]) {
     __recorder: {
       scanLoadedPosts: async () => batches[Math.min(scan++, batches.length - 1)] ?? [],
       scroll: async () => {},
+    },
+    __copyLinkRecorder: { copy: async () => {} },
+    __clipboard: {
+      read: async () => clipboardValue,
+      write: async (value: string) => {
+        clipboardValue = value;
+      },
     },
   };
 }
@@ -313,6 +323,58 @@ describe("LinkedIn read-only profile inspection", () => {
     const nested = nestedBody.child("", "mini-update");
     nested.child("...more", "button");
     expect(bodyTextWithoutDirectControls(nestedBody)).toBe("Body\n...more");
+  });
+
+  it("opens only the exact direct-owned activity menu", () => {
+    const outer = new FakeNode("", { "data-urn": `urn:li:activity:${ID}` });
+    const exact = outer.child("", "button", undefined, undefined, undefined, {
+      "aria-label": "Open control menu for post by Pavel Valentov",
+    });
+    const nested = outer.child("", "mini-update");
+    const nestedMenu = nested.child("", "button", undefined, undefined, undefined, {
+      "aria-label": "Open control menu for post by Pavel Valentov",
+    });
+    const root = new FakeNode("");
+    root.children.push(outer);
+    expect(clickExactActivityMenu(root, ID)).toBe(true);
+    expect(exact.clickCount).toBe(1);
+    expect(nestedMenu.clickCount).toBe(0);
+
+    exact.attrsForTest["aria-label"] = "Delete post";
+    expect(clickExactActivityMenu(root, ID)).toBe(false);
+  });
+
+  it("restores clipboard for valid, impostor, and failed copy-link flows", async () => {
+    const valid = `https://www.linkedin.com/posts/pavelvalentov_post-activity-${ID}-AbCd`;
+    const page = { waitForTimeout: async () => {} } as never;
+    const run = async (copied: string, throws = false) => {
+      let value = "ORIGINAL_CLIPBOARD";
+      const clipboard = {
+        read: async () => value,
+        write: async (next: string) => {
+          value = next;
+        },
+      };
+      const recorder = {
+        copy: async () => {
+          if (throws) throw new Error("wrong menu");
+          value = copied;
+        },
+      };
+      const promise = copyVanityFromActivityMenu(
+        page,
+        "www.linkedin.com/in/pavelvalentov",
+        ID,
+        recorder,
+        clipboard,
+      );
+      if (throws) await expect(promise).rejects.toThrow("wrong menu");
+      else expect(await promise).toBe(copied === valid ? valid : "");
+      expect(value).toBe("ORIGINAL_CLIPBOARD");
+    };
+    await run(valid);
+    await run(`https://www.linkedin.com/posts/impostor_post-activity-${ID}-AbCd`);
+    await run(valid, true);
   });
 
   it("recovers only copied same-author same-activity vanity URLs", () => {
