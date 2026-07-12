@@ -66,4 +66,34 @@ describe("LinkedIn composer DOM probe", () => {
     )(document) as (element: typeof editor) => { editorAncestors: unknown[] };
     expect(invocation(editor).editorAncestors).toHaveLength(1);
   });
+
+  it("supports the actual callback-plus-source runtime contract", () => {
+    const source = composerDomProbeJs();
+    const callback = (element: object, probeSource: string) => {
+      const probe = Function(`return ${probeSource}`)() as (node: object) => unknown;
+      return probe(element);
+    };
+    const editor = {
+      tagName: "DIV",
+      id: "",
+      classList: [],
+      parentElement: null,
+      shadowRoot: null,
+      getBoundingClientRect: () => ({ x: 0, y: 0, width: 100, height: 50 }),
+      getAttribute: () => null,
+      hasAttribute: () => false,
+      getRootNode: () => ({ host: null }),
+    };
+    const document = { querySelectorAll: () => [] };
+    const globals = globalThis as unknown as Record<string, unknown>;
+    const previous = globals["document"];
+    globals["document"] = document;
+    try {
+      const result = callback(editor, source) as { editorAncestors: unknown[] };
+      expect(result.editorAncestors).toHaveLength(1);
+    } finally {
+      if (previous === undefined) delete globals["document"];
+      else globals["document"] = previous;
+    }
+  });
 });
