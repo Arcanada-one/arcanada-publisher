@@ -166,6 +166,28 @@ describe("LinkedIn read-only profile inspection", () => {
     expect(observed?.body).not.toBe(BODY);
   });
 
+  it("runs the extractor from serialized source with no closure", () => {
+    const outer = new FakeNode("", { "data-urn": `urn:li:activity:${ID}` });
+    const body = outer.child(`${BODY}\n...more`, "update-components-text");
+    body.child("...more", "button");
+    outer.child("Pavel", "update-components-actor__meta-link", PROFILE);
+    outer.child(
+      "time",
+      "",
+      undefined,
+      `https://www.linkedin.com/posts/pavelvalentov_post-activity-${ID}-AbCd`,
+    );
+    outer.child("video", "video-player");
+    const root = new FakeNode("");
+    root.children.push(outer);
+    const serialized = Function(
+      `return (${extractLinkedInProfilePosts.toString()})`,
+    )() as typeof extractLinkedInProfilePosts;
+    expect(serialized(root)).toEqual([
+      expect.objectContaining({ body: BODY, hasNativeVideo: true }),
+    ]);
+  });
+
   it("clicks plain more only on the direct-owned expected author/title activity", () => {
     const outer = new FakeNode("", { "data-urn": `urn:li:activity:${ID}` });
     outer.child("Building the Binary Is Only the Beginning…", "update-components-text");
