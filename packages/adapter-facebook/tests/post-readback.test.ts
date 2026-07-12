@@ -37,6 +37,14 @@ describe("Facebook exact post readback primitives", () => {
     await expect(readFacebookPost(fakePage(false) as never, TARGET)).rejects.toMatchObject({
       code: 6,
     });
+    await expect(
+      readFacebookPost(
+        fakePageVariants([
+          { media: null, headerPhoto: "https://www.facebook.com/photo/?fbid=avatar" },
+        ]) as never,
+        TARGET,
+      ),
+    ).rejects.toMatchObject({ code: 6 });
     await expect(readFacebookPost(fakePage(true) as never, TARGET)).resolves.toMatchObject({
       canonicalPermalink: TARGET,
       normalizedBody: "Title\n\nFull body",
@@ -151,6 +159,19 @@ describe("Facebook exact post readback primitives", () => {
     });
     expect(page.actions).toEqual(["expand:2"]);
   });
+
+  it("does not expand an outer article whose selected message belongs to a nested article", async () => {
+    const page = fakePageVariants([
+      { messageOwned: false },
+      { body: "Title\n\nFull body", modal: true },
+    ]);
+    await expect(readFacebookPost(page as never, TARGET)).resolves.toMatchObject({
+      canonicalPermalink: TARGET,
+      authorProfileIdentity: "www.facebook.com/pavelvalentov",
+      normalizedBody: "Title\n\nFull body",
+    });
+    expect(page.actions).toEqual(["expand:1"]);
+  });
 });
 
 class FakeList<T> implements Iterable<T> {
@@ -220,6 +241,8 @@ type ArticleVariant = {
   permalink?: string;
   targetInBody?: boolean;
   targetInNestedComment?: boolean;
+  messageOwned?: boolean;
+  headerPhoto?: string;
 };
 
 function fakePageVariants(variants: ArticleVariant[]) {
@@ -292,7 +315,10 @@ function makeArticle(variant: ArticleVariant): FakeElement {
     if (variant.hiddenModal) article.dialog.style.display = "none";
   }
   const body = new FakeElement(variant.body ?? "Title\n\nFull body");
-  body.article = article;
+  body.article =
+    variant.messageOwned === false
+      ? Object.assign(new FakeElement(), { article: new FakeElement() })
+      : article;
   const avatar = new FakeElement(
     "Pavel",
     variant.author ?? "https://www.facebook.com/pavelvalentov",
@@ -308,9 +334,14 @@ function makeArticle(variant: ArticleVariant): FakeElement {
     variant.media === undefined ? "https://www.facebook.com/photo/?fbid=hero" : variant.media;
   const photo = new FakeElement("", mediaHref ?? undefined, {}, { img: [new FakeElement()] });
   photo.article = article;
-  photo.before = body;
   articleOne['[data-ad-preview="message"], [data-ad-comet-preview="message"]'] = body;
   const anchors = [avatar, permalink];
+  if (variant.headerPhoto) {
+    const headerPhoto = new FakeElement("", variant.headerPhoto, {}, { img: [new FakeElement()] });
+    headerPhoto.article = article;
+    headerPhoto.before = body;
+    anchors.push(headerPhoto);
+  }
   if (variant.extraPermalink) {
     const extra = new FakeElement("other", variant.extraPermalink);
     extra.article = article;

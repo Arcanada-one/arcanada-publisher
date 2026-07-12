@@ -35,6 +35,112 @@ export function facebookProfileIdentity(raw: string): string {
   return `www.facebook.com/${parts[0]!.toLowerCase()}`;
 }
 
+function extractFacebookArticleEvidence(node: unknown, expected: string) {
+  type DomElement = {
+    innerText: string;
+    href?: string;
+    closest(selector: string): DomElement | null;
+    querySelector(selector: string): DomElement | null;
+    querySelectorAll(selector: string): ArrayLike<DomElement> & Iterable<DomElement>;
+    compareDocumentPosition(other: DomElement): number;
+    getAttribute(name: string): string | null;
+    isConnected: boolean;
+    getBoundingClientRect(): { width: number; height: number };
+    contains(child: DomElement): boolean;
+  };
+  const article = node as DomElement;
+  const browserLocation = (globalThis as unknown as { location: { href: string } }).location;
+  const canonical = (href: string): string | null => {
+    try {
+      const url = new URL(href, browserLocation.href);
+      const parts = url.pathname.split("/").filter(Boolean);
+      return parts.length >= 3 && parts[1] === "posts"
+        ? `https://www.facebook.com/${parts[0]}/posts/${parts[2]}`
+        : null;
+    } catch {
+      return null;
+    }
+  };
+  const body = article.querySelector(
+    '[data-ad-preview="message"], [data-ad-comet-preview="message"]',
+  );
+  if (!body || body.closest('[role="article"]') !== article) return null;
+  const ownedArticleAnchors = Array.from(article.querySelectorAll("a[href]")).filter(
+    (anchor) => anchor.closest('[role="article"]') === article && !body.contains(anchor),
+  );
+  const ownedHeaderAnchors = ownedArticleAnchors.filter(
+    (anchor) => (anchor.compareDocumentPosition(body) & 4) !== 0,
+  );
+  const ownedAttachmentAnchors = ownedArticleAnchors.filter(
+    (anchor) => !ownedHeaderAnchors.includes(anchor),
+  );
+  const postPermalinks = Array.from(
+    new Set(
+      ownedHeaderAnchors
+        .flatMap((anchor) => (anchor.href ? [canonical(anchor.href)] : []))
+        .filter((value): value is string => value !== null),
+    ),
+  ).sort();
+  if (!postPermalinks.includes(expected)) return null;
+  const author = ownedHeaderAnchors.find((anchor) => {
+    try {
+      if (!anchor.href) return false;
+      const url = new URL(anchor.href, browserLocation.href);
+      const parts = url.pathname.split("/").filter(Boolean);
+      return url.pathname === "/profile.php" ? url.searchParams.has("id") : parts.length === 1;
+    } catch {
+      return false;
+    }
+  });
+  if (!author) return null;
+  const mediaAnchor = ownedAttachmentAnchors.find((anchor) => {
+    if (!anchor.href) return false;
+    if (Array.from(anchor.querySelectorAll("img")).length === 0) return false;
+    try {
+      const url = new URL(anchor.href, browserLocation.href);
+      return url.pathname.includes("/photo") || url.pathname === "/photo.php";
+    } catch {
+      return false;
+    }
+  });
+  const mediaUrl = mediaAnchor?.href ? new URL(mediaAnchor.href, browserLocation.href) : null;
+  mediaUrl?.searchParams.delete("__cft__[0]");
+  mediaUrl?.searchParams.delete("__tn__");
+  const dialog = article.closest('[role="dialog"]');
+  const style = dialog
+    ? (
+        globalThis as unknown as {
+          getComputedStyle(node: DomElement): {
+            display: string;
+            visibility: string;
+            opacity: string;
+          };
+        }
+      ).getComputedStyle(dialog)
+    : null;
+  const rect = dialog?.getBoundingClientRect();
+  const isModal = Boolean(
+    dialog &&
+    dialog.isConnected &&
+    dialog.getAttribute("hidden") === null &&
+    dialog.getAttribute("aria-hidden") !== "true" &&
+    style?.display !== "none" &&
+    style?.visibility !== "hidden" &&
+    style?.opacity !== "0" &&
+    rect &&
+    rect.width > 0 &&
+    rect.height > 0,
+  );
+  return {
+    canonicalPermalink: postPermalinks.length === 1 ? postPermalinks[0]! : postPermalinks.join("|"),
+    authorProfileHref: author.href!,
+    body: body.innerText,
+    hasImage: mediaUrl !== null,
+    mediaIdentity: mediaUrl?.toString() ?? "",
+    isModal,
+  };
+}
+
 export async function readFacebookPost(
   page: Page,
   targetUrl: string,
@@ -44,43 +150,8 @@ export async function readFacebookPost(
   const articleLocators = page.locator('[role="article"]');
   for (let index = 0, count = await articleLocators.count(); index < count; index += 1) {
     const article = articleLocators.nth(index);
-    const isExactTarget = await article.evaluate((node, expected) => {
-      const canonical = (href: string): string | null => {
-        try {
-          const url = new URL(
-            href,
-            (globalThis as unknown as { location: { href: string } }).location.href,
-          );
-          const parts = url.pathname.split("/").filter(Boolean);
-          return parts.length >= 3 && parts[1] === "posts"
-            ? `https://www.facebook.com/${parts[0]}/posts/${parts[2]}`
-            : null;
-        } catch {
-          return null;
-        }
-      };
-      type OwnedNode = {
-        href?: string;
-        closest(selector: string): OwnedNode | null;
-        querySelector(selector: string): OwnedNode | null;
-        querySelectorAll(selector: string): ArrayLike<OwnedNode>;
-        compareDocumentPosition(other: OwnedNode): number;
-        contains(child: OwnedNode): boolean;
-      };
-      const articleNode = node as unknown as OwnedNode;
-      const message = articleNode.querySelector(
-        '[data-ad-preview="message"], [data-ad-comet-preview="message"]',
-      );
-      if (!message) return false;
-      return Array.from(articleNode.querySelectorAll("a[href]")).some(
-        (anchor) =>
-          anchor.closest('[role="article"]') === articleNode &&
-          !message.contains(anchor) &&
-          (anchor.compareDocumentPosition(message) & 4) !== 0 &&
-          Boolean(anchor.href && canonical(anchor.href) === expected),
-      );
-    }, target);
-    if (!isExactTarget) continue;
+    const evidence = await article.evaluate(extractFacebookArticleEvidence, target);
+    if (evidence === null) continue;
     const expanders = article.getByRole("button", {
       name: /^(See more|Показать ещё|Ещё|Näytä lisää)$/i,
     });
@@ -91,115 +162,13 @@ export async function readFacebookPost(
         .catch(() => undefined);
     }
   }
-  const raw = await page.locator("body").evaluate((root, expected) => {
-    type DomElement = {
-      innerText: string;
-      href?: string;
-      closest(selector: string): DomElement | null;
-      querySelector(selector: string): DomElement | null;
-      querySelectorAll(selector: string): ArrayLike<DomElement> & Iterable<DomElement>;
-      compareDocumentPosition(other: DomElement): number;
-      getAttribute(name: string): string | null;
-      isConnected: boolean;
-      getBoundingClientRect(): { width: number; height: number };
-      contains(child: DomElement): boolean;
-    };
-    const bodyRoot = root as unknown as DomElement;
-    const browserLocation = (globalThis as unknown as { location: { href: string } }).location;
-    const canonical = (href: string): string | null => {
-      try {
-        const url = new URL(href, browserLocation.href);
-        const parts = url.pathname.split("/").filter(Boolean);
-        return parts.length >= 3 && parts[1] === "posts"
-          ? `https://www.facebook.com/${parts[0]}/posts/${parts[2]}`
-          : null;
-      } catch {
-        return null;
-      }
-    };
-    const matches = Array.from(bodyRoot.querySelectorAll('[role="article"]')).flatMap((article) => {
-      const anchors = Array.from(article.querySelectorAll("a[href]"));
-      const body = article.querySelector(
-        '[data-ad-preview="message"], [data-ad-comet-preview="message"]',
-      );
-      if (!body || body.closest('[role="article"]') !== article) return [];
-      const ownedAnchors = anchors.filter(
-        (anchor) =>
-          anchor.closest('[role="article"]') === article &&
-          !body.contains(anchor) &&
-          (anchor.compareDocumentPosition(body) & 4) !== 0,
-      );
-      const postPermalinks = Array.from(
-        new Set(
-          ownedAnchors
-            .flatMap((anchor) => (anchor.href ? [canonical(anchor.href)] : []))
-            .filter((value): value is string => value !== null),
-        ),
-      ).sort();
-      if (!postPermalinks.includes(expected)) return [];
-      const author = ownedAnchors.find((anchor) => {
-        try {
-          if (!anchor.href) return false;
-          const url = new URL(anchor.href, browserLocation.href);
-          const parts = url.pathname.split("/").filter(Boolean);
-          return url.pathname === "/profile.php" ? url.searchParams.has("id") : parts.length === 1;
-        } catch {
-          return false;
-        }
-      });
-      if (!author) return [];
-      const mediaAnchor = ownedAnchors.find((anchor) => {
-        if (!anchor.href) return false;
-        if (Array.from(anchor.querySelectorAll("img")).length === 0) return false;
-        try {
-          const url = new URL(anchor.href, browserLocation.href);
-          return url.pathname.includes("/photo") || url.pathname === "/photo.php";
-        } catch {
-          return false;
-        }
-      });
-      const mediaUrl = mediaAnchor?.href ? new URL(mediaAnchor.href, browserLocation.href) : null;
-      mediaUrl?.searchParams.delete("__cft__[0]");
-      mediaUrl?.searchParams.delete("__tn__");
-      const dialog = article.closest('[role="dialog"]');
-      const style = dialog
-        ? (
-            globalThis as unknown as {
-              getComputedStyle(node: DomElement): {
-                display: string;
-                visibility: string;
-                opacity: string;
-              };
-            }
-          ).getComputedStyle(dialog)
-        : null;
-      const rect = dialog?.getBoundingClientRect();
-      const isModal = Boolean(
-        dialog &&
-        dialog.isConnected &&
-        dialog.getAttribute("hidden") === null &&
-        dialog.getAttribute("aria-hidden") !== "true" &&
-        style?.display !== "none" &&
-        style?.visibility !== "hidden" &&
-        style?.opacity !== "0" &&
-        rect &&
-        rect.width > 0 &&
-        rect.height > 0,
-      );
-      return [
-        {
-          canonicalPermalink:
-            postPermalinks.length === 1 ? postPermalinks[0]! : postPermalinks.join("|"),
-          authorProfileHref: author.href!,
-          body: body.innerText,
-          hasImage: mediaUrl !== null,
-          mediaIdentity: mediaUrl?.toString() ?? "",
-          isModal,
-        },
-      ];
-    });
-    return matches;
-  }, target);
+  const raw = [];
+  for (let index = 0, count = await articleLocators.count(); index < count; index += 1) {
+    const evidence = await articleLocators
+      .nth(index)
+      .evaluate(extractFacebookArticleEvidence, target);
+    if (evidence !== null) raw.push(evidence);
+  }
   const candidates = raw.map((match) => ({
     canonicalPermalink: match.canonicalPermalink,
     authorProfileIdentity: facebookProfileIdentity(match.authorProfileHref),
