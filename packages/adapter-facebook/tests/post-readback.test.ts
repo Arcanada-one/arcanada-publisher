@@ -4,6 +4,7 @@ import {
   facebookProfileIdentity,
   normalizeFacebookText,
   readFacebookPost,
+  dedupeFacebookPostReadbacks,
 } from "../src/post-readback.js";
 
 const TARGET = "https://www.facebook.com/pavelvalentov/posts/pfbid123";
@@ -43,6 +44,27 @@ describe("Facebook exact post readback primitives", () => {
       hasImage: true,
       mediaIdentity: "https://www.facebook.com/photo/?fbid=hero",
     });
+  });
+
+  it("dedupes only fully identical render copies", () => {
+    const base = {
+      canonicalPermalink: TARGET,
+      normalizedBody: "Title\n\nFull body",
+      authorProfileIdentity: "www.facebook.com/pavelvalentov",
+      hasImage: true,
+      mediaIdentity: "https://www.facebook.com/photo/?fbid=hero",
+    };
+    expect(dedupeFacebookPostReadbacks([base, { ...base }])).toEqual(base);
+    for (const changed of [
+      { canonicalPermalink: `${TARGET}-other` },
+      { normalizedBody: "different" },
+      { authorProfileIdentity: "www.facebook.com/impostor" },
+      { mediaIdentity: "https://www.facebook.com/photo/?fbid=other" },
+    ]) {
+      expect(() => dedupeFacebookPostReadbacks([base, { ...base, ...changed }])).toThrow(
+        /ambiguous target evidence/,
+      );
+    }
   });
 });
 

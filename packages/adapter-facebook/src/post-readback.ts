@@ -121,15 +121,34 @@ export async function readFacebookPost(
     });
     return matches;
   }, target);
-  if (raw.length !== 1) throw readbackError(`expected one target article, found ${raw.length}`);
-  const match = raw[0]!;
-  return {
+  const candidates = raw.map((match) => ({
     canonicalPermalink: match.canonicalPermalink,
     authorProfileIdentity: facebookProfileIdentity(match.authorProfileHref),
     normalizedBody: normalizeFacebookText(match.body),
     hasImage: match.hasImage,
     mediaIdentity: match.mediaIdentity,
-  };
+  }));
+  return dedupeFacebookPostReadbacks(candidates);
+}
+
+export function dedupeFacebookPostReadbacks(
+  candidates: FacebookPostReadback[],
+): FacebookPostReadback {
+  if (candidates.length === 0) throw readbackError("expected one target article, found 0");
+  const ordered = [...candidates].sort((a, b) =>
+    JSON.stringify(a).localeCompare(JSON.stringify(b)),
+  );
+  const first = ordered[0]!;
+  const identical = ordered.every(
+    (candidate) =>
+      candidate.canonicalPermalink === first.canonicalPermalink &&
+      candidate.normalizedBody === first.normalizedBody &&
+      candidate.authorProfileIdentity === first.authorProfileIdentity &&
+      candidate.hasImage === first.hasImage &&
+      candidate.mediaIdentity === first.mediaIdentity,
+  );
+  if (!identical) throw readbackError(`ambiguous target evidence across ${ordered.length} copies`);
+  return first;
 }
 
 function readbackError(message: string): AdapterError {
