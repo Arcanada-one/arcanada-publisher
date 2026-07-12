@@ -236,39 +236,30 @@ export function extractObservedXPostsFromDom(
 
 export const defaultRecorder: InspectXProfileRecorder = {
   async expandOwnPosts(page, expectedHandle) {
-    const articles = page.locator("article");
-    for (let index = 0, count = await articles.count(); index < count; index += 1) {
-      const article = articles.nth(index);
-      const owned = await article.evaluate((articleNode, handle) => {
-        if (articleNode.parentElement?.closest("article")) return false;
+    await page.locator("article").evaluateAll((articleNodes, handle) => {
+      for (const articleNode of articleNodes) {
+        if (!articleNode.isConnected || articleNode.parentElement?.closest("article")) continue;
         const time = [...articleNode.querySelectorAll("time[datetime]")].find(
           (candidate) => candidate.closest("article") === articleNode,
         );
         const href = time?.closest("a[href]")?.getAttribute("href");
-        if (!href) return false;
+        if (!href) continue;
         const match = /^\/([^/]+)\/status\/\d+/.exec(
           new URL(href, (globalThis as unknown as { location: { href: string } }).location.href)
             .pathname,
         );
-        return match?.[1]?.toLowerCase() === handle;
-      }, expectedHandle);
-      if (!owned) continue;
-      let expanders = article.locator('[data-testid="tweet-text-show-more-link"]');
-      if ((await expanders.count()) === 0) {
-        expanders = article.getByText(/^(Show more|Показать ещё|Показать больше)$/i, {
-          exact: true,
-        });
+        if (match?.[1]?.toLowerCase() !== handle) continue;
+        const expanders = [...articleNode.querySelectorAll("button, div, span")].filter(
+          (candidate) =>
+            candidate.closest("article") === articleNode &&
+            (candidate.getAttribute("data-testid") === "tweet-text-show-more-link" ||
+              /^(Show more|Показать ещё|Показать больше)$/i.test(
+                ((candidate as unknown as { innerText?: string }).innerText ?? "").trim(),
+              )),
+        );
+        for (const expander of expanders) (expander as unknown as { click(): void }).click();
       }
-      for (let button = 0, count = await expanders.count(); button < count; button += 1) {
-        const expander = expanders.nth(button);
-        const belongsToTopLevelArticle = await expander.evaluate((node) => {
-          const owner = node.closest("article");
-          return owner !== null && !owner.parentElement?.closest("article");
-        });
-        if (belongsToTopLevelArticle)
-          await expander.click({ force: true, timeout: 2_000 }).catch(() => undefined);
-      }
-    }
+    }, expectedHandle);
   },
   async scanLoadedPosts(page) {
     return page.locator("article").evaluateAll(extractObservedXPostsFromDom, page.url());

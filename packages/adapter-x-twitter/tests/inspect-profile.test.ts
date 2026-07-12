@@ -52,7 +52,7 @@ describe("X profile duplicate inventory", () => {
               <a href="/VeritasArcanaAI/status/123"><time datetime="2026-07-12T01:00:00.000Z"></time></a>
               <div data-testid="tweetText" id="own-text">Title\n\nFull body…</div>
               <button id="own-more" data-testid="tweet-text-show-more-link"
-                onclick='this.dataset.clicked="yes"; document.querySelector("#own-text").innerText=${JSON.stringify(fullBody)}'>
+                onclick='this.dataset.clicked="yes"; document.querySelector("#own-text").innerText=${JSON.stringify(fullBody)}; document.querySelector("#virtualized-away").remove()'>
                 Show more
               </button>
               <article id="nested">
@@ -67,6 +67,11 @@ describe("X profile duplicate inventory", () => {
               <div data-testid="tweetText">Foreign truncated…</div>
               <button id="foreign-more" data-testid="tweet-text-show-more-link"
                 onclick="this.dataset.clicked='yes'">Show more</button>
+            </article>
+            <article id="virtualized-away">
+              <a href="/OtherTwo/status/789"><time datetime="2026-07-09T01:00:00.000Z"></time></a>
+              <div data-testid="tweetText">Virtualized foreign truncated…</div>
+              <button data-testid="tweet-text-show-more-link">Show more</button>
             </article>`,
         }),
       );
@@ -86,6 +91,7 @@ describe("X profile duplicate inventory", () => {
       expect(await browserPage.locator("#own-more").getAttribute("data-clicked")).toBe("yes");
       expect(await browserPage.locator("#nested-more").getAttribute("data-clicked")).toBeNull();
       expect(await browserPage.locator("#foreign-more").getAttribute("data-clicked")).toBeNull();
+      expect(await browserPage.locator("#virtualized-away").count()).toBe(0);
     } finally {
       await browser.close();
     }

@@ -254,7 +254,7 @@ export async function waitForExactStatusState(
           return match?.[1]?.toLowerCase() === expected.handle && match?.[2] === expected.statusId;
         });
         if (exactPrimary) return "present";
-        return /(This Post was deleted|Hmm.*page doesn.t exist|Этот пост удален|Страница не существует)/i.test(
+        return /(This Post was deleted|Hmm.*page doesn.t exist|Этот пост удален|(?:Такой\s+)?страниц[аы]\s+не\s+существует)/i.test(
           browser.document.body.innerText,
         )
           ? "absent"
