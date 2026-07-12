@@ -108,7 +108,7 @@ export async function publish(
     );
   }
   const safeImagePaths = rawImagePaths.map(validateImagePath);
-  if (!input.expectedAuthorProfileUrl && !input.dryRun && !options.__recorder) {
+  if (!input.expectedAuthorProfileUrl && !input.dryRun) {
     throw new AdapterError(
       ErrorCode.MISSING_INPUT,
       "publish: expectedAuthorProfileUrl is required",
@@ -200,9 +200,7 @@ async function runPublishFlow(
     // just-published post from older posts in the /me feed.
     try {
       const postUrl = await steps.submitAndConfirm(page, input.text);
-      const expectedAuthor = facebookProfileIdentity(
-        input.expectedAuthorProfileUrl ?? "https://www.facebook.com/100012345",
-      );
+      const expectedAuthor = facebookProfileIdentity(input.expectedAuthorProfileUrl!);
       const verified = await steps.postVerify(page, postUrl);
       if (
         verified.normalizedBody !== normalizeFacebookText(input.text) ||
@@ -378,30 +376,39 @@ async function resolveJustPublishedHref(page: Page, publishedText?: string): Pro
   );
 }
 
-function validateImagePath(rawPath: string): string {
+function validateImagePath(rawPath: string, index: number): string {
+  const artifactId = createHash("sha256").update(rawPath).digest("hex").slice(0, 16);
   if (rawPath.includes("\0")) {
-    throw new AdapterError(ErrorCode.INVALID_ARGS, "publish: imagePath contains NUL byte");
+    throw new AdapterError(ErrorCode.INVALID_ARGS, "publish: invalid image path", {
+      stage: "image_validation",
+      artifactId,
+      index,
+    });
   }
   const abs = resolvePath(rawPath);
   if (!existsSync(abs)) {
-    throw new AdapterError(ErrorCode.MISSING_INPUT, `publish: image not found: ${abs}`, {
-      imagePath: abs,
+    throw new AdapterError(ErrorCode.MISSING_INPUT, "publish: image file not found", {
+      stage: "image_validation",
+      artifactId,
+      index,
     });
   }
   const stat = statSync(abs);
   if (!stat.isFile()) {
-    throw new AdapterError(
-      ErrorCode.INVALID_ARGS,
-      `publish: imagePath is not a regular file: ${abs}`,
-    );
+    throw new AdapterError(ErrorCode.INVALID_ARGS, "publish: image is not a regular file", {
+      stage: "image_validation",
+      artifactId,
+      index,
+    });
   }
   const ext = extname(abs).toLowerCase();
   if (!IMAGE_EXT_ALLOWLIST.has(ext)) {
-    throw new AdapterError(
-      ErrorCode.INVALID_ARGS,
-      `publish: unsupported image extension '${ext}'`,
-      { imagePath: abs, allowed: Array.from(IMAGE_EXT_ALLOWLIST) },
-    );
+    throw new AdapterError(ErrorCode.INVALID_ARGS, "publish: unsupported image extension", {
+      stage: "image_validation",
+      artifactId,
+      index,
+      allowed: Array.from(IMAGE_EXT_ALLOWLIST),
+    });
   }
   return abs;
 }

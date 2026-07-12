@@ -97,13 +97,9 @@ export async function withScreenshotOnFail<T>(
       }
       throw err;
     }
-    throw new AdapterError(
-      ErrorCode.INTERNAL_PANIC,
-      `unhandled error during '${stage}': ${err instanceof Error ? err.message : String(err)}`,
-      {
-        stage,
-        artifactId: shot ? basename(shot) : undefined,
-      },
-    );
+    throw new AdapterError(ErrorCode.INTERNAL_PANIC, `unhandled error during '${stage}'`, {
+      stage,
+      artifactId: shot ? basename(shot) : undefined,
+    });
   }
 }

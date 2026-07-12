@@ -19,6 +19,7 @@ import {
   facebookProfileIdentity,
   normalizeFacebookText,
   readFacebookPost,
+  type FacebookPostReadback,
 } from "./post-readback.js";
 
 /**
@@ -139,19 +140,17 @@ async function editPostFlow(page: Page, input: FacebookEditInput): Promise<EditR
         postUrl: input.postUrl,
       });
     }
+    const after = await completePostEditMutation({
+      save: () => save.first().click(),
+      settle: () => page.waitForTimeout(3_000),
+      readback: () => readFacebookPost(page, target),
+      before,
+      target,
+      expectedAuthor,
+      expectedBody: input.text!,
+    });
+    void after;
     try {
-      await save.first().click();
-      await page.waitForTimeout(3_000);
-      const after = await readFacebookPost(page, target);
-      if (
-        after.canonicalPermalink !== target ||
-        after.authorProfileIdentity !== expectedAuthor ||
-        after.normalizedBody !== normalizeFacebookText(input.text!) ||
-        !after.hasImage ||
-        after.mediaIdentity !== before.mediaIdentity
-      ) {
-        throw new Error("post-edit mismatch");
-      }
       return EditResultSchema.parse({
         ok: true,
         platform: "facebook",
@@ -159,8 +158,7 @@ async function editPostFlow(page: Page, input: FacebookEditInput): Promise<EditR
         postUrl: target,
         edited: true,
       });
-    } catch (error) {
-      if (error instanceof AdapterError && error.details?.["unknown"] === true) throw error;
+    } catch {
       throw unknownEdit();
     }
   });
@@ -187,4 +185,31 @@ function unknownEdit(): AdapterError {
     stage: "post_edit_verify",
     artifactId: "facebook-edit-unknown",
   });
+}
+
+export async function completePostEditMutation(input: {
+  save(): Promise<unknown>;
+  settle(): Promise<unknown>;
+  readback(): Promise<FacebookPostReadback>;
+  before: FacebookPostReadback;
+  target: string;
+  expectedAuthor: string;
+  expectedBody: string;
+}): Promise<FacebookPostReadback> {
+  try {
+    await input.save();
+    await input.settle();
+    const after = await input.readback();
+    if (
+      after.canonicalPermalink !== input.target ||
+      after.authorProfileIdentity !== input.expectedAuthor ||
+      after.normalizedBody !== normalizeFacebookText(input.expectedBody) ||
+      !after.hasImage ||
+      after.mediaIdentity !== input.before.mediaIdentity
+    )
+      throw new Error("post-edit mismatch");
+    return after;
+  } catch {
+    throw unknownEdit();
+  }
 }
