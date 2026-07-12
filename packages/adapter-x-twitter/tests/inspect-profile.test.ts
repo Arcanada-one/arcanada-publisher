@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { chromium } from "playwright";
 import {
   extractObservedXPostsFromDom,
   inspectXProfilePosts,
@@ -38,6 +39,58 @@ function recorder(posts: ObservedXProfilePost[]): InspectXProfileRecorder {
 }
 
 describe("X profile duplicate inventory", () => {
+  it("uses the production recorder to expand only the own direct article before collecting its oracle", async () => {
+    const fullBody = "Title\n\nFull body that was hidden behind Show more";
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const browserPage = await browser.newPage();
+      await browserPage.route("https://x.com/**", async (route) =>
+        route.fulfill({
+          contentType: "text/html",
+          body: `
+            <article id="own">
+              <a href="/VeritasArcanaAI/status/123"><time datetime="2026-07-12T01:00:00.000Z"></time></a>
+              <div data-testid="tweetText" id="own-text">Title\n\nFull body…</div>
+              <button id="own-more" data-testid="tweet-text-show-more-link"
+                onclick='this.dataset.clicked="yes"; document.querySelector("#own-text").innerText=${JSON.stringify(fullBody)}'>
+                Show more
+              </button>
+              <article id="nested">
+                <a href="/VeritasArcanaAI/status/999"><time datetime="2026-07-11T01:00:00.000Z"></time></a>
+                <div data-testid="tweetText">Nested truncated…</div>
+                <button id="nested-more" data-testid="tweet-text-show-more-link"
+                  onclick="this.dataset.clicked='yes'">Show more</button>
+              </article>
+            </article>
+            <article id="foreign">
+              <a href="/Other/status/456"><time datetime="2026-07-10T01:00:00.000Z"></time></a>
+              <div data-testid="tweetText">Foreign truncated…</div>
+              <button id="foreign-more" data-testid="tweet-text-show-more-link"
+                onclick="this.dataset.clicked='yes'">Show more</button>
+            </article>`,
+        }),
+      );
+      const result = await inspectXProfilePosts(
+        {
+          profileUrl: "https://x.com/VeritasArcanaAI",
+          expectedAuthorProfileUrl: "https://x.com/VeritasArcanaAI",
+          expectedBody: fullBody,
+          evidenceDir: mkdtempSync(join(tmpdir(), "x-inspect-expanded-")),
+          maxScrolls: 1,
+          profile: "default",
+        },
+        { page: browserPage },
+      );
+      expect(result.matches).toHaveLength(1);
+      expect(result.matches[0]).toMatchObject({ statusId: "123", bodyLength: fullBody.length });
+      expect(await browserPage.locator("#own-more").getAttribute("data-clicked")).toBe("yes");
+      expect(await browserPage.locator("#nested-more").getAttribute("data-clicked")).toBeNull();
+      expect(await browserPage.locator("#foreign-more").getAttribute("data-clicked")).toBeNull();
+    } finally {
+      await browser.close();
+    }
+  }, 15_000);
+
   it("extracts only direct article body/media and drops blob/nested quote evidence", () => {
     const outer = new FakeNode();
     outer.article = outer;

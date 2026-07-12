@@ -44,7 +44,7 @@ jobs:
 
   test:
     name: Tests (vitest)
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -53,6 +53,7 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @arcanada/publisher-x exec playwright install --with-deps chromium
       - run: pnpm -r --filter "./packages/*" build
       - run: pnpm -r test
 
