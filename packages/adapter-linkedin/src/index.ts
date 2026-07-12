@@ -81,8 +81,9 @@ export class LinkedInAdapter extends BaseAdapter {
   /**
    * No-publish live verification (PUB-0031/PUB-0032): run the full composer flow
    * against the real LinkedIn UI and ABORT before clicking «Post». NOTHING is
-   * published. Returns whether media attached (the scoped <video> preview for a
-   * video). LinkedIn-specific — not part of the generic Adapter contract.
+   * published. Returns whether media attached (a scoped <video> preview or exact
+   * validated filename card). LinkedIn-specific — not part of the generic
+   * Adapter contract.
    */
   async publishDryRunNoPost(input: PublishInput): Promise<AbortedPublishResult> {
     const result = await publishImpl(input, {

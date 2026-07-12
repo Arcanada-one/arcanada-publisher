@@ -16,7 +16,7 @@
 // construction.
 
 import { statSync, existsSync } from "node:fs";
-import { extname, resolve as resolvePath } from "node:path";
+import { basename, extname, resolve as resolvePath } from "node:path";
 import { type Page } from "playwright";
 import {
   AdapterError,
@@ -35,7 +35,8 @@ import { dispatchVideoDragDrop } from "./media-drag.js";
 import {
   markComposerScopeJs,
   shadowClickComposerButtonJs,
-  scopedVideoCountJs,
+  scopedMediaAttachmentCountJs,
+  scopedMediaAttachmentDiagnosticsJs,
   shadowCountJs,
 } from "./dom-shadow.js";
 
@@ -86,9 +87,10 @@ export function isVideoPath(path: string): boolean {
  * No-publish dry-run result (PublishOptions.abortBeforePost). The composer flow
  * ran end-to-end against the live UI and aborted before clicking «Post», so
  * nothing was published — `aborted` is always true and there is no `postUrl`.
- * `mediaAttached` reflects whether the scoped media preview was detected (the
- * PUB-0031 signal): for a video it means a `<video>` rendered INSIDE the composer
- * (not page-wide), proving the attach path works without publishing.
+ * `mediaAttached` reflects whether the scoped media attachment was detected (the
+ * PUB-0031 signal): either a `<video>` preview or LinkedIn's exact validated
+ * filename card rendered INSIDE the composer, proving the attach path works
+ * without publishing.
  */
 export interface AbortedPublishResult {
   ok: true;
@@ -309,10 +311,12 @@ async function runPublishFlow(
         ? editorCss
         : page.getByRole("textbox", { name: selectors.editor }).first();
     await editor.waitFor({ state: "visible", timeout: 15_000 });
-    const composerMarked = (await editor.evaluate((element, source) => {
-      const marker = new Function(`return ${source}`)() as (node: typeof element) => boolean;
-      return marker(element);
-    }, markComposerScopeJs())) as boolean;
+    const markCurrentComposer = async (): Promise<boolean> =>
+      (await editor.evaluate((element, source) => {
+        const marker = new Function(`return ${source}`)() as (node: typeof element) => boolean;
+        return marker(element);
+      }, markComposerScopeJs())) as boolean;
+    const composerMarked = await markCurrentComposer();
     if (!composerMarked) {
       throw mapLiError("composer_not_found", { extra: { stage: "composer_scope_unresolved" } });
     }
@@ -330,6 +334,7 @@ async function runPublishFlow(
     let mediaAttached = imagePaths.length === 0;
     if (imagePaths.length > 0) {
       const hasVideo = imagePaths.some(isVideoPath);
+      const expectedMediaName = basename(imagePaths[0]);
 
       // PUB-0033 (verified live 2026-06-26): paste the clipboard media DIRECTLY
       // into the composer editor — do NOT click «Add media». In the 2026 UI the
@@ -361,8 +366,9 @@ async function runPublishFlow(
       }
       await page.keyboard.press(process.platform === "darwin" ? "Meta+v" : "Control+v");
       options.__onStage?.("paste_key");
-      // Wait for ingest: a <video> (or <img> for a still) preview appears. Video
-      // transcodes server-side, much longer than an image — bounded poll.
+      // Wait for ingest: LinkedIn renders either a <video> preview or an exact
+      // filename/size card (and <img> for a still). Video transcodes server-side,
+      // much longer than an image — bounded poll.
       await page.waitForTimeout(hasVideo ? 6_000 : 3_000);
       // PUB-0031 fail-closed video detection: the OLD detector matched `video`
       // ANYWHERE on the page (`page.locator("video, ...")`), so a stray feed/
@@ -380,9 +386,19 @@ async function runPublishFlow(
       const maxPolls = hasVideo ? videoPreviewPolls : 40; // video default ≤180s, image ≤20s
       const imagePreviewSel =
         "img[src^='blob:'], img[src*='media'], [data-test-media-preview], .share-images";
+      const countScopedVideoAttachment = async (): Promise<number> => {
+        // LinkedIn replaces the composer subtree after accepting a dropped file.
+        // Re-bind the marker to the current editor locator before every readback;
+        // otherwise the validated attachment remains visible while the verifier
+        // searches a detached pre-drop scope and reports a false failure.
+        if (!(await markCurrentComposer())) return 0;
+        return (await page.evaluate(
+          scopedMediaAttachmentCountJs(expectedMediaName),
+        )) as number;
+      };
       for (let i = 0; i < maxPolls; i++) {
         if (hasVideo) {
-          const n = (await page.evaluate(scopedVideoCountJs())) as number;
+          const n = await countScopedVideoAttachment();
           if (n > 0) {
             attached = true;
             options.__onStage?.("scoped_preview");
@@ -408,7 +424,7 @@ async function runPublishFlow(
         );
         options.__onStage?.("cdp_drag_drop");
         for (let i = 0; i < maxPolls; i++) {
-          const n = (await page.evaluate(scopedVideoCountJs())) as number;
+          const n = await countScopedVideoAttachment();
           if (n > 0) {
             attached = true;
             options.__onStage?.("scoped_preview");
@@ -418,8 +434,14 @@ async function runPublishFlow(
         }
       }
       if (!attached) {
+        const attachmentDiagnostics = hasVideo
+          ? await page.evaluate(scopedMediaAttachmentDiagnosticsJs(expectedMediaName))
+          : undefined;
         throw mapLiError("composer_not_found", {
-          extra: { stage: hasVideo ? "video_paste_no_preview" : "image_paste_no_preview" },
+          extra: {
+            stage: hasVideo ? "video_paste_no_preview" : "image_paste_no_preview",
+            ...(attachmentDiagnostics !== undefined ? { attachmentDiagnostics } : {}),
+          },
         });
       }
       mediaAttached = true;
@@ -487,12 +509,15 @@ async function runPublishFlow(
         await page.waitForTimeout(500);
       }
     };
-    // Share-API confirmation timeout: a large video's finalisation can exceed the
-    // 30s default. Override via LINKEDIN_SHARE_API_TIMEOUT_MS. Default 30000.
+    // Share-API confirmation is the upload lifecycle boundary: LinkedIn uploads
+    // the video after Post and emits the content-creation response only once the
+    // share is ready. Keep the browser alive until that response; closing after
+    // an arbitrary short delay can strand a text-only/partial post and leaves
+    // Chromium reporting an unclean shutdown on the next launch.
     const shareApiTimeoutMs = publishingVideo
-      ? Number(process.env["LINKEDIN_SHARE_API_TIMEOUT_MS"] ?? 30_000)
+      ? Number(process.env["LINKEDIN_SHARE_API_TIMEOUT_MS"] ?? 600_000)
       : 15_000;
-    await Promise.all([
+    const [shareResponse] = await Promise.all([
       page
         .waitForResponse((r) => r.url().includes(LINKEDIN_SHARE_API), {
           timeout: shareApiTimeoutMs,
@@ -503,7 +528,14 @@ async function runPublishFlow(
     if (!posted) {
       throw mapLiError("publish_button_disabled");
     }
-    await page.waitForTimeout(publishingVideo ? 9_000 : 6_000);
+    if (publishingVideo && (!shareResponse || !shareResponse.ok())) {
+      throw mapLiError("verify_mismatch", {
+        message: "LinkedIn video share API did not confirm upload completion",
+        extra: { stage: "video_share_api_unconfirmed" },
+      });
+    }
+    if (publishingVideo) options.__onStage?.("share_api_confirmed");
+    await page.waitForTimeout(publishingVideo ? 5_000 : 6_000);
 
     const postUrl = await extractPublishedUrl(page);
 

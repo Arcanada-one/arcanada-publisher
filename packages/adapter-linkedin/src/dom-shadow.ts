@@ -98,6 +98,76 @@ export function scopedVideoCountJs(): string {
   })()`;
 }
 
+/**
+ * Count an exact pre-publish media attachment inside the marked composer.
+ * LinkedIn's 2026 video composer commonly renders a filename/size card before
+ * upload rather than a <video> element. At this stage the editor is still empty,
+ * so an exact validated basename inside the unique marked composer is a bounded
+ * attachment oracle. A real <video> preview remains accepted when present.
+ */
+export function scopedMediaAttachmentCountJs(expectedBasename: string): string {
+  const SCOPE = "[data-arcanada-publish-composer='true']";
+  return `(function(){
+    function walk(root, visit){ visit(root); var e=root.querySelectorAll?root.querySelectorAll('*'):[]; for(var i=0;i<e.length;i++) if(e[i].shadowRoot) walk(e[i].shadowRoot, visit); }
+    function collectDeep(root, found){
+      var elements=[]; try { elements=root.querySelectorAll('*'); } catch(e){}
+      for(var i=0;i<elements.length;i++){
+        found.add(elements[i]);
+        if(elements[i].shadowRoot) collectDeep(elements[i].shadowRoot, found);
+      }
+      if(root.shadowRoot) collectDeep(root.shadowRoot, found);
+    }
+    var scopes=new Set();
+    walk(document, function(root){
+      var found=[]; try { found=root.querySelectorAll(${JSON.stringify(SCOPE)}); } catch(e){}
+      for(var i=0;i<found.length;i++) scopes.add(found[i]);
+    });
+    if(scopes.size!==1) return 0;
+    var nodes=new Set(); collectDeep(Array.from(scopes)[0], nodes);
+    var expected=${JSON.stringify(expectedBasename)};
+    var hasVideo=false, hasExactName=false;
+    nodes.forEach(function(node){
+      if((node.tagName||'').toLowerCase()==='video') hasVideo=true;
+      var text=(node.textContent||node.innerText||'').trim();
+      var lines=text.split(/\\r?\\n/).map(function(line){ return line.trim(); });
+      if(lines.indexOf(expected)!==-1) hasExactName=true;
+    });
+    return hasVideo||hasExactName ? 1 : 0;
+  })()`;
+}
+
+/** Read-only, path-free diagnostic for attachment-oracle drift. */
+export function scopedMediaAttachmentDiagnosticsJs(expectedBasename: string): string {
+  const SCOPE = "[data-arcanada-publish-composer='true']";
+  return `(function(){
+    function walk(root, visit){ visit(root); var e=root.querySelectorAll?root.querySelectorAll('*'):[]; for(var i=0;i<e.length;i++) if(e[i].shadowRoot) walk(e[i].shadowRoot, visit); }
+    var scopes=new Set();
+    walk(document, function(root){
+      var found=[]; try { found=root.querySelectorAll(${JSON.stringify(SCOPE)}); } catch(e){}
+      for(var i=0;i<found.length;i++) scopes.add(found[i]);
+    });
+    var expected=${JSON.stringify(expectedBasename)};
+    var hits=[];
+    scopes.forEach(function(scope){
+      walk(scope, function(root){
+        var nodes=[]; try { nodes=root.querySelectorAll('*'); } catch(e){}
+        for(var i=0;i<nodes.length;i++){
+          var text=(nodes[i].textContent||nodes[i].innerText||'').trim();
+          if(text.indexOf(expected)!==-1 && hits.length<20){
+            hits.push({
+              tag:(nodes[i].tagName||'').toLowerCase(),
+              text:text.slice(0,200),
+              childCount:nodes[i].children?nodes[i].children.length:0,
+              shadow:!!nodes[i].shadowRoot
+            });
+          }
+        }
+      });
+    });
+    return {scopeCount:scopes.size, hitCount:hits.length, hits:hits};
+  })()`;
+}
+
 /** Mark the exact post composer by walking upward from its resolved editor. */
 export function markComposerScopeJs(): string {
   return `(element => {
