@@ -117,6 +117,36 @@ describe("x delete — read-before-delete (R13 / V-AC-9)", () => {
 });
 
 describe("PUB-0033 — target the EXACT tweet on a reply permalink (thread bug)", () => {
+  it("recognizes the Russian definitive-absent page text with safe case inflection", async () => {
+    const previousDocument = (globalThis as { document?: unknown }).document;
+    const waitForFunction = vi.fn(async (predicate, input) => {
+      Object.defineProperty(globalThis, "document", {
+        configurable: true,
+        value: {
+          querySelectorAll: () => [],
+          body: {
+            innerText:
+              "Хмм... Такой страницы не существует. Попробуйте поискать что-нибудь другое.",
+          },
+        },
+      });
+      try {
+        const outcome = (predicate as (expected: unknown) => unknown)(input);
+        return { jsonValue: async () => outcome };
+      } finally {
+        if (previousDocument === undefined) Reflect.deleteProperty(globalThis, "document");
+        else
+          Object.defineProperty(globalThis, "document", {
+            configurable: true,
+            value: previousDocument,
+          });
+      }
+    });
+    await expect(
+      waitForExactStatusState({ waitForFunction } as never, "777", "PaxBeach"),
+    ).resolves.toBe("absent");
+  });
+
   it("waits for a definitive present/absent state instead of treating initial zero articles as absent", async () => {
     const waitForFunction = vi.fn(async (_fn, input, options) => {
       expect(input).toEqual({ statusId: "777", handle: "paxbeach" });
