@@ -2,7 +2,7 @@
 // Asserts: each builder returns a syntactically plausible plan (contains expected
 // filter tokens) and no shell metacharacters from user-controlled inputs.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { BuildContext } from "../src/presets/types.js";
 import { zoompanPreset } from "../src/presets/cover-zoompan.js";
 import { cqtPreset } from "../src/presets/audio-cqt.js";
@@ -32,6 +32,10 @@ const coverOnlyCtx: BuildContext = {
 
 function flattenArgs(plan: ReturnType<typeof zoompanPreset.buildPlan>): string[] {
   return plan.passes.flatMap((p) => p.args);
+}
+
+function normalizeCycleWorkdirs(args: string[]): string[] {
+  return args.map((arg) => arg.replace(/_cycleWork-\d+/g, "_cycleWork-<timestamp>"));
 }
 
 describe("zoompan preset", () => {
@@ -199,11 +203,15 @@ describe("cycle preset", () => {
   });
 
   it("seeds produce deterministic effect sequences", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValueOnce(1_000).mockReturnValueOnce(1_001);
     const plan1 = cyclePreset.buildPlan({ ...baseCtx, durationSec: 15, seed: 123 });
     const plan2 = cyclePreset.buildPlan({ ...baseCtx, durationSec: 15, seed: 123 });
-    // Same seed → same effect sequence → same filter_complex values
-    const allArgs1 = flattenArgs(plan1);
-    const allArgs2 = flattenArgs(plan2);
+    now.mockRestore();
+
+    expect(plan1.workdir).not.toBe(plan2.workdir);
+    // The seed-derived plan is deterministic; per-run cleanup paths are intentionally unique.
+    const allArgs1 = normalizeCycleWorkdirs(flattenArgs(plan1));
+    const allArgs2 = normalizeCycleWorkdirs(flattenArgs(plan2));
     expect(allArgs1).toEqual(allArgs2);
   });
 
