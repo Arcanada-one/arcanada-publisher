@@ -5,6 +5,7 @@ import {
   scopedVideoCountJs,
   shadowFindActivityUrnJs,
   markComposerScopeJs,
+  shadowClickComposerButtonJs,
 } from "../src/dom-shadow.js";
 
 // The walkers are JS *source strings* run via page.evaluate in the browser. We
@@ -308,31 +309,192 @@ describe("dom-shadow — scopedVideoCountJs (fail-closed video detection)", () =
 });
 
 describe("dom-shadow — markComposerScopeJs", () => {
-  it("marks the dialog parent inside the same shadow root before crossing to its host", () => {
+  it("marks a light-DOM semantic composer parent with one Post control", () => {
     const attributes = new Map<string, string>();
-    const shadowRoot = { host: null as unknown };
-    const host = {
+    const post = {
+      innerText: "Post",
+      getAttribute: () => null,
+    };
+    const wrapper = {
       parentElement: null,
-      matches: () => false,
+      setAttribute: (name: string, value: string) => attributes.set(name, value),
+      matches: (selector: string) => selector.includes("[role='dialog']"),
+      querySelectorAll: (selector: string) => (selector.includes("button") ? [post] : []),
       getRootNode: () => ({ host: null }),
     };
-    shadowRoot.host = host;
-    const dialog = {
-      parentElement: null,
-      matches: (selector: string) => selector.includes("[role='dialog']"),
-      setAttribute: (name: string, value: string) => attributes.set(name, value),
-      getRootNode: () => shadowRoot,
-    };
     const editor = {
-      parentElement: dialog,
-      matches: () => false,
-      getRootNode: () => shadowRoot,
+      parentElement: wrapper,
+      querySelectorAll: () => [],
+      getRootNode: () => ({ host: null }),
     };
     const marker = Function(`return ${markComposerScopeJs()};`)() as (
       element: typeof editor,
     ) => boolean;
     expect(marker(editor)).toBe(true);
     expect(attributes.get("data-arcanada-publish-composer")).toBe("true");
+  });
+
+  it("crosses a shadow boundary and marks the host that owns the unique Post control", () => {
+    const attributes = new Map<string, string>();
+    const post = { innerText: "Julkaise", getAttribute: () => null };
+    const buttonRoot = {
+      querySelectorAll: (selector: string) => (selector.includes("button") ? [post] : []),
+    };
+    const host = {
+      parentElement: null,
+      shadowRoot: buttonRoot,
+      setAttribute: (name: string, value: string) => attributes.set(name, value),
+      querySelectorAll: () => [],
+      getRootNode: () => ({ host: null }),
+    };
+    const editorRoot = { host };
+    const editor = {
+      parentElement: null,
+      querySelectorAll: () => [],
+      getRootNode: () => editorRoot,
+    };
+    const marker = Function(`return ${markComposerScopeJs()};`)() as (
+      element: typeof editor,
+    ) => boolean;
+    expect(marker(editor)).toBe(true);
+    expect(attributes.get("data-arcanada-publish-composer")).toBe("true");
+  });
+
+  it("fails closed when the candidate contains multiple Post controls", () => {
+    const attributes = new Map<string, string>();
+    const posts = ["Post", "Post"].map((innerText) => ({
+      innerText,
+      getAttribute: () => null,
+    }));
+    const wrapper = {
+      parentElement: null,
+      setAttribute: (name: string, value: string) => attributes.set(name, value),
+      querySelectorAll: (selector: string) => (selector.includes("button") ? posts : []),
+      getRootNode: () => ({ host: null }),
+    };
+    const editor = {
+      parentElement: wrapper,
+      querySelectorAll: () => [],
+      getRootNode: () => ({ host: null }),
+    };
+    const marker = Function(`return ${markComposerScopeJs()};`)() as (
+      element: typeof editor,
+    ) => boolean;
+    expect(marker(editor)).toBe(false);
+    expect(attributes.has("data-arcanada-publish-composer")).toBe(false);
+  });
+
+  it("does not escape the editor shadow host to an unrelated sibling Post control", () => {
+    const attributes = new Map<string, string>();
+    const unrelatedPost = { innerText: "Post", getAttribute: () => null };
+    const pageRoot = {
+      parentElement: null,
+      querySelectorAll: (selector: string) => (selector.includes("button") ? [unrelatedPost] : []),
+      getRootNode: () => ({ host: null }),
+      setAttribute: (name: string, value: string) => attributes.set(name, value),
+    };
+    const editorShadow = { host: null as unknown };
+    const editorHost = {
+      parentElement: pageRoot,
+      shadowRoot: { querySelectorAll: () => [] },
+      querySelectorAll: () => [],
+      getRootNode: () => ({ host: null }),
+      setAttribute: (name: string, value: string) => attributes.set(name, value),
+    };
+    editorShadow.host = editorHost;
+    const editor = {
+      parentElement: null,
+      querySelectorAll: () => [],
+      getRootNode: () => editorShadow,
+    };
+    const marker = Function(`return ${markComposerScopeJs()};`)() as (
+      element: typeof editor,
+    ) => boolean;
+    expect(marker(editor)).toBe(false);
+    expect(attributes.has("data-arcanada-publish-composer")).toBe(false);
+  });
+
+  it("rejects a broad application root even when it has one visible Post control", () => {
+    const attributes = new Map<string, string>();
+    const post = {
+      innerText: "Post",
+      offsetWidth: 10,
+      offsetHeight: 10,
+      getAttribute: () => null,
+    };
+    const appRoot = {
+      tagName: "MAIN",
+      parentElement: null,
+      querySelectorAll: (selector: string) => (selector.includes("button") ? [post] : []),
+      getRootNode: () => ({ host: null }),
+      getAttribute: () => null,
+      setAttribute: (name: string, value: string) => attributes.set(name, value),
+    };
+    const shadowRoot = { host: appRoot };
+    const editor = {
+      parentElement: null,
+      querySelectorAll: () => [],
+      getRootNode: () => shadowRoot,
+    };
+    const marker = Function(`return ${markComposerScopeJs()};`)() as (
+      element: typeof editor,
+    ) => boolean;
+    expect(marker(editor)).toBe(false);
+    expect(attributes.has("data-arcanada-publish-composer")).toBe(false);
+  });
+});
+
+describe("dom-shadow — shadowClickComposerButtonJs", () => {
+  it("clicks only the unique Post control inside the marked composer", () => {
+    const insideClicks = { n: 0 };
+    const outsideClicks = { n: 0 };
+    const inside = el({ tag: "button", text: "Post", clicks: insideClicks });
+    const outside = el({ tag: "button", text: "Post", clicks: outsideClicks });
+    const scope = el({
+      tag: "div",
+      text: "scope:[data-arcanada-publish-composer='true']",
+      children: [inside],
+    });
+    const result = run(shadowClickComposerButtonJs("/^Post$/i"), [outside, scope]);
+    expect(result).toBe(true);
+    expect(insideClicks.n).toBe(1);
+    expect(outsideClicks.n).toBe(0);
+  });
+
+  it("fails closed when the marked composer has multiple matching Post controls", () => {
+    const scope = el({
+      tag: "div",
+      text: "scope:[data-arcanada-publish-composer='true']",
+      children: [el({ tag: "button", text: "Post" }), el({ tag: "button", text: "Post" })],
+    });
+    expect(run(shadowClickComposerButtonJs("/^Post$/i"), [scope])).toBe(false);
+  });
+
+  it("does not click a hidden-only Post control", () => {
+    const clicks = { n: 0 };
+    const scope = el({
+      tag: "div",
+      text: "scope:[data-arcanada-publish-composer='true']",
+      children: [el({ tag: "button", text: "Post", visible: false, clicks })],
+    });
+    expect(run(shadowClickComposerButtonJs("/^Post$/i"), [scope])).toBe(false);
+    expect(clicks.n).toBe(0);
+  });
+
+  it("clicks the visible Post once when a hidden stale control coexists", () => {
+    const visibleClicks = { n: 0 };
+    const hiddenClicks = { n: 0 };
+    const scope = el({
+      tag: "div",
+      text: "scope:[data-arcanada-publish-composer='true']",
+      children: [
+        el({ tag: "button", text: "Post", visible: false, clicks: hiddenClicks }),
+        el({ tag: "button", text: "Post", clicks: visibleClicks }),
+      ],
+    });
+    expect(run(shadowClickComposerButtonJs("/^Post$/i"), [scope])).toBe(true);
+    expect(visibleClicks.n).toBe(1);
+    expect(hiddenClicks.n).toBe(0);
   });
 });
 

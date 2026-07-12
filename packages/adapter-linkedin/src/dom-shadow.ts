@@ -101,21 +101,83 @@ export function scopedVideoCountJs(): string {
 /** Mark the exact post composer by walking upward from its resolved editor. */
 export function markComposerScopeJs(): string {
   return `(element => {
+    var POST=/^(Post|Posten|Veröffentlichen|Опубликовать|Julkaise|Teilen)$/i;
+    function collectButtons(root, found){
+      var buttons=[];
+      try { buttons=root.querySelectorAll('button, [role=button]'); } catch(e){}
+      for(var b=0;b<buttons.length;b++){
+        var label=(buttons[b].getAttribute('aria-label')||buttons[b].innerText||'').trim();
+        var visible=typeof buttons[b].offsetWidth!=='number'||typeof buttons[b].offsetHeight!=='number'||buttons[b].offsetWidth+buttons[b].offsetHeight>0;
+        if(visible&&POST.test(label)) found.add(buttons[b]);
+      }
+      if(root.shadowRoot) collectButtons(root.shadowRoot, found);
+      var elements=[];
+      try { elements=root.querySelectorAll('*'); } catch(e){}
+      for(var i=0;i<elements.length;i++) if(elements[i].shadowRoot) collectButtons(elements[i].shadowRoot, found);
+    }
     var current=element;
+    var inShadow=!!(element.getRootNode && element.getRootNode().host);
+    var stopAfterCurrent=false;
     while(current){
-      if(current.matches && current.matches("[role='dialog'], .share-creation-state, .share-box")){
+      var controls=new Set();
+      collectButtons(current, controls);
+      var semantic=!!(current.matches && current.matches("[role='dialog'], .share-creation-state, .share-box"));
+      var tag=(current.tagName||'').toUpperCase();
+      var role=(current.getAttribute&&current.getAttribute('role')||'').toLowerCase();
+      var broad=tag==='BODY'||tag==='HTML'||tag==='MAIN'||role==='application'||role==='main';
+      if(!broad&&typeof window!=='undefined'&&current.getBoundingClientRect){
+        var rect=current.getBoundingClientRect();
+        broad=rect.width>=window.innerWidth*0.95&&rect.height>=window.innerHeight*0.95;
+      }
+      if(controls.size===1 && broad) return false;
+      if(controls.size===1 && (inShadow || semantic)){
         current.setAttribute("data-arcanada-publish-composer", "true");
         return true;
       }
+      if(controls.size>1) return false;
+      if(stopAfterCurrent) return false;
       if(current.parentElement){
         current=current.parentElement;
         continue;
       }
       var root=current.getRootNode ? current.getRootNode() : null;
-      current=root && root.host ? root.host : null;
+      if(!root || !root.host) return false;
+      current=root.host;
+      inShadow=true;
+      var hostRoot=current.getRootNode ? current.getRootNode() : null;
+      stopAfterCurrent=!(hostRoot && hostRoot.host);
     }
     return false;
   })`;
+}
+
+/** Click the unique enabled Post control inside the exact marked composer. */
+export function shadowClickComposerButtonJs(patternSrc: string): string {
+  return `(function(){
+    function walk(root, visit){ visit(root); var e=root.querySelectorAll?root.querySelectorAll('*'):[]; for(var i=0;i<e.length;i++) if(e[i].shadowRoot) walk(e[i].shadowRoot, visit); }
+    function collectDeep(root, found){
+      var buttons=[]; try { buttons=root.querySelectorAll('button, [role=button]'); } catch(e){}
+      var RE=${patternSrc};
+      for(var b=0;b<buttons.length;b++){
+        var button=buttons[b];
+        var label=(button.getAttribute('aria-label')||button.innerText||'').trim();
+        var visible=typeof button.offsetWidth!=='number'||typeof button.offsetHeight!=='number'||button.offsetWidth+button.offsetHeight>0;
+        if(visible && RE.test(label) && !button.disabled && button.getAttribute('aria-disabled')!=='true') found.add(button);
+      }
+      if(root.shadowRoot) collectDeep(root.shadowRoot, found);
+      var elements=[]; try { elements=root.querySelectorAll('*'); } catch(e){}
+      for(var i=0;i<elements.length;i++) if(elements[i].shadowRoot) collectDeep(elements[i].shadowRoot, found);
+    }
+    var scopes=[];
+    walk(document, function(root){
+      var found=[]; try { found=root.querySelectorAll("[data-arcanada-publish-composer='true']"); } catch(e){}
+      for(var i=0;i<found.length;i++) scopes.push(found[i]);
+    });
+    if(scopes.length!==1) return false;
+    var controls=new Set(); collectDeep(scopes[0], controls);
+    if(controls.size!==1) return false;
+    var hit=Array.from(controls)[0]; hit.click(); return true;
+  })()`;
 }
 
 /**
