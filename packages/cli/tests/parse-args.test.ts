@@ -82,6 +82,35 @@ describe("cli parse-args (V-AC-11 flag contract)", () => {
     expect(a.textFile).toBe("fixed.txt");
   });
 
+  it("parses Telegram read-before-edit media and parent oracles", () => {
+    const a = parseArgs([
+      "edit",
+      "--platform",
+      "telegram",
+      "--target-url",
+      "https://t.me/valentovtypes/208",
+      "--text-file",
+      "caption.txt",
+      "--image",
+      "video.mp4",
+      "--expected-content",
+      "#PUB_0029_unique",
+      "--expected-media-kind",
+      "image",
+      "--parent-url",
+      "https://t.me/valentovtypes/207",
+    ]);
+    expect(a.expectedContent).toBe("#PUB_0029_unique");
+    expect(a.expectedMediaKind).toBe("image");
+    expect(a.parentUrl).toBe("https://t.me/valentovtypes/207");
+  });
+
+  it("rejects an invalid --expected-media-kind", () => {
+    expect(() =>
+      parseArgs(["edit", "--platform", "telegram", "--expected-media-kind", "audio"]),
+    ).toThrow(CliParseError);
+  });
+
   it("parses the net-new server command with --bind + --port", () => {
     const a = parseArgs(["server", "--bind", "127.0.0.1", "--port", "8787"]);
     expect(a.command).toBe("server");
