@@ -32,6 +32,7 @@ export interface ParsedArgs {
   targetUrl: string | undefined;
   parentUrl: string | undefined;
   expectedContent: string | undefined;
+  expectedMediaKind: "image" | "video" | "none" | undefined;
   bind: string | undefined;
   /** Loopback port for the `server` command (undefined → server default). */
   port: number | undefined;
@@ -95,6 +96,7 @@ const VALUE_FLAGS = new Set([
   "--target-url",
   "--parent-url",
   "--expected-content",
+  "--expected-media-kind",
   "--bind",
   "--port",
   "--subreddit",
@@ -142,6 +144,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     targetUrl: undefined,
     parentUrl: undefined,
     expectedContent: undefined,
+    expectedMediaKind: undefined,
     bind: undefined,
     port: undefined,
     subreddit: undefined,
@@ -216,6 +219,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
         break;
       case "--expected-content":
         out.expectedContent = value;
+        break;
+      case "--expected-media-kind":
+        if (value !== "image" && value !== "video" && value !== "none")
+          throw new CliParseError(
+            `--expected-media-kind must be image, video, or none, got '${value}'`,
+          );
+        out.expectedMediaKind = value;
         break;
       case "--bind":
         out.bind = value;

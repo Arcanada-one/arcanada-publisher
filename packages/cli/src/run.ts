@@ -107,6 +107,9 @@ async function runEdit(platform: Platform, profile: string, args: ParsedArgs): P
     postUrl: args.targetUrl,
     text: readText(args),
     ...(args.images[0] ? { imagePath: args.images[0] } : {}),
+    ...(args.expectedContent ? { expectedContent: args.expectedContent } : {}),
+    ...(args.expectedMediaKind ? { expectedMediaKind: args.expectedMediaKind } : {}),
+    ...(args.parentUrl ? { expectedParentUrl: args.parentUrl } : {}),
     profile,
   });
   return { code: ErrorCode.SUCCESS, message: `edited ${res.postUrl}` };

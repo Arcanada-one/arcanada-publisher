@@ -41,6 +41,12 @@ export interface EditInput {
   postUrl: string;
   text?: string;
   imagePath?: string;
+  /** Read-before-edit oracle; Telegram requires it for media replacement. */
+  expectedContent?: string;
+  /** Read-before-edit media oracle for adapters that can inspect the current artifact. */
+  expectedMediaKind?: "image" | "video" | "none";
+  /** Optional read-before-edit reply-parent oracle. */
+  expectedParentUrl?: string;
   profile: string;
 }
 
