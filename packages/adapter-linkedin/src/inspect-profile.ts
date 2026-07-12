@@ -141,10 +141,10 @@ async function runInspection(
   if (!matched.hasNativeVideo) return fail("exact post match has no native video");
   const id = activityId(matched.activityUrl);
   if (!id) return fail("exact post match has no activity id");
-  const vanityPermalink = isVanityPermalink(matched.vanityPermalink, id)
+  const vanityPermalink = isVanityPermalink(matched.vanityPermalink, id, expectedIdentity)
     ? matched.vanityPermalink
     : await recoverVanityPermalink(page, matched.activityUrl, expectedIdentity, id);
-  if (!isVanityPermalink(vanityPermalink, id)) {
+  if (!isVanityPermalink(vanityPermalink, id, expectedIdentity)) {
     return fail("exact post match has no bound vanity permalink");
   }
 
@@ -244,12 +244,13 @@ function activityId(rawUrl: string): string | null {
   );
 }
 
-function isVanityPermalink(rawUrl: string, id: string): boolean {
+function isVanityPermalink(rawUrl: string, id: string, expectedAuthorIdentity: string): boolean {
   try {
     const parsed = new URL(rawUrl);
+    const authorSlug = expectedAuthorIdentity.split("/in/")[1]?.toLowerCase() ?? "";
     return (
       /^(www\.)?linkedin\.com$/i.test(parsed.hostname) &&
-      parsed.pathname.startsWith("/posts/") &&
+      parsed.pathname.toLowerCase().startsWith(`/posts/${authorSlug}_`) &&
       parsed.pathname.includes(`-${id}-`)
     );
   } catch {
@@ -463,7 +464,12 @@ export function expandMatchingLinkedInActivity(
         .normalize("NFKC")
         .trim()
         .toLowerCase();
-      if (!/^(more|see more(?:,.*)?|…more|näytä lisää|показать ещё)$/.test(label)) continue;
+      if (
+        !/^(more|see more|see more, visually reveals content which is already detected by screen readers|…more|näytä lisää|показать ещё)$/.test(
+          label,
+        )
+      )
+        continue;
       button.click?.();
       clicked += 1;
     }
@@ -584,13 +590,23 @@ export function extractLinkedInVanityPermalink(
   const activitySelector = "[data-urn*='urn:li:activity'], [data-id*='urn:li:activity']";
   for (const container of Array.from(root.querySelectorAll(activitySelector))) {
     const raw = container.getAttribute("data-urn") ?? container.getAttribute("data-id") ?? "";
-    if (!raw.includes(`urn:li:activity:${expected.activityId}`)) continue;
+    if (/urn:li:activity:(\d+)/.exec(raw)?.[1] !== expected.activityId) continue;
     const author = Array.from(
       container.querySelectorAll(
         ".update-components-actor__meta-link[href*='/in/'], .update-components-actor__container-link[href*='/in/']",
       ),
     )[0];
-    if (!(author?.href ?? "").toLowerCase().includes(`/in/${authorSlug}`)) continue;
+    let authorIdentity = "";
+    try {
+      const parsed = new URL(author?.href ?? "", "https://www.linkedin.com");
+      const match = /^\/in\/([^/]+)\/?$/.exec(parsed.pathname);
+      if (/^(www\.)?linkedin\.com$/i.test(parsed.hostname) && match) {
+        authorIdentity = `www.linkedin.com/in/${match[1]!.toLowerCase()}`;
+      }
+    } catch {
+      authorIdentity = "";
+    }
+    if (authorIdentity !== expected.expectedAuthorIdentity) continue;
     for (const anchor of Array.from(container.querySelectorAll("a[href*='/posts/']"))) {
       const value = valid(anchor.href ?? "");
       if (value) return value;

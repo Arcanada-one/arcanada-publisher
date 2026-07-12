@@ -86,6 +86,14 @@ describe("LinkedIn read-only profile inspection", () => {
       ["video", [post({ hasNativeVideo: false })]],
       ["vanity", [post({ vanityPermalink: "" })]],
       [
+        "impostor-vanity",
+        [
+          post({
+            vanityPermalink: `https://www.linkedin.com/posts/impostor_building-activity-${ID}-AbCd`,
+          }),
+        ],
+      ],
+      [
         "duplicate",
         [
           post(),
@@ -134,7 +142,7 @@ describe("LinkedIn read-only profile inspection", () => {
       "time",
       "",
       undefined,
-      `https://www.linkedin.com/posts/pavel_post-activity-${ID}-AbCd`,
+      `https://www.linkedin.com/posts/pavelvalentov_post-activity-${ID}-AbCd`,
     );
     outer.child("video", "video-player");
     const nested = outer.child("", "mini-update");
@@ -205,6 +213,24 @@ describe("LinkedIn read-only profile inspection", () => {
     expect(live.clickCount).toBe(1);
   });
 
+  it("does not accept unrelated see-more comma actions", () => {
+    const outer = new FakeNode("", { "data-urn": `urn:li:activity:${ID}` });
+    outer.child("Building the Binary Is Only the Beginning…", "update-components-text");
+    outer.child("Pavel", "update-components-actor__meta-link", PROFILE);
+    const unrelated = outer.child("", "button", undefined, undefined, undefined, {
+      "aria-label": "See more, delete this item",
+    });
+    const root = new FakeNode("");
+    root.children.push(outer);
+    expect(
+      expandMatchingLinkedInActivity(root, {
+        expectedAuthorIdentity: "www.linkedin.com/in/pavelvalentov",
+        expectedTitle: "Building the Binary Is Only the Beginning",
+      }),
+    ).toBe(0);
+    expect(unrelated.clickCount).toBe(0);
+  });
+
   it("removes the direct-owned live control before exact body normalization", () => {
     const body = new FakeNode(`${BODY}\n...more`, {}, "update-components-text");
     body.child("...more", "button");
@@ -233,6 +259,34 @@ describe("LinkedIn read-only profile inspection", () => {
     canonical.href = `https://www.linkedin.com/posts/impostor_building-activity-${ID}-AbCd`;
     expect(
       extractLinkedInVanityPermalink(root, {
+        expectedAuthorIdentity: "www.linkedin.com/in/pavelvalentov",
+        activityId: ID,
+      }),
+    ).toBe("");
+
+    const prefixActivity = new FakeNode("", { "data-urn": `urn:li:activity:${ID}9` });
+    prefixActivity.child(
+      "Pavel",
+      "update-components-actor__meta-link",
+      "https://example.test/in/pavelvalentov/",
+    );
+    prefixActivity.child(
+      "time",
+      "",
+      `https://www.linkedin.com/posts/pavelvalentov_building-activity-${ID}-AbCd`,
+    );
+    const adversarialRoot = new FakeNode("");
+    adversarialRoot.children.push(prefixActivity);
+    expect(
+      extractLinkedInVanityPermalink(adversarialRoot, {
+        expectedAuthorIdentity: "www.linkedin.com/in/pavelvalentov",
+        activityId: ID,
+      }),
+    ).toBe("");
+
+    prefixActivity.attrsForTest["data-urn"] = `urn:li:activity:${ID}`;
+    expect(
+      extractLinkedInVanityPermalink(adversarialRoot, {
         expectedAuthorIdentity: "www.linkedin.com/in/pavelvalentov",
         activityId: ID,
       }),
@@ -271,7 +325,7 @@ describe("LinkedIn read-only profile inspection", () => {
       "time",
       "",
       undefined,
-      `https://www.linkedin.com/posts/pavel_post-activity-${ID}-AbCd`,
+      `https://www.linkedin.com/posts/pavelvalentov_post-activity-${ID}-AbCd`,
     );
     outer.child("video", "video-player");
     outer.child("more", "button", undefined, undefined, () => {
@@ -385,6 +439,10 @@ class FakeNode {
     return this.attrs[name] ?? null;
   }
 
+  get attrsForTest(): Record<string, string> {
+    return this.attrs;
+  }
+
   click(): void {
     this.clickCount += 1;
     this.onClick?.();
@@ -453,7 +511,7 @@ function failingRoot(label: string): FakeNode {
     "time",
     "",
     undefined,
-    `https://www.linkedin.com/posts/pavel_post-activity-${ID}-AbCd`,
+    `https://www.linkedin.com/posts/pavelvalentov_post-activity-${ID}-AbCd`,
   );
   outer.child("video", "video-player");
   outer.child(label, "button");
