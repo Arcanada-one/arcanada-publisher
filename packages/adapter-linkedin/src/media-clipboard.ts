@@ -23,6 +23,7 @@ export interface ClipboardProof {
   verified: boolean;
   size: number;
   sha256: string;
+  canonicalPath: string;
 }
 
 export function validateMediaFile(
@@ -33,7 +34,12 @@ export function validateMediaFile(
     const path = deps.realpath(mediaPath);
     const bytes = deps.read(path) as Buffer;
     const size = deps.stat(path).size;
-    return { verified: true, size, sha256: createHash("sha256").update(bytes).digest("hex") };
+    return {
+      verified: true,
+      size,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      canonicalPath: path,
+    };
   } catch {
     throw clipboardError("media file validation failed");
   }
@@ -105,7 +111,7 @@ export function prepareMediaClipboard(
   if (source !== resolved || sourceSize !== targetSize || sourceHash !== targetHash) {
     throw clipboardError("macOS clipboard file verification mismatch");
   }
-  return { verified: true, size: sourceSize, sha256: sourceHash };
+  return { verified: true, size: sourceSize, sha256: sourceHash, canonicalPath: source };
 }
 
 function clipboardError(message: string): AdapterError {

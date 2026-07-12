@@ -31,6 +31,7 @@ import { launchSession, withScreenshotOnFail } from "./context.js";
 import { ACTIVITY_URN_RE, extractActivityUrn, pickFirstActivityHref } from "./url-extraction.js";
 import { classifyLiError, mapLiError } from "./errors.js";
 import { prepareMediaClipboard, validateMediaFile } from "./media-clipboard.js";
+import { dispatchVideoDragDrop } from "./media-drag.js";
 import {
   markComposerScopeJs,
   shadowClickComposerButtonJs,
@@ -142,6 +143,11 @@ export interface PublishOptions {
   __validateMediaFile?: (path: string) => unknown;
   __isEditorFocused?: (editor: ReturnType<Page["locator"]>) => Promise<boolean>;
   __onStage?: (stage: string) => void;
+  __dispatchVideoDragDrop?: (
+    page: Page,
+    editor: ReturnType<Page["locator"]>,
+    path: string,
+  ) => Promise<void>;
 }
 
 export async function publish(
@@ -387,6 +393,29 @@ async function runPublishFlow(
           break;
         }
         await page.waitForTimeout(500);
+      }
+      if (!attached && hasVideo) {
+        if (imagePaths.length !== 1) {
+          throw new AdapterError(
+            ErrorCode.INVALID_ARGS,
+            "LinkedIn CDP video drag fallback requires exactly one video",
+          );
+        }
+        await (options.__dispatchVideoDragDrop ?? dispatchVideoDragDrop)(
+          page,
+          editor,
+          imagePaths[0],
+        );
+        options.__onStage?.("cdp_drag_drop");
+        for (let i = 0; i < maxPolls; i++) {
+          const n = (await page.evaluate(scopedVideoCountJs())) as number;
+          if (n > 0) {
+            attached = true;
+            options.__onStage?.("scoped_preview");
+            break;
+          }
+          await page.waitForTimeout(500);
+        }
       }
       if (!attached) {
         throw mapLiError("composer_not_found", {
