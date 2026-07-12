@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ErrorCode, ProfileManager } from "@arcanada/publisher-core";
-import { publish } from "../src/publish.js";
+import { isComposedEditorFocused, publish } from "../src/publish.js";
 
 // PUB-0031: fail-closed post-publish video re-verify.
 //
@@ -43,6 +43,7 @@ function fakeVideoPublishPage(): never {
     isVisible: async () => true,
     count: async () => 1,
     click: async () => {},
+    focus: async () => {},
     evaluate: async () => true,
   };
   const page = {
@@ -71,6 +72,47 @@ function fakeVideoPublishPage(): never {
 }
 
 describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
+  it("production focus callback resolves nested shadow activeElement", () => {
+    const editor = {
+      ownerDocument: { activeElement: null as never },
+      contains: (node: unknown) => node === editor,
+    };
+    const innerHost = { shadowRoot: { activeElement: editor } };
+    const outerHost = { shadowRoot: { activeElement: innerHost } };
+    editor.ownerDocument.activeElement = outerHost as never;
+    expect(isComposedEditorFocused(editor as never)).toBe(true);
+    editor.ownerDocument.activeElement = { shadowRoot: { activeElement: null } } as never;
+    expect(isComposedEditorFocused(editor as never)).toBe(false);
+  });
+
+  it("focus mismatch aborts before clipboard, paste, text, or Post", async () => {
+    const vid = makeVideo();
+    const prepare = vi.fn();
+    const stages: string[] = [];
+    const page = fakeVideoPublishPage() as unknown as {
+      keyboard: { press: ReturnType<typeof vi.fn>; insertText: ReturnType<typeof vi.fn> };
+    };
+    page.keyboard.press = vi.fn(async () => {});
+    page.keyboard.insertText = vi.fn(async () => {});
+    await expect(
+      publish(
+        { text: "never typed", imagePath: vid, profile: "p1" },
+        {
+          profileManager: makeProfiles(),
+          page: page as never,
+          __isEditorFocused: async () => false,
+          __prepareMediaClipboard: prepare,
+          __onStage: (stage) => stages.push(stage),
+        },
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.PUBLISH_BUTTON_ABSENT });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(page.keyboard.press).not.toHaveBeenCalled();
+    expect(page.keyboard.insertText).not.toHaveBeenCalled();
+    expect(stages).toEqual(["editor_click", "editor_focus"]);
+    expect(stages).not.toContain("post_click");
+  });
+
   it("abortAfterMedia rejects a smoke without media before browser IO", async () => {
     await expect(
       publish(
@@ -94,19 +136,27 @@ describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
 
   it("abortAfterMedia returns before text insertion or Post", async () => {
     const vid = makeVideo();
+    const stages: string[] = [];
     const page = fakeVideoPublishPage() as unknown as {
       keyboard: { press: ReturnType<typeof vi.fn>; insertText: ReturnType<typeof vi.fn> };
     };
     page.keyboard.insertText = vi.fn(async () => {});
     const result = await publish(
       { text: "must not be typed", imagePath: vid, profile: "p1" },
-      { profileManager: makeProfiles(), page: page as never, abortAfterMedia: true },
+      {
+        profileManager: makeProfiles(),
+        page: page as never,
+        abortAfterMedia: true,
+        __onStage: (stage) => stages.push(stage),
+      },
     );
     expect(result).toMatchObject({ aborted: true, mediaAttached: true });
     expect(page.keyboard.insertText).not.toHaveBeenCalled();
+    expect(stages).not.toContain("text_insert");
+    expect(stages).not.toContain("post_click");
   });
 
-  it("prepares the exact clipboard twice, with the second check immediately before paste", async () => {
+  it("orders focus proof, one clipboard prepare, paste, and scoped preview", async () => {
     const vid = makeVideo();
     const events: string[] = [];
     const page = fakeVideoPublishPage() as unknown as {
@@ -119,13 +169,19 @@ describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
         profileManager: makeProfiles(),
         page: page as never,
         __prepareMediaClipboard: (path) => events.push(`prepare:${path}`),
+        __onStage: (stage) => events.push(`stage:${stage}`),
         __verifyPostVideo: async () => true,
       },
     );
-    expect(events).toEqual([
+    expect(events.slice(0, 8)).toEqual([
+      "stage:editor_click",
+      "stage:editor_focus",
+      "stage:composed_focus_proof",
       `prepare:${vid}`,
-      `prepare:${vid}`,
+      "stage:clipboard_prepare",
       `key:${process.platform === "darwin" ? "Meta+v" : "Control+v"}`,
+      "stage:paste_key",
+      "stage:scoped_preview",
     ]);
   });
 
@@ -178,6 +234,7 @@ describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
           isVisible: async () => true,
           count: async () => 1,
           click: async () => {},
+          focus: async () => {},
           evaluate: async () => true,
         }),
       }),
@@ -187,6 +244,7 @@ describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
           isVisible: async () => true,
           count: async () => 1,
           click: async () => {},
+          focus: async () => {},
           evaluate: async () => true,
         }),
       }),

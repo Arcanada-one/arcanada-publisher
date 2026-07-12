@@ -25,6 +25,20 @@ export interface ClipboardProof {
   sha256: string;
 }
 
+export function validateMediaFile(
+  mediaPath: string,
+  deps: ClipboardDeps = defaults,
+): ClipboardProof {
+  try {
+    const path = deps.realpath(mediaPath);
+    const bytes = deps.read(path) as Buffer;
+    const size = deps.stat(path).size;
+    return { verified: true, size, sha256: createHash("sha256").update(bytes).digest("hex") };
+  } catch {
+    throw clipboardError("media file validation failed");
+  }
+}
+
 export function prepareMediaClipboard(
   mediaPath: string,
   deps: ClipboardDeps = defaults,
