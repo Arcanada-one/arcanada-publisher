@@ -41,14 +41,40 @@ export async function readFacebookPost(
 ): Promise<FacebookPostReadback> {
   const target = canonicalFacebookPostUrl(targetUrl);
   await page.goto(target);
-  const expanders = page.getByRole("button", {
-    name: /^(See more|Показать ещё|Ещё|Näytä lisää)$/i,
-  });
-  for (let i = 0, count = await expanders.count().catch(() => 0); i < count; i += 1) {
-    await expanders
-      .nth(i)
-      .click()
-      .catch(() => undefined);
+  const articleLocators = page.locator('[role="article"]');
+  for (let index = 0, count = await articleLocators.count(); index < count; index += 1) {
+    const article = articleLocators.nth(index);
+    const isExactTarget = await article.evaluate((node, expected) => {
+      const canonical = (href: string): string | null => {
+        try {
+          const url = new URL(
+            href,
+            (globalThis as unknown as { location: { href: string } }).location.href,
+          );
+          const parts = url.pathname.split("/").filter(Boolean);
+          return parts.length >= 3 && parts[1] === "posts"
+            ? `https://www.facebook.com/${parts[0]}/posts/${parts[2]}`
+            : null;
+        } catch {
+          return null;
+        }
+      };
+      return Array.from(
+        (
+          node as unknown as { querySelectorAll(s: string): ArrayLike<{ href?: string }> }
+        ).querySelectorAll("a[href]"),
+      ).some((anchor) => anchor.href && canonical(anchor.href) === expected);
+    }, target);
+    if (!isExactTarget) continue;
+    const expanders = article.getByRole("button", {
+      name: /^(See more|Показать ещё|Ещё|Näytä lisää)$/i,
+    });
+    for (let i = 0, expandCount = await expanders.count().catch(() => 0); i < expandCount; i += 1) {
+      await expanders
+        .nth(i)
+        .click()
+        .catch(() => undefined);
+    }
   }
   const raw = await page.locator("body").evaluate((root, expected) => {
     type DomElement = {
@@ -58,6 +84,9 @@ export async function readFacebookPost(
       querySelector(selector: string): DomElement | null;
       querySelectorAll(selector: string): ArrayLike<DomElement> & Iterable<DomElement>;
       compareDocumentPosition(other: DomElement): number;
+      getAttribute(name: string): string | null;
+      isConnected: boolean;
+      getBoundingClientRect(): { width: number; height: number };
     };
     const bodyRoot = root as unknown as DomElement;
     const browserLocation = (globalThis as unknown as { location: { href: string } }).location;
@@ -112,6 +141,31 @@ export async function readFacebookPost(
       const mediaUrl = mediaAnchor?.href ? new URL(mediaAnchor.href, browserLocation.href) : null;
       mediaUrl?.searchParams.delete("__cft__[0]");
       mediaUrl?.searchParams.delete("__tn__");
+      const dialog = article.closest('[role="dialog"]');
+      const style = dialog
+        ? (
+            globalThis as unknown as {
+              getComputedStyle(node: DomElement): {
+                display: string;
+                visibility: string;
+                opacity: string;
+              };
+            }
+          ).getComputedStyle(dialog)
+        : null;
+      const rect = dialog?.getBoundingClientRect();
+      const isModal = Boolean(
+        dialog &&
+        dialog.isConnected &&
+        dialog.getAttribute("hidden") === null &&
+        dialog.getAttribute("aria-hidden") !== "true" &&
+        style?.display !== "none" &&
+        style?.visibility !== "hidden" &&
+        style?.opacity !== "0" &&
+        rect &&
+        rect.width > 0 &&
+        rect.height > 0,
+      );
       return [
         {
           canonicalPermalink:
@@ -120,6 +174,7 @@ export async function readFacebookPost(
           body: body.innerText,
           hasImage: mediaUrl !== null,
           mediaIdentity: mediaUrl?.toString() ?? "",
+          isModal,
         },
       ];
     });
@@ -131,7 +186,34 @@ export async function readFacebookPost(
     normalizedBody: normalizeFacebookText(match.body),
     hasImage: match.hasImage,
     mediaIdentity: match.mediaIdentity,
+    isModal: match.isModal,
   }));
+  return resolveFacebookPostReadbacks(candidates);
+}
+
+type CandidateReadback = FacebookPostReadback & { isModal?: boolean };
+
+export function resolveFacebookPostReadbacks(
+  candidates: CandidateReadback[],
+): FacebookPostReadback {
+  const modal = candidates.filter((candidate) => candidate.isModal === true);
+  if (modal.length > 1)
+    throw readbackError(`ambiguous target evidence across ${modal.length} modal copies`);
+  if (modal.length === 1) {
+    const authoritative = modal[0]!;
+    const sameBinding = candidates.every(
+      (candidate) =>
+        candidate.canonicalPermalink === authoritative.canonicalPermalink &&
+        candidate.authorProfileIdentity === authoritative.authorProfileIdentity &&
+        candidate.hasImage === authoritative.hasImage &&
+        candidate.mediaIdentity === authoritative.mediaIdentity,
+    );
+    if (!sameBinding) throw readbackError("modal target binding differs from background evidence");
+    if (!authoritative.hasImage || authoritative.mediaIdentity === "")
+      throw readbackError("target has no post media");
+    const { isModal: _ignored, ...result } = authoritative;
+    return result;
+  }
   return dedupeFacebookPostReadbacks(candidates);
 }
 
