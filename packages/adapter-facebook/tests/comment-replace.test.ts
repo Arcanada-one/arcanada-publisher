@@ -3,7 +3,11 @@ import { mkdtempSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ProfileManager } from "@arcanada/publisher-core";
-import { replaceCommentText, type ReplaceCommentRecorder } from "../src/comment.js";
+import {
+  assertExactCommentBinding,
+  replaceCommentText,
+  type ReplaceCommentRecorder,
+} from "../src/comment.js";
 import { VERIFY_DELAY_MS } from "../src/timing.js";
 
 function makeProfiles(): ProfileManager {
@@ -13,6 +17,7 @@ function makeProfiles(): ProfileManager {
 }
 
 const PARENT = "https://www.facebook.com/100012345/posts/777";
+const AUTHOR_PROFILE = "https://www.facebook.com/pavelvalentov";
 
 describe("facebook R10 — comment-text change is DELETE+ADD, never in-place edit", () => {
   it("R10: replaceCommentText deletes the old comment, then adds the new one (in that order)", async () => {
@@ -20,15 +25,24 @@ describe("facebook R10 — comment-text change is DELETE+ADD, never in-place edi
     const rec: ReplaceCommentRecorder = {
       deleteOldComment: vi.fn(async () => {
         order.push("deleteOldComment");
+        return { preDeleteCommentIds: ["1326931196274132"] };
       }),
       addNewComment: vi.fn(async () => {
         order.push("addNewComment");
-        return "999888";
+        return {
+          commentId: "999888",
+          commentHref: `${PARENT}?comment_id=999888`,
+          preSubmitCommentIds: [],
+          renderedBody: "new\nmulti\nline",
+          renderedAuthorProfileUrl: AUTHOR_PROFILE,
+        };
       }),
     };
     const res = await replaceCommentText(
       {
         parentPostUrl: PARENT,
+        commentId: "1326931196274132",
+        expectedAuthorProfileUrl: AUTHOR_PROFILE,
         oldText: "old link line",
         text: "new\nmulti\nline",
         profile: "p1",
@@ -41,15 +55,112 @@ describe("facebook R10 — comment-text change is DELETE+ADD, never in-place edi
 
   it("R10: never performs an in-place edit — there is NO edit step in the recorder contract", async () => {
     const rec: ReplaceCommentRecorder = {
-      deleteOldComment: vi.fn(async () => {}),
-      addNewComment: vi.fn(async () => "1"),
+      deleteOldComment: vi.fn(async () => ({ preDeleteCommentIds: ["1326931196274132"] })),
+      addNewComment: vi.fn(async () => ({
+        commentId: "1",
+        commentHref: `${PARENT}?comment_id=1`,
+        preSubmitCommentIds: [],
+        renderedBody: "y",
+        renderedAuthorProfileUrl: AUTHOR_PROFILE,
+      })),
     };
     await replaceCommentText(
-      { parentPostUrl: PARENT, oldText: "x", text: "y", profile: "p1" },
+      {
+        parentPostUrl: PARENT,
+        commentId: "1326931196274132",
+        expectedAuthorProfileUrl: AUTHOR_PROFILE,
+        oldText: "x",
+        text: "y",
+        profile: "p1",
+      },
       { profileManager: makeProfiles(), page: { dummy: true } as never, __recorder: rec },
     );
     // The contract only exposes delete + add; an in-place "edit" arm does not exist.
     expect(Object.keys(rec)).toEqual(["deleteOldComment", "addNewComment"]);
+  });
+
+  it("fails closed when the exact existing comment id is missing", async () => {
+    await expect(
+      replaceCommentText(
+        {
+          parentPostUrl: PARENT,
+          commentId: "",
+          expectedAuthorProfileUrl: AUTHOR_PROFILE,
+          oldText: "old text",
+          text: "new text",
+          profile: "p1",
+        },
+        { profileManager: makeProfiles() },
+      ),
+    ).rejects.toMatchObject({ code: 2 });
+  });
+
+  it("binds deletion to the exact parent, comment id, and complete old content", () => {
+    const input = {
+      parentPostUrl: PARENT,
+      commentId: "1326931196274132",
+      expectedAuthorProfileUrl: AUTHOR_PROFILE,
+      oldText: "first line\nsecond line",
+      text: "replacement",
+      profile: "p1",
+    };
+    expect(() =>
+      assertExactCommentBinding(input, {
+        commentHref: `${PARENT}?comment_id=1326931196274132`,
+        commentId: "1326931196274132",
+        renderedBodyCandidates: ["first line\nsecond line"],
+        renderedAuthorProfileHrefs: [AUTHOR_PROFILE],
+      }),
+    ).not.toThrow();
+
+    expect(() =>
+      assertExactCommentBinding(input, {
+        commentHref: `${PARENT}?comment_id=999`,
+        commentId: "999",
+        renderedBodyCandidates: ["first line\nsecond line"],
+        renderedAuthorProfileHrefs: [AUTHOR_PROFILE],
+      }),
+    ).toThrowError(/comment id mismatch/i);
+    expect(() =>
+      assertExactCommentBinding(input, {
+        commentHref: "https://www.facebook.com/100012345/posts/other?comment_id=1326931196274132",
+        commentId: "1326931196274132",
+        renderedBodyCandidates: ["first line\nsecond line"],
+        renderedAuthorProfileHrefs: [AUTHOR_PROFILE],
+      }),
+    ).toThrowError(/parent post mismatch/i);
+    expect(() =>
+      assertExactCommentBinding(input, {
+        commentHref: `${PARENT}?comment_id=1326931196274132`,
+        commentId: "1326931196274132",
+        renderedBodyCandidates: ["first line"],
+        renderedAuthorProfileHrefs: [AUTHOR_PROFILE],
+      }),
+    ).toThrowError(/exact old content mismatch/i);
+    expect(() =>
+      assertExactCommentBinding(input, {
+        commentHref: `${PARENT}?comment_id=1326931196274132`,
+        commentId: "1326931196274132",
+        renderedBodyCandidates: ["first line\nsecond line"],
+        renderedAuthorProfileHrefs: ["https://www.facebook.com/impostor"],
+      }),
+    ).toThrowError(/expected author mismatch/i);
+  });
+
+  it("fails closed when expectedAuthorProfileUrl is missing", async () => {
+    await expect(
+      replaceCommentText(
+        {
+          parentPostUrl: PARENT,
+          commentId: "1326931196274132",
+          expectedAuthorProfileUrl: "",
+          oldText: "old text",
+          text: "new text",
+          profile: "p1",
+        },
+        { profileManager: makeProfiles() },
+      ),
+    ).rejects.toMatchObject({ code: 2 });
   });
 });
 

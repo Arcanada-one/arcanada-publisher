@@ -36,6 +36,9 @@ export async function run(argv: string[]): Promise<RunResult> {
     return await dispatch(args);
   } catch (err) {
     if (err instanceof AdapterError) {
+      if (err.details?.["unknown"] === true && err.details?.["reconcileRequired"] === true) {
+        return { code: err.code, message: JSON.stringify(err.toJSON()) };
+      }
       return { code: err.code, message: `${err.name}: ${err.message}` };
     }
     return {
@@ -71,6 +74,8 @@ async function dispatch(args: ParsedArgs): Promise<RunResult> {
       return runEdit(platform, profile, args);
     case "comment":
       return runComment(platform, profile, args);
+    case "replace-comment":
+      return runReplaceComment(platform, profile, args);
     case "publish":
       return runPublish(platform, profile, args);
   }
@@ -165,6 +170,51 @@ async function runComment(
     profile,
   });
   return { code: ErrorCode.SUCCESS, message: `comment posted: ${res.commentId}` };
+}
+
+async function runReplaceComment(
+  platform: Platform,
+  profile: string,
+  args: ParsedArgs,
+): Promise<RunResult> {
+  if (platform !== "facebook") {
+    return {
+      code: ErrorCode.INVALID_ARGS,
+      message: "replace-comment is supported only for Facebook",
+    };
+  }
+  if (
+    !args.parentUrl ||
+    !args.commentId ||
+    !args.expectedAuthorProfileUrl ||
+    !args.expectedContentFile ||
+    !args.textFile
+  ) {
+    return {
+      code: ErrorCode.MISSING_INPUT,
+      message:
+        "replace-comment requires --parent-url, --comment-id, --expected-author-profile-url, --expected-content-file, and --text-file",
+    };
+  }
+  const adapter = makeAdapter(platform, args) as unknown as {
+    replaceComment(input: {
+      parentPostUrl: string;
+      commentId: string;
+      expectedAuthorProfileUrl: string;
+      oldText: string;
+      text: string;
+      profile: string;
+    }): Promise<{ commentId: string }>;
+  };
+  const res = await adapter.replaceComment({
+    parentPostUrl: args.parentUrl,
+    commentId: args.commentId,
+    expectedAuthorProfileUrl: args.expectedAuthorProfileUrl,
+    oldText: readExactMutationText(args.expectedContentFile),
+    text: readExactMutationText(args.textFile),
+    profile,
+  });
+  return { code: ErrorCode.SUCCESS, message: `comment replaced: ${res.commentId}` };
 }
 
 async function runPublish(
@@ -279,6 +329,10 @@ function readText(args: ParsedArgs): string {
     throw new AdapterError(ErrorCode.MISSING_INPUT, "publish/comment requires --text-file");
   }
   return readFileSync(args.textFile, "utf8");
+}
+
+function readExactMutationText(path: string): string {
+  return readFileSync(path, "utf8").replace(/\r\n/g, "\n").replace(/\n$/, "");
 }
 
 function loadPolicy(path: string | undefined): PolicyConfig {

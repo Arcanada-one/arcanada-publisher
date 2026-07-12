@@ -4,6 +4,20 @@ All notable changes to this package are documented here. The format is loosely
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Facebook first-comment replacement now requires the exact numeric comment id,
+  exact parent post, stable header profile-link identity, and complete current
+  comment body before delete. Body mentions/links cannot satisfy author proof.
+  The new ID must be absent from the pre-submit snapshot and is verified against
+  the same parent, header identity, and exact replacement body. Any ambiguity
+  after confirmation returns `UNKNOWN` with mandatory reconciliation and only
+  text hashes/lengths (never full comment bodies).
+  The unified CLI exposes this fail-closed flow as `replace-comment`; in-place
+  Facebook comment editing remains disabled.
+
 ## [0.1.0] — 2026-05-21
 
 ### Added
