@@ -178,13 +178,22 @@ describe("LinkedIn read-only profile inspection", () => {
       `https://www.linkedin.com/posts/pavelvalentov_post-activity-${ID}-AbCd`,
     );
     outer.child("video", "video-player");
+    body.child("hostile", "custom-element");
+    body.child("object", "network-object");
     const root = new FakeNode("");
     root.children.push(outer);
-    const documentBody = new FakeNode("");
+    let connectionSideEffects = 0;
     const previousDocument = (globalThis as { document?: unknown }).document;
     Object.defineProperty(globalThis, "document", {
       configurable: true,
-      value: { body: documentBody },
+      value: {
+        body: {
+          appendChild: () => {
+            connectionSideEffects += 1;
+            throw new Error("extractor must never connect cloned content");
+          },
+        },
+      },
     });
     try {
       const serialized = Function(
@@ -193,8 +202,8 @@ describe("LinkedIn read-only profile inspection", () => {
       expect(serialized(root)).toEqual([
         expect.objectContaining({ body: BODY, hasNativeVideo: true }),
       ]);
-      expect(documentBody.appendCount).toBe(1);
-      expect(documentBody.children).toHaveLength(0);
+      expect(connectionSideEffects).toBe(0);
+      expect(extractLinkedInProfilePosts.toString()).not.toContain("appendChild");
     } finally {
       if (previousDocument === undefined) delete (globalThis as { document?: unknown }).document;
       else

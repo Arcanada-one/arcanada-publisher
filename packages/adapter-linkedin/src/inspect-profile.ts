@@ -371,8 +371,6 @@ interface BrowserNode {
   querySelectorAll(selector: string): ArrayLike<BrowserNode>;
   cloneNode?(deep?: boolean): BrowserNode;
   remove?(): void;
-  setAttribute?(name: string, value: string): void;
-  ownerDocument?: { body?: { appendChild(node: BrowserNode): void } };
   click?(): void;
 }
 
@@ -527,35 +525,32 @@ export function extractLinkedInProfilePosts(root: BrowserNode): ObservedLinkedIn
         ".update-components-text, [data-testid='main-feed-activity-card__commentary'], .feed-shared-update-v2__description",
       )
         .map((node) => {
-          const clone = node.cloneNode?.(true) ?? node;
+          let text = node.innerText ?? "";
           for (const control of Array.from(
-            clone.querySelectorAll(
-              "button, [role='button'], .feed-shared-inline-show-more-text__see-more-less-toggle, script, iframe, img, video, audio, source, link",
+            node.querySelectorAll(
+              "button, [role='button'], .feed-shared-inline-show-more-text__see-more-less-toggle",
             ),
           )) {
-            control.remove?.();
-          }
-          let attached = false;
-          try {
-            const fallbackDocument = (
-              globalThis as unknown as {
-                document?: { body?: { appendChild(node: BrowserNode): void } };
-              }
-            ).document;
-            const body = node.ownerDocument?.body ?? fallbackDocument?.body;
-            if (clone !== node && body) {
-              clone.setAttribute?.("aria-hidden", "true");
-              clone.setAttribute?.(
-                "style",
-                "position:fixed;left:-100000px;top:0;opacity:0;pointer-events:none;contain:layout style paint",
-              );
-              body.appendChild(clone);
-              attached = true;
+            const aria = (control.getAttribute("aria-label") ?? "").normalize("NFKC").trim();
+            const visual = (control.innerText ?? control.textContent ?? "")
+              .normalize("NFKC")
+              .trim();
+            if (
+              !/^(more|\.\.\.more|see more|see more, visually reveals content which is already detected by screen readers|…more)$/i.test(
+                aria || visual,
+              )
+            )
+              continue;
+            for (const suffix of [visual, "...more", "…more", "more"]
+              .filter(Boolean)
+              .sort((a, b) => b.length - a.length)) {
+              const endTrimmed = text.trimEnd();
+              if (!endTrimmed.endsWith(suffix)) continue;
+              text = endTrimmed.slice(0, -suffix.length).trimEnd();
+              break;
             }
-            return clone.innerText ?? "";
-          } finally {
-            if (attached) clone.remove?.();
           }
+          return text;
         })
         .sort((a, b) => b.length - a.length)[0] ?? "";
     const author = owned(
@@ -581,33 +576,30 @@ export function extractLinkedInProfilePosts(root: BrowserNode): ObservedLinkedIn
 }
 
 export function bodyTextWithoutDirectControls(node: BrowserNode): string {
-  const clone = node.cloneNode?.(true) ?? node;
+  let text = node.innerText ?? "";
   for (const control of Array.from(
-    clone.querySelectorAll(
-      "button, [role='button'], .feed-shared-inline-show-more-text__see-more-less-toggle, script, iframe, img, video, audio, source, link",
+    node.querySelectorAll(
+      "button, [role='button'], .feed-shared-inline-show-more-text__see-more-less-toggle",
     ),
   )) {
-    control.remove?.();
-  }
-  let attached = false;
-  try {
-    const fallbackDocument = (
-      globalThis as unknown as { document?: { body?: { appendChild(node: BrowserNode): void } } }
-    ).document;
-    const body = node.ownerDocument?.body ?? fallbackDocument?.body;
-    if (clone !== node && body) {
-      clone.setAttribute?.("aria-hidden", "true");
-      clone.setAttribute?.(
-        "style",
-        "position:fixed;left:-100000px;top:0;opacity:0;pointer-events:none;contain:layout style paint",
-      );
-      body.appendChild(clone);
-      attached = true;
+    const aria = (control.getAttribute("aria-label") ?? "").normalize("NFKC").trim();
+    const visual = (control.innerText ?? control.textContent ?? "").normalize("NFKC").trim();
+    if (
+      !/^(more|\.\.\.more|see more|see more, visually reveals content which is already detected by screen readers|…more)$/i.test(
+        aria || visual,
+      )
+    )
+      continue;
+    for (const suffix of [visual, "...more", "…more", "more"]
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length)) {
+      const endTrimmed = text.trimEnd();
+      if (!endTrimmed.endsWith(suffix)) continue;
+      text = endTrimmed.slice(0, -suffix.length).trimEnd();
+      break;
     }
-    return clone.innerText ?? "";
-  } finally {
-    if (attached) clone.remove?.();
   }
+  return text;
 }
 
 export function extractLinkedInVanityPermalink(
