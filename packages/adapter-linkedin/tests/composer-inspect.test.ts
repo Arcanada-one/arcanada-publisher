@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { composerDomProbeJs } from "../src/composer-inspect.js";
+import { composerDomProbeInvocationJs, composerDomProbeJs } from "../src/composer-inspect.js";
 
 describe("LinkedIn composer DOM probe", () => {
   it("emits structural diagnostics without serialising page content", () => {
@@ -43,5 +43,27 @@ describe("LinkedIn composer DOM probe", () => {
     expect(output).not.toContain(sensitive);
     expect(output).toContain('"idPresent":true');
     expect(output).toContain('"dataTestIdPresent":true');
+  });
+
+  it("invokes the probe with the exact locator element", () => {
+    const editor = {
+      tagName: "DIV",
+      id: "",
+      classList: [],
+      parentElement: null,
+      shadowRoot: null,
+      offsetWidth: 10,
+      offsetHeight: 10,
+      getBoundingClientRect: () => ({ x: 0, y: 0, width: 100, height: 50 }),
+      getAttribute: () => null,
+      hasAttribute: () => false,
+      getRootNode: () => ({ host: null }),
+    };
+    const document = { querySelectorAll: () => [] };
+    const invocation = Function(
+      "document",
+      `return ${composerDomProbeInvocationJs()};`,
+    )(document) as (element: typeof editor) => { editorAncestors: unknown[] };
+    expect(invocation(editor).editorAncestors).toHaveLength(1);
   });
 });
