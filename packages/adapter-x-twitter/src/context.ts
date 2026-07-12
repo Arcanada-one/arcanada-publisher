@@ -2,7 +2,7 @@
 // R12: the persistent profile keeps the operator's warm cookie store so X is not
 // asked to re-authenticate (re-auth triggers the anti-bot rate-limit).
 
-import { mkdirSync, existsSync } from "node:fs";
+import { chmodSync, mkdirSync, existsSync } from "node:fs";
 import { join, resolve, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, type BrowserContext, type Page } from "playwright";
@@ -29,8 +29,9 @@ export function resolveArtifactsDir(override?: string): string {
       : resolve(process.cwd(), override)
     : join(PACKAGE_ROOT, "artifacts");
   if (!existsSync(target)) {
-    mkdirSync(target, { recursive: true });
+    mkdirSync(target, { recursive: true, mode: 0o700 });
   }
+  chmodSync(target, 0o700);
   return target;
 }
 
@@ -66,6 +67,7 @@ export async function screenshotOnFail(
   const target = join(artefactsDir, artifactFilename(stage, "png"));
   try {
     await page.screenshot({ path: target, fullPage: true });
+    chmodSync(target, 0o600);
     return target;
   } catch {
     return null;

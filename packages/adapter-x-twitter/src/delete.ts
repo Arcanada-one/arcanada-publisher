@@ -127,6 +127,17 @@ async function readTargetBinding(page: Page, input: DeleteInput): Promise<Target
   const target = new URL(input.targetUrl);
   if (!id) throw new AdapterError(ErrorCode.VERIFY_FAILED, "delete: numeric status id missing");
   const expectedHandle = target.pathname.split("/").filter(Boolean)[0]!.toLowerCase();
+  const loadState = await waitForExactStatusState(page, id, expectedHandle);
+  if (loadState !== "present") {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "delete: target status is definitively absent",
+      {
+        targetUrl: input.targetUrl,
+        xErrorType: "verify_mismatch",
+      },
+    );
+  }
   const bindings = await page.locator("article").evaluateAll(
     (articles, expected) => {
       const browserLocation = (globalThis as unknown as { location: { href: string } }).location;
@@ -205,10 +216,26 @@ async function defaultPerformDelete(
   await page.goto(input.targetUrl);
   const id = statusIdFromUrl(input.targetUrl);
   if (!id) throw new AdapterError(ErrorCode.VERIFY_FAILED, "delete: numeric status id missing");
-  let outcome: "present" | "absent";
+  const target = new URL(input.targetUrl);
+  const expectedHandle = target.pathname.split("/").filter(Boolean)[0]!.toLowerCase();
+  const outcome = await waitForExactStatusState(page, id, expectedHandle);
+  if (outcome !== "absent") {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "delete: target status still renders after delete",
+      { targetUrl: input.targetUrl, xErrorType: "verify_mismatch" },
+    );
+  }
+}
+
+export async function waitForExactStatusState(
+  page: Page,
+  statusId: string,
+  expectedHandle: string,
+): Promise<"present" | "absent"> {
   try {
     const result = await page.waitForFunction(
-      (expectedId) => {
+      (expected) => {
         type DomElement = {
           innerText: string;
           querySelectorAll(selector: string): DomElement[];
@@ -223,7 +250,8 @@ async function defaultPerformDelete(
             (candidate) => candidate.closest("article") === article,
           );
           const href = time?.closest("a[href]")?.getAttribute("href") ?? "";
-          return new RegExp(`/status/${expectedId}(?:$|[/?])`).test(href);
+          const match = /^\/([^/]+)\/status\/(\d+)/.exec(new URL(href, "https://x.com").pathname);
+          return match?.[1]?.toLowerCase() === expected.handle && match?.[2] === expected.statusId;
         });
         if (exactPrimary) return "present";
         return /(This Post was deleted|Hmm.*page doesn.t exist|Этот пост удален|Страница не существует)/i.test(
@@ -232,22 +260,15 @@ async function defaultPerformDelete(
           ? "absent"
           : null;
       },
-      id,
-      { timeout: 10_000 },
+      { statusId, handle: expectedHandle.toLowerCase() },
+      { timeout: 15_000 },
     );
-    outcome = (await result.jsonValue()) as "present" | "absent";
+    return (await result.jsonValue()) as "present" | "absent";
   } catch {
     throw new AdapterError(
       ErrorCode.VERIFY_FAILED,
-      "delete: post-delete state remained inconclusive",
-      { targetUrl: input.targetUrl, xErrorType: "verify_mismatch" },
-    );
-  }
-  if (outcome !== "absent") {
-    throw new AdapterError(
-      ErrorCode.VERIFY_FAILED,
-      "delete: target status still renders after delete",
-      { targetUrl: input.targetUrl, xErrorType: "verify_mismatch" },
+      "delete: status load state remained inconclusive",
+      { statusId, expectedHandle, xErrorType: "verify_mismatch" },
     );
   }
 }
