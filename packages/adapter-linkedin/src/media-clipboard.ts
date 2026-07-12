@@ -37,18 +37,34 @@ export function prepareMediaClipboard(
     throw clipboardError("macOS media file verification failed");
   }
   const script = [
-    "on run argv",
-    "set mediaFile to POSIX file (item 1 of argv)",
-    "set the clipboard to mediaFile",
-    "delay 0.1",
-    "return POSIX path of (the clipboard as alias)",
-    "end run",
+    "ObjC.import('AppKit');",
+    "function run(argv) {",
+    "  const path = ObjC.unwrap(argv[0]);",
+    "  const pb = $.NSPasteboard.generalPasteboard;",
+    "  pb.clearContents;",
+    "  const url = $.NSURL.fileURLWithPath(path);",
+    "  const wrote = pb.writeObjects($.NSArray.arrayWithObject(url));",
+    "  pb.setPropertyListForType([path], 'NSFilenamesPboardType');",
+    "  pb.setStringForType(url.absoluteString, 'public.file-url');",
+    "  pb.setStringForType(url.absoluteString, 'NSURLPboardType');",
+    "  const files = ObjC.deepUnwrap(pb.propertyListForType('NSFilenamesPboardType'));",
+    "  const types = ObjC.deepUnwrap(pb.types);",
+    "  return JSON.stringify({ path: files[0], types: types, wrote: Boolean(wrote) });",
+    "}",
   ].join("\n");
   let roundTrip: string;
   try {
     roundTrip = String(
-      deps.exec("osascript", ["-e", script, "--", source], { encoding: "utf8" }),
+      deps.exec("osascript", ["-l", "JavaScript", "-e", script, "--", source], {
+        encoding: "utf8",
+      }),
     ).trim();
+    const parsed = JSON.parse(roundTrip) as { path?: string; types?: string[]; wrote?: boolean };
+    const required = ["public.file-url", "NSURLPboardType", "NSFilenamesPboardType"];
+    if (!parsed.wrote || !parsed.path || !required.every((type) => parsed.types?.includes(type))) {
+      throw new Error("incomplete pasteboard types");
+    }
+    roundTrip = parsed.path;
   } catch {
     throw clipboardError("macOS clipboard did not return a file alias");
   }
