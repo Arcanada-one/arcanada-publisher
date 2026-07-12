@@ -81,16 +81,16 @@ async function runInspection(
   page: Page,
   input: InspectLinkedInProfilePostInput,
   expectedIdentity: string,
-  recorder: InspectLinkedInProfileRecorder = defaultRecorder,
+  recorder?: InspectLinkedInProfileRecorder,
 ): Promise<InspectLinkedInProfilePostResult> {
+  const activeRecorder = recorder ?? createDefaultRecorder();
   const activitySurface = `${input.profileUrl.replace(/\/$/, "")}/recent-activity/all/`;
   await page.goto(activitySurface, { waitUntil: "domcontentloaded" });
   const observed = new Map<string, ObservedLinkedInProfilePost>();
   const expected = normalizeExact(input.expectedBody ?? input.contentExcerpt!);
-  if (recorder === defaultRecorder) defaultRecorder.expansionClickCounts.length = 0;
   let scrollsPerformed = 0;
   for (let pass = 0; pass <= input.maxScrolls; pass += 1) {
-    for (const candidate of await recorder.scanLoadedPosts(
+    for (const candidate of await activeRecorder.scanLoadedPosts(
       page,
       expectedIdentity,
       expected.split("\n", 1)[0]!,
@@ -99,7 +99,7 @@ async function runInspection(
       observed.set(candidate.activityUrl, candidate);
     }
     if (pass < input.maxScrolls) {
-      await recorder.scroll(page, pass + 1);
+      await activeRecorder.scroll(page, pass + 1);
       scrollsPerformed += 1;
     }
   }
@@ -113,11 +113,14 @@ async function runInspection(
     postsInspected: observed.size,
   };
   const fail = async (message: string): Promise<never> => {
+    const expansionClickCounts = isDiagnosticRecorder(activeRecorder)
+      ? [...activeRecorder.expansionClickCounts]
+      : [];
     await writeFailureEvidence(
       page,
       input.evidenceDir,
       [...observed.values()],
-      recorder === defaultRecorder ? defaultRecorder.expansionClickCounts : [],
+      expansionClickCounts,
     );
     throw verifyError(message);
   };
@@ -309,22 +312,35 @@ async function writeFailureEvidence(
   }
 }
 
-const defaultRecorder: InspectLinkedInProfileRecorder & { expansionClickCounts: number[] } = {
-  expansionClickCounts: [],
-  async scanLoadedPosts(page, expectedAuthorIdentity, expectedTitle) {
-    const expanded = await page.locator("body").evaluate(expandMatchingLinkedInActivity, {
-      expectedAuthorIdentity,
-      expectedTitle,
-    });
-    defaultRecorder.expansionClickCounts.push(expanded);
-    if (expanded > 0) await page.waitForTimeout(500);
-    return page.locator("body").evaluate(extractLinkedInProfilePosts);
-  },
-  async scroll(page) {
-    await page.evaluate("window.scrollBy(0, Math.max(window.innerHeight, 900))");
-    await page.waitForTimeout(1_500);
-  },
-};
+interface DiagnosticRecorder extends InspectLinkedInProfileRecorder {
+  expansionClickCounts: number[];
+}
+
+function isDiagnosticRecorder(
+  recorder: InspectLinkedInProfileRecorder,
+): recorder is DiagnosticRecorder {
+  return "expansionClickCounts" in recorder && Array.isArray(recorder.expansionClickCounts);
+}
+
+function createDefaultRecorder(): DiagnosticRecorder {
+  const expansionClickCounts: number[] = [];
+  return {
+    expansionClickCounts,
+    async scanLoadedPosts(page, expectedAuthorIdentity, expectedTitle) {
+      const expanded = await page.locator("body").evaluate(expandMatchingLinkedInActivity, {
+        expectedAuthorIdentity,
+        expectedTitle,
+      });
+      expansionClickCounts.push(expanded);
+      if (expanded > 0) await page.waitForTimeout(500);
+      return page.locator("body").evaluate(extractLinkedInProfilePosts);
+    },
+    async scroll(page) {
+      await page.evaluate("window.scrollBy(0, Math.max(window.innerHeight, 900))");
+      await page.waitForTimeout(1_500);
+    },
+  };
+}
 
 interface BrowserNode {
   innerText: string;

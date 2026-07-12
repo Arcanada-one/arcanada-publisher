@@ -2,6 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
 
 const inspectProfilePost = vi.hoisted(() => vi.fn());
 vi.mock("../src/adapters.js", () => ({
@@ -176,5 +177,37 @@ describe("inspect-profile-post CLI", () => {
         profile: "default",
       }),
     );
+  });
+
+  it("returns count-only LinkedIn failure output without raw bodies or private paths", async () => {
+    const root = mkdtempSync(join(tmpdir(), "li-inspect-cli-failure-"));
+    const bodyFile = join(root, "secret-post.txt");
+    const secret = "SECRET_LINKEDIN_BODY_MUST_NOT_REACH_STDOUT";
+    writeFileSync(bodyFile, `${secret}\n`);
+    inspectProfilePost.mockRejectedValueOnce(
+      new AdapterError(
+        ErrorCode.VERIFY_FAILED,
+        "inspect-profile-post: no matching post found after 4 scrolls and 6 inspected posts",
+      ),
+    );
+    const result = await run([
+      "inspect-profile-post",
+      "--platform",
+      "linkedin",
+      "--profile-url",
+      "https://www.linkedin.com/in/pavelvalentov/",
+      "--expected-author-profile-url",
+      "https://www.linkedin.com/in/pavelvalentov/",
+      "--expected-content-file",
+      bodyFile,
+      "--evidence-dir",
+      join(root, "private-evidence"),
+      "--max-scrolls",
+      "4",
+    ]);
+    expect(result.code).toBe(ErrorCode.VERIFY_FAILED);
+    expect(result.message).toContain("after 4 scrolls and 6 inspected posts");
+    expect(result.message).not.toContain(secret);
+    expect(result.message).not.toContain(root);
   });
 });
