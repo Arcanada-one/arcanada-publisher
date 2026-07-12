@@ -178,14 +178,40 @@ describe("LinkedIn read-only profile inspection", () => {
       `https://www.linkedin.com/posts/pavelvalentov_post-activity-${ID}-AbCd`,
     );
     outer.child("video", "video-player");
+    body.child("hostile", "custom-element");
+    body.child("object", "network-object");
     const root = new FakeNode("");
     root.children.push(outer);
-    const serialized = Function(
-      `return (${extractLinkedInProfilePosts.toString()})`,
-    )() as typeof extractLinkedInProfilePosts;
-    expect(serialized(root)).toEqual([
-      expect.objectContaining({ body: BODY, hasNativeVideo: true }),
-    ]);
+    let connectionSideEffects = 0;
+    const previousDocument = (globalThis as { document?: unknown }).document;
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: {
+        body: {
+          appendChild: () => {
+            connectionSideEffects += 1;
+            throw new Error("extractor must never connect cloned content");
+          },
+        },
+      },
+    });
+    try {
+      const serialized = Function(
+        `return (${extractLinkedInProfilePosts.toString()})`,
+      )() as typeof extractLinkedInProfilePosts;
+      expect(serialized(root)).toEqual([
+        expect.objectContaining({ body: BODY, hasNativeVideo: true }),
+      ]);
+      expect(connectionSideEffects).toBe(0);
+      expect(extractLinkedInProfilePosts.toString()).not.toContain("appendChild");
+    } finally {
+      if (previousDocument === undefined) delete (globalThis as { document?: unknown }).document;
+      else
+        Object.defineProperty(globalThis, "document", {
+          configurable: true,
+          value: previousDocument,
+        });
+    }
   });
 
   it("clicks plain more only on the direct-owned expected author/title activity", () => {
@@ -254,9 +280,39 @@ describe("LinkedIn read-only profile inspection", () => {
   });
 
   it("removes the direct-owned live control before exact body normalization", () => {
-    const body = new FakeNode(`${BODY}\n...more`, {}, "update-components-text");
+    const paragraphs = Array.from({ length: 7 }, (_, index) => `Paragraph ${index + 1}.`).join(
+      "\n\n",
+    );
+    const body = new FakeNode(`${paragraphs}\n...more`, {}, "update-components-text");
     body.child("...more", "button");
-    expect(bodyTextWithoutDirectControls(body)).toBe(BODY);
+    expect(bodyTextWithoutDirectControls(body)).toBe(paragraphs);
+    expect(bodyTextWithoutDirectControls(body).match(/\n\n/g)).toHaveLength(6);
+  });
+
+  it("does not strip legitimate or unowned terminal text", () => {
+    const legitimateMore = new FakeNode(
+      "A legitimate final line\nmore",
+      {},
+      "update-components-text",
+    );
+    legitimateMore.child("...more", "button");
+    expect(bodyTextWithoutDirectControls(legitimateMore)).toBe("A legitimate final line\nmore");
+
+    const anymore = new FakeNode("This matters anymore", {}, "update-components-text");
+    anymore.child("more", "button");
+    expect(bodyTextWithoutDirectControls(anymore)).toBe("This matters anymore");
+
+    const ariaOnly = new FakeNode("Body\n...more", {}, "update-components-text");
+    ariaOnly.child("", "button", undefined, undefined, undefined, {
+      "aria-label":
+        "See more, visually reveals content which is already detected by screen readers",
+    });
+    expect(bodyTextWithoutDirectControls(ariaOnly)).toBe("Body\n...more");
+
+    const nestedBody = new FakeNode("Body\n...more", {}, "update-components-text");
+    const nested = nestedBody.child("", "mini-update");
+    nested.child("...more", "button");
+    expect(bodyTextWithoutDirectControls(nestedBody)).toBe("Body\n...more");
   });
 
   it("recovers only copied same-author same-activity vanity URLs", () => {
@@ -430,6 +486,7 @@ class FakeNode {
   tagName = "div";
   href?: string;
   clickCount = 0;
+  appendCount = 0;
 
   constructor(
     public innerText: string,
@@ -459,6 +516,16 @@ class FakeNode {
 
   getAttribute(name: string): string | null {
     return this.attrs[name] ?? null;
+  }
+
+  setAttribute(name: string, value: string): void {
+    this.attrs[name] = value;
+  }
+
+  appendChild(node: FakeNode): void {
+    node.parentElement = this;
+    this.children.push(node);
+    this.appendCount += 1;
   }
 
   get attrsForTest(): Record<string, string> {

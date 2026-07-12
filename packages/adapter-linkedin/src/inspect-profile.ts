@@ -525,15 +525,40 @@ export function extractLinkedInProfilePosts(root: BrowserNode): ObservedLinkedIn
         ".update-components-text, [data-testid='main-feed-activity-card__commentary'], .feed-shared-update-v2__description",
       )
         .map((node) => {
-          const clone = node.cloneNode?.(true) ?? node;
+          let text = node.innerText ?? "";
           for (const control of Array.from(
-            clone.querySelectorAll(
+            node.querySelectorAll(
               "button, [role='button'], .feed-shared-inline-show-more-text__see-more-less-toggle",
             ),
           )) {
-            control.remove?.();
+            let owner = control.parentElement;
+            let directOwned = false;
+            while (owner) {
+              if (owner === node) {
+                directOwned = true;
+                break;
+              }
+              if (isBoundary(owner)) break;
+              owner = owner.parentElement;
+            }
+            if (!directOwned) continue;
+            const aria = (control.getAttribute("aria-label") ?? "").normalize("NFKC").trim();
+            const visual = (control.innerText ?? control.textContent ?? "")
+              .normalize("NFKC")
+              .trim();
+            if (
+              !/^(more|\.\.\.more|see more|see more, visually reveals content which is already detected by screen readers|…more)$/i.test(
+                aria || visual,
+              )
+            )
+              continue;
+            if (!visual) continue;
+            const endTrimmed = text.trimEnd();
+            const terminalUiLine = `\n${visual}`;
+            if (endTrimmed.endsWith(terminalUiLine))
+              text = endTrimmed.slice(0, -terminalUiLine.length).trimEnd();
           }
-          return clone.innerText ?? "";
+          return text;
         })
         .sort((a, b) => b.length - a.length)[0] ?? "";
     const author = owned(
@@ -559,15 +584,47 @@ export function extractLinkedInProfilePosts(root: BrowserNode): ObservedLinkedIn
 }
 
 export function bodyTextWithoutDirectControls(node: BrowserNode): string {
-  const clone = node.cloneNode?.(true) ?? node;
+  let text = node.innerText ?? "";
+  const isBoundary = (candidate: BrowserNode): boolean => {
+    const raw = candidate.getAttribute("data-urn") ?? candidate.getAttribute("data-id") ?? "";
+    return (
+      /urn:li:activity:\d+/.test(raw) ||
+      /^urn:li:comment/.test(raw) ||
+      candidate.tagName.toLowerCase() === "article" ||
+      /comments-comment-item|mini-update/i.test(candidate.className ?? "")
+    );
+  };
   for (const control of Array.from(
-    clone.querySelectorAll(
+    node.querySelectorAll(
       "button, [role='button'], .feed-shared-inline-show-more-text__see-more-less-toggle",
     ),
   )) {
-    control.remove?.();
+    let owner = control.parentElement;
+    let directOwned = false;
+    while (owner) {
+      if (owner === node) {
+        directOwned = true;
+        break;
+      }
+      if (isBoundary(owner)) break;
+      owner = owner.parentElement;
+    }
+    if (!directOwned) continue;
+    const aria = (control.getAttribute("aria-label") ?? "").normalize("NFKC").trim();
+    const visual = (control.innerText ?? control.textContent ?? "").normalize("NFKC").trim();
+    if (
+      !/^(more|\.\.\.more|see more|see more, visually reveals content which is already detected by screen readers|…more)$/i.test(
+        aria || visual,
+      )
+    )
+      continue;
+    if (!visual) continue;
+    const endTrimmed = text.trimEnd();
+    const terminalUiLine = `\n${visual}`;
+    if (endTrimmed.endsWith(terminalUiLine))
+      text = endTrimmed.slice(0, -terminalUiLine.length).trimEnd();
   }
-  return clone.innerText ?? "";
+  return text;
 }
 
 export function extractLinkedInVanityPermalink(
