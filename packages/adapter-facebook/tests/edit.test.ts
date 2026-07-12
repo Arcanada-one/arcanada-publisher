@@ -30,6 +30,9 @@ describe("edit — union dispatch (postUrl-only vs commentId)", () => {
       {
         postUrl: "https://www.facebook.com/100012345/posts/777",
         text: "updated body",
+        expectedContent: "current body",
+        expectedAuthorProfileUrl: "https://www.facebook.com/100012345",
+        expectedMediaKind: "image",
         profile: "p1",
       },
       {
@@ -71,6 +74,20 @@ describe("edit — union dispatch (postUrl-only vs commentId)", () => {
     await expect(
       edit(
         { postUrl: "https://www.facebook.com/100012345/posts/777", profile: "p1" },
+        { profileManager: mgr },
+      ),
+    ).rejects.toMatchObject({ code: 2 });
+  });
+
+  it("requires exact current content, stable author, and image oracle for post edits", async () => {
+    const { mgr } = makeProfiles();
+    await expect(
+      edit(
+        {
+          postUrl: "https://www.facebook.com/100012345/posts/777",
+          text: "updated body",
+          profile: "p1",
+        },
         { profileManager: mgr },
       ),
     ).rejects.toMatchObject({ code: 2 });

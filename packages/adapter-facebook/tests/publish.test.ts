@@ -160,6 +160,27 @@ describe("facebook publish — R8 image-first ordering + R7 pre/post verify", ()
     expect(rec.submitAndConfirm).not.toHaveBeenCalled();
   });
 
+  it("rejects title-only composer text before submit", async () => {
+    const rec = makeRecorder();
+    rec.preSubmitSnapshot = vi.fn(async () => ({
+      hasText: true,
+      hasImage: true,
+      normalizedBody: "Title line",
+    }));
+    await expect(
+      publish(
+        {
+          text: "Title line\n\nComplete body that must survive",
+          imagePaths: [makeImage()],
+          profile: FAKE_PROFILE,
+          expectedAuthorProfileUrl: "https://www.facebook.com/pavelvalentov",
+        },
+        { profileManager: makeProfiles(), page: fakePage(), __recorder: rec },
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    expect(rec.submitAndConfirm).not.toHaveBeenCalled();
+  });
+
   it("R7: ABORTS before submit when the pre-submit snapshot reports the image is gone", async () => {
     const rec = makeRecorder();
     rec.preSubmitSnapshot = vi.fn(async () => {
@@ -186,7 +207,10 @@ describe("facebook publish — R8 image-first ordering + R7 pre/post verify", ()
         { text: "line", imagePaths: [makeImage()], profile: FAKE_PROFILE },
         { profileManager: makeProfiles(), page: fakePage(), __recorder: rec },
       ),
-    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    ).rejects.toMatchObject({
+      code: ErrorCode.VERIFY_FAILED,
+      details: { unknown: true, reconcileRequired: true },
+    });
   });
 
   it("R1 multi-image: forwards every validated path to uploadImages in order", async () => {

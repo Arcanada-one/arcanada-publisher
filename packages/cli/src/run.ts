@@ -112,6 +112,18 @@ async function runEdit(platform: Platform, profile: string, args: ParsedArgs): P
   if (!args.targetUrl || !args.textFile) {
     return { code: ErrorCode.MISSING_INPUT, message: "edit requires --target-url and --text-file" };
   }
+  if (
+    platform === "facebook" &&
+    (!args.expectedContentFile ||
+      !args.expectedAuthorProfileUrl ||
+      args.expectedMediaKind !== "image")
+  ) {
+    return {
+      code: ErrorCode.MISSING_INPUT,
+      message:
+        "Facebook edit requires --expected-content-file, --expected-author-profile-url, and --expected-media-kind image",
+    };
+  }
   const res = await makeAdapter(platform, args).edit({
     postUrl: args.targetUrl,
     text: readText(args),
@@ -120,11 +132,16 @@ async function runEdit(platform: Platform, profile: string, args: ParsedArgs): P
       ? {
           expectedContent:
             args.expectedContent ??
-            readFileSync(args.expectedContentFile!, "utf8").replace(/\r?\n$/, ""),
+            (platform === "facebook"
+              ? readFacebookEditOracle(args.expectedContentFile!)
+              : readFileSync(args.expectedContentFile!, "utf8").replace(/\r?\n$/, "")),
         }
       : {}),
     ...(args.expectedMediaKind ? { expectedMediaKind: args.expectedMediaKind } : {}),
     ...(args.parentUrl ? { expectedParentUrl: args.parentUrl } : {}),
+    ...(args.expectedAuthorProfileUrl
+      ? { expectedAuthorProfileUrl: args.expectedAuthorProfileUrl }
+      : {}),
     ...(args.videoWidth ? { videoWidth: args.videoWidth } : {}),
     ...(args.videoHeight ? { videoHeight: args.videoHeight } : {}),
     ...(args.videoDuration ? { videoDuration: args.videoDuration } : {}),
@@ -271,6 +288,12 @@ async function runPublish(
   profile: string,
   args: ParsedArgs,
 ): Promise<RunResult> {
+  if (platform === "facebook" && !args.dryRun && !args.expectedAuthorProfileUrl) {
+    return {
+      code: ErrorCode.MISSING_INPUT,
+      message: "Facebook publish requires --expected-author-profile-url",
+    };
+  }
   const body = applyPolicy(readText(args), platform, loadPolicy(args.policyConfig));
   // Platform-specific fields (subreddit/title for reddit, ownerId for vk) ride
   // alongside the shared shape; adapters that don't use them ignore the extras.
@@ -285,6 +308,9 @@ async function runPublish(
     ...(args.title !== undefined ? { title: args.title } : {}),
     ...(args.ownerId !== undefined ? { ownerId: args.ownerId } : {}),
     ...(args.chatId !== undefined ? { chatId: args.chatId } : {}),
+    ...(args.expectedAuthorProfileUrl !== undefined
+      ? { expectedAuthorProfileUrl: args.expectedAuthorProfileUrl }
+      : {}),
   } as Parameters<ReturnType<typeof makeAdapter>["publish"]>[0]);
   return { code: ErrorCode.SUCCESS, message: `published: ${res.postUrl}` };
 }
@@ -395,6 +421,18 @@ function readInspectionOracle(path: string): string {
         stage: "inspect-profile-post.read-expected-content",
         failure: "EXPECTED_CONTENT_READ_FAILED",
       },
+    );
+  }
+}
+
+function readFacebookEditOracle(path: string): string {
+  try {
+    return readExactMutationText(path);
+  } catch {
+    throw new AdapterError(
+      ErrorCode.MISSING_INPUT,
+      "Facebook edit: failed to read expected content file",
+      { stage: "facebook-edit.read-expected-content" },
     );
   }
 }

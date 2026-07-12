@@ -38,6 +38,7 @@ const result = await adapter.publish({
   text: "Hello from arcanada-publisher!",
   imagePath: "/path/to/image.png", // optional; .png|.jpg|.jpeg|.webp
   profile: "pavel-personal",
+  expectedAuthorProfileUrl: "https://www.facebook.com/pavelvalentov",
 });
 console.log(result.postUrl);
 // → https://www.facebook.com/100012345/posts/987654321
@@ -49,6 +50,12 @@ console.log(result.postUrl);
 const verified = await adapter.verify(result.postUrl);
 console.log(verified.reachable, verified.status); // true 200
 ```
+
+Facebook create verifies the complete normalized composer body before clicking
+Post. After submission it binds readback to the returned canonical permalink,
+the expected stable header profile, the complete normalized body, and an image.
+Any ambiguity after submission is `UNKNOWN` with `reconcileRequired=true`; do
+not retry blindly.
 
 ## Comment & edit
 
@@ -62,6 +69,9 @@ const commentResult = await adapter.comment({
 await adapter.edit({
   postUrl: result.postUrl,
   text: "Updated body.",
+  expectedContent: "Hello from arcanada-publisher!",
+  expectedAuthorProfileUrl: "https://www.facebook.com/pavelvalentov",
+  expectedMediaKind: "image",
   profile: "pavel-personal",
 });
 

@@ -25,6 +25,13 @@ import { extractPostUrlFromHref, extractAccountFromUrl } from "./url-extraction.
 import { classifyFbError, mapFbError } from "./errors.js";
 import { typeMultiline } from "./input.js";
 import { VERIFY_DELAY_MS } from "./timing.js";
+import {
+  canonicalFacebookPostUrl,
+  facebookProfileIdentity,
+  normalizeFacebookText,
+  readFacebookPost,
+  type FacebookPostReadback,
+} from "./post-readback.js";
 
 const IMAGE_EXT_ALLOWLIST = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 const FB_HOME = "https://www.facebook.com/";
@@ -37,6 +44,7 @@ const IMAGE_RERENDER_SETTLE_MS = 10_000;
 export interface PreSubmitSnapshot {
   hasText: boolean;
   hasImage: boolean;
+  normalizedBody?: string;
 }
 
 /**
@@ -59,7 +67,7 @@ export interface PublishStepRecorder {
    */
   submitAndConfirm(page: Page, publishedText?: string): Promise<string>;
   /** R7/R11: re-open the post and confirm text + image round-trip. */
-  postVerify(page: Page, postUrl: string): Promise<boolean>;
+  postVerify(page: Page, postUrl: string): Promise<FacebookPostReadback | boolean>;
 }
 
 export interface PublishOptions {
@@ -100,6 +108,12 @@ export async function publish(
     );
   }
   const safeImagePaths = rawImagePaths.map(validateImagePath);
+  if (!input.expectedAuthorProfileUrl && !input.dryRun && !options.__recorder) {
+    throw new AdapterError(
+      ErrorCode.MISSING_INPUT,
+      "publish: expectedAuthorProfileUrl is required",
+    );
+  }
 
   // Dry-run validates inputs but performs no IO — it must not require a real
   // on-disk profile or a browser session. (Recorder-injected tests still drive
@@ -162,7 +176,9 @@ async function runPublishFlow(
 
     // R7: pre-submit snapshot — both text and image must be present, else ABORT.
     const snap = await steps.preSubmitSnapshot(page, input);
-    if (!snap.hasText) {
+    const exactComposerBody =
+      snap.normalizedBody ?? (snap.hasText ? normalizeFacebookText(input.text) : "");
+    if (!snap.hasText || exactComposerBody !== normalizeFacebookText(input.text)) {
       throw new AdapterError(
         ErrorCode.VERIFY_FAILED,
         "publish: pre-submit snapshot found no text in the composer — aborting (R7)",
@@ -183,14 +199,21 @@ async function runPublishFlow(
     const postUrl = await steps.submitAndConfirm(page, input.text);
 
     // R7/R11: post-submit verify the published post round-trips (text+image).
-    const verified = await steps.postVerify(page, postUrl);
-    if (!verified) {
-      throw new AdapterError(
-        ErrorCode.VERIFY_FAILED,
-        "publish: post-submit verification failed — published post did not round-trip (R7)",
-        { fbErrorType: "verify_mismatch", stage: "post_verify", postUrl },
-      );
+    let verified: FacebookPostReadback | boolean;
+    try {
+      verified = await steps.postVerify(page, postUrl);
+    } catch {
+      throw unknownPublish(postUrl);
     }
+    const expectedAuthor = facebookProfileIdentity(input.expectedAuthorProfileUrl!);
+    const exact =
+      typeof verified === "object"
+        ? verified.normalizedBody === normalizeFacebookText(input.text) &&
+          verified.authorProfileIdentity === expectedAuthor &&
+          verified.hasImage &&
+          verified.canonicalPermalink === canonicalFacebookPostUrl(postUrl)
+        : verified;
+    if (!exact) throw unknownPublish(postUrl);
 
     return PublishResultSchema.parse({
       ok: true,
@@ -244,10 +267,10 @@ const defaultSteps: PublishStepRecorder = {
       .last()
       .innerText()
       .catch(() => "");
-    const firstLine = input.text.split("\n")[0] ?? "";
-    const hasText = firstLine.length === 0 || composerText.includes(firstLine.slice(0, 24));
+    const normalizedBody = normalizeFacebookText(composerText);
+    const hasText = normalizedBody === normalizeFacebookText(input.text);
     const hasImage = (await page.locator('[role="img"], img[src^="blob:"]').count()) > 0;
-    return { hasText, hasImage };
+    return { hasText, hasImage, normalizedBody };
   },
 
   async submitAndConfirm(page: Page, publishedText?: string): Promise<string> {
@@ -286,21 +309,21 @@ const defaultSteps: PublishStepRecorder = {
     return extractPostUrlFromHref(rawHref);
   },
 
-  async postVerify(page: Page, postUrl: string): Promise<boolean> {
+  async postVerify(page: Page, postUrl: string): Promise<FacebookPostReadback> {
     // R11: wait out the "publishing…" indicator before the first read-back.
     await page.waitForTimeout(VERIFY_DELAY_MS);
-    await page.goto(postUrl);
-    const article = page.locator('[role="article"]').first();
-    try {
-      await article.waitFor({ state: "visible", timeout: 10_000 });
-    } catch {
-      return false;
-    }
-    const hasImage = (await article.locator("img").count()) > 0;
-    const text = (await article.innerText().catch(() => "")) ?? "";
-    return hasImage && text.trim().length > 0;
+    return readFacebookPost(page, postUrl);
   },
 };
+
+function unknownPublish(postUrl: string): AdapterError {
+  return new AdapterError(ErrorCode.VERIFY_FAILED, "publish: state unknown after submit", {
+    unknown: true,
+    reconcileRequired: true,
+    stage: "post_submit_verify",
+    postUrl,
+  });
+}
 
 /**
  * PUB-0030: derive a stable text fragment from the published body to match the
