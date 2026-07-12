@@ -81,15 +81,16 @@ async function runInspection(
   page: Page,
   input: InspectLinkedInProfilePostInput,
   expectedIdentity: string,
-  recorder: InspectLinkedInProfileRecorder = defaultRecorder,
+  recorder?: InspectLinkedInProfileRecorder,
 ): Promise<InspectLinkedInProfilePostResult> {
+  const activeRecorder = recorder ?? createDefaultRecorder();
   const activitySurface = `${input.profileUrl.replace(/\/$/, "")}/recent-activity/all/`;
   await page.goto(activitySurface, { waitUntil: "domcontentloaded" });
   const observed = new Map<string, ObservedLinkedInProfilePost>();
   const expected = normalizeExact(input.expectedBody ?? input.contentExcerpt!);
   let scrollsPerformed = 0;
   for (let pass = 0; pass <= input.maxScrolls; pass += 1) {
-    for (const candidate of await recorder.scanLoadedPosts(
+    for (const candidate of await activeRecorder.scanLoadedPosts(
       page,
       expectedIdentity,
       expected.split("\n", 1)[0]!,
@@ -98,7 +99,7 @@ async function runInspection(
       observed.set(candidate.activityUrl, candidate);
     }
     if (pass < input.maxScrolls) {
-      await recorder.scroll(page, pass + 1);
+      await activeRecorder.scroll(page, pass + 1);
       scrollsPerformed += 1;
     }
   }
@@ -111,26 +112,37 @@ async function runInspection(
     scrollsPerformed,
     postsInspected: observed.size,
   };
+  const fail = async (message: string): Promise<never> => {
+    const expansionClickCounts = isDiagnosticRecorder(activeRecorder)
+      ? [...activeRecorder.expansionClickCounts]
+      : [];
+    await writeFailureEvidence(
+      page,
+      input.evidenceDir,
+      [...observed.values()],
+      expansionClickCounts,
+    );
+    throw verifyError(message);
+  };
   if (matches.length === 0) {
-    throw verifyError(
+    return fail(
       `no matching post found after ${coverage.scrollsPerformed} scrolls and ${coverage.postsInspected} inspected posts`,
     );
   }
   if (
     matches.some(
-      (candidate) => linkedInProfileIdentity(candidate.authorProfileHref) !== expectedIdentity,
+      (candidate) => safeLinkedInProfileIdentity(candidate.authorProfileHref) !== expectedIdentity,
     )
   ) {
-    throw verifyError("matching content belongs to a different author identity");
+    return fail("matching content belongs to a different author identity");
   }
-  if (matches.length !== 1)
-    throw verifyError(`expected one matching post, found ${matches.length}`);
+  if (matches.length !== 1) return fail(`expected one matching post, found ${matches.length}`);
   const matched = matches[0]!;
-  if (!matched.hasNativeVideo) throw verifyError("exact post match has no native video");
+  if (!matched.hasNativeVideo) return fail("exact post match has no native video");
   const id = activityId(matched.activityUrl);
-  if (!id) throw verifyError("exact post match has no activity id");
+  if (!id) return fail("exact post match has no activity id");
   if (!isVanityPermalink(matched.vanityPermalink, id)) {
-    throw verifyError("exact post match has no bound vanity permalink");
+    return fail("exact post match has no bound vanity permalink");
   }
 
   const evidenceDir = resolve(input.evidenceDir);
@@ -213,6 +225,14 @@ function linkedInProfileIdentity(rawUrl: string): string {
   return `www.linkedin.com/in/${match[1]!.toLowerCase()}`;
 }
 
+function safeLinkedInProfileIdentity(rawUrl: string): string {
+  try {
+    return linkedInProfileIdentity(rawUrl);
+  } catch {
+    return "invalid";
+  }
+}
+
 function activityId(rawUrl: string): string | null {
   return (
     /^https:\/\/(?:www\.)?linkedin\.com\/feed\/update\/urn:li:activity:(\d+)\/?$/.exec(
@@ -252,20 +272,75 @@ async function writePrivate(path: string, content: string | Uint8Array): Promise
   }
 }
 
-const defaultRecorder: InspectLinkedInProfileRecorder = {
-  async scanLoadedPosts(page, expectedAuthorIdentity, expectedTitle) {
-    const expanded = await page.locator("body").evaluate(expandMatchingLinkedInActivity, {
-      expectedAuthorIdentity,
-      expectedTitle,
-    });
-    if (expanded > 0) await page.waitForTimeout(500);
-    return page.locator("body").evaluate(extractLinkedInProfilePosts);
-  },
-  async scroll(page) {
-    await page.evaluate("window.scrollBy(0, Math.max(window.innerHeight, 900))");
-    await page.waitForTimeout(1_500);
-  },
-};
+async function writeFailureEvidence(
+  page: Page,
+  rawEvidenceDir: string,
+  candidates: ObservedLinkedInProfilePost[],
+  expansionClickCounts: number[],
+): Promise<void> {
+  const evidenceDir = resolve(rawEvidenceDir);
+  try {
+    await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
+    await chmod(evidenceDir, 0o700);
+    const summaries = [];
+    for (const candidate of candidates) {
+      const id = activityId(candidate.activityUrl) ?? "unknown";
+      const body = normalizeExact(candidate.body);
+      await writePrivate(join(evidenceDir, `candidate-${id}-body.txt`), candidate.body);
+      summaries.push({
+        activityId: id,
+        bodySha256: createHash("sha256").update(body, "utf8").digest("hex"),
+        bodyLength: body.length,
+        authorProfileIdentity: safeLinkedInProfileIdentity(candidate.authorProfileHref),
+        hasNativeVideo: candidate.hasNativeVideo,
+        vanityPermalink: candidate.vanityPermalink,
+      });
+    }
+    const expanders = await page.locator("body").evaluate(inspectLinkedInExpanders);
+    const screenshot = await page.screenshot({ fullPage: true });
+    await writePrivate(join(evidenceDir, "failure-readback.png"), screenshot);
+    await writePrivate(
+      join(evidenceDir, "failure-manifest.json"),
+      `${JSON.stringify(
+        { version: 1, candidates: summaries, expanders, expansionClickCounts },
+        null,
+        2,
+      )}\n`,
+    );
+  } catch {
+    throw verifyError("failed to write private failure evidence");
+  }
+}
+
+interface DiagnosticRecorder extends InspectLinkedInProfileRecorder {
+  expansionClickCounts: number[];
+}
+
+function isDiagnosticRecorder(
+  recorder: InspectLinkedInProfileRecorder,
+): recorder is DiagnosticRecorder {
+  return "expansionClickCounts" in recorder && Array.isArray(recorder.expansionClickCounts);
+}
+
+function createDefaultRecorder(): DiagnosticRecorder {
+  const expansionClickCounts: number[] = [];
+  return {
+    expansionClickCounts,
+    async scanLoadedPosts(page, expectedAuthorIdentity, expectedTitle) {
+      const expanded = await page.locator("body").evaluate(expandMatchingLinkedInActivity, {
+        expectedAuthorIdentity,
+        expectedTitle,
+      });
+      expansionClickCounts.push(expanded);
+      if (expanded > 0) await page.waitForTimeout(500);
+      return page.locator("body").evaluate(extractLinkedInProfilePosts);
+    },
+    async scroll(page) {
+      await page.evaluate("window.scrollBy(0, Math.max(window.innerHeight, 900))");
+      await page.waitForTimeout(1_500);
+    },
+  };
+}
 
 interface BrowserNode {
   innerText: string;
@@ -277,6 +352,25 @@ interface BrowserNode {
   getAttribute(name: string): string | null;
   querySelectorAll(selector: string): ArrayLike<BrowserNode>;
   click?(): void;
+}
+
+export function inspectLinkedInExpanders(
+  root: BrowserNode,
+): Array<{ activityId: string; labels: string[] }> {
+  const containers = Array.from(
+    root.querySelectorAll("[data-urn*='urn:li:activity'], [data-id*='urn:li:activity']"),
+  );
+  return containers.map((container) => {
+    const raw = container.getAttribute("data-urn") ?? container.getAttribute("data-id") ?? "";
+    const id = /urn:li:activity:(\d+)/.exec(raw)?.[1] ?? "unknown";
+    const labels = Array.from(container.querySelectorAll("button")).map((button) =>
+      (button.getAttribute("aria-label") ?? button.innerText ?? button.textContent ?? "")
+        .normalize("NFKC")
+        .trim()
+        .toLowerCase(),
+    );
+    return { activityId: id, labels };
+  });
 }
 
 /** Expand only the direct-owned collapse control of the expected author/title

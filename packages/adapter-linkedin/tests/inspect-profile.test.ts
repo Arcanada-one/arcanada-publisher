@@ -31,6 +31,7 @@ function options(batches: ObservedLinkedInProfilePost[][]) {
     page: {
       goto: async () => {},
       screenshot: async () => Buffer.from("png"),
+      locator: () => ({ evaluate: async () => [] }),
     } as never,
     skipTeardown: true,
     __recorder: {
@@ -98,6 +99,17 @@ describe("LinkedIn read-only profile inspection", () => {
       await expect(
         inspectLinkedInProfilePost(input(evidenceDir), options([candidates])),
       ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+      expect(statSync(evidenceDir).mode & 0o777).toBe(0o700);
+      expect(statSync(join(evidenceDir, "failure-manifest.json")).mode & 0o777).toBe(0o600);
+      expect(statSync(join(evidenceDir, "failure-readback.png")).mode & 0o777).toBe(0o600);
+      expect(statSync(join(evidenceDir, `candidate-${ID}-body.txt`)).mode & 0o777).toBe(0o600);
+      const manifest = JSON.parse(readFileSync(join(evidenceDir, "failure-manifest.json"), "utf8"));
+      expect(manifest.candidates[0]).toMatchObject({
+        activityId: ID,
+        bodySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        bodyLength: BODY.length,
+      });
+      expect(JSON.stringify(manifest)).not.toContain(BODY);
     }
   });
 
@@ -251,6 +263,33 @@ describe("LinkedIn read-only profile inspection", () => {
     });
     for (const boundary of boundaries) expect(boundary.children[3]?.clickCount).toBe(0);
   });
+
+  it("records default-recorder labels/counts and keeps overlapping runs isolated", async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "li-inspect-overlap-"));
+    const firstEvidence = join(rootDir, "first");
+    const secondEvidence = join(rootDir, "second");
+    const first = inspectLinkedInProfilePost(
+      { ...input(firstEvidence), maxScrolls: 1 },
+      { page: fakePage(failingRoot("more")), skipTeardown: true },
+    );
+    const second = inspectLinkedInProfilePost(
+      { ...input(secondEvidence), maxScrolls: 1 },
+      { page: fakePage(failingRoot("unrelated")), skipTeardown: true },
+    );
+    const settled = await Promise.allSettled([first, second]);
+    expect(settled.map((item) => item.status)).toEqual(["rejected", "rejected"]);
+    const firstManifest = JSON.parse(
+      readFileSync(join(firstEvidence, "failure-manifest.json"), "utf8"),
+    );
+    const secondManifest = JSON.parse(
+      readFileSync(join(secondEvidence, "failure-manifest.json"), "utf8"),
+    );
+    expect(firstManifest.expansionClickCounts).toEqual([1, 1]);
+    expect(secondManifest.expansionClickCounts).toEqual([0, 0]);
+    expect(firstManifest.expanders[0].labels).toContain("more");
+    expect(secondManifest.expanders[0].labels).toContain("unrelated");
+    expect(statSync(join(firstEvidence, `candidate-${ID}-body.txt`)).mode & 0o777).toBe(0o600);
+  });
 });
 
 class FakeNode {
@@ -316,4 +355,37 @@ class FakeNode {
   }
 
   private onClick?: () => void;
+}
+
+function failingRoot(label: string): FakeNode {
+  const outer = new FakeNode("", { "data-urn": `urn:li:activity:${ID}` });
+  outer.child(
+    "Building the Binary Is Only the Beginning\n\nDifferent body",
+    "update-components-text",
+  );
+  outer.child("Pavel", "update-components-actor__meta-link", PROFILE);
+  outer.child(
+    "time",
+    "",
+    undefined,
+    `https://www.linkedin.com/posts/pavel_post-activity-${ID}-AbCd`,
+  );
+  outer.child("video", "video-player");
+  outer.child(label, "button");
+  const root = new FakeNode("");
+  root.children.push(outer);
+  return root;
+}
+
+function fakePage(root: FakeNode) {
+  return {
+    goto: async () => {},
+    locator: () => ({
+      evaluate: async (fn: (node: FakeNode, arg?: unknown) => unknown, arg?: unknown) =>
+        fn(root, arg),
+    }),
+    waitForTimeout: async () => {},
+    evaluate: async () => {},
+    screenshot: async () => Buffer.from("png"),
+  } as never;
 }
