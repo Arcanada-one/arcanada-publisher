@@ -206,7 +206,7 @@ async function runReplaceComment(
   profile: string,
   args: ParsedArgs,
 ): Promise<RunResult> {
-  if (platform !== "facebook" && platform !== "x") {
+  if (platform !== "facebook" && platform !== "x" && platform !== "linkedin") {
     return {
       code: ErrorCode.INVALID_ARGS,
       message: "replace-comment is supported only for Facebook",
@@ -251,10 +251,10 @@ async function runInspectProfilePost(
   profile: string,
   args: ParsedArgs,
 ): Promise<RunResult> {
-  if (platform !== "facebook" && platform !== "x") {
+  if (platform !== "facebook" && platform !== "linkedin" && platform !== "x") {
     return {
       code: ErrorCode.INVALID_ARGS,
-      message: "inspect-profile-post is supported only for Facebook and X",
+      message: "inspect-profile-post is supported only for Facebook, LinkedIn, and X",
     };
   }
   if (
