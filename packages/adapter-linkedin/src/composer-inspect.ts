@@ -51,7 +51,11 @@ async function runInspect(page: Page): Promise<ComposerDiagnostics> {
       : page.getByRole("textbox", { name: selectors.editor }).first();
   await editor.waitFor({ state: "visible", timeout: 15_000 });
   await page.waitForTimeout(1_000);
-  return (await editor.evaluate(composerDomProbeJs())) as ComposerDiagnostics;
+  return (await editor.evaluate(composerDomProbeInvocationJs())) as ComposerDiagnostics;
+}
+
+export function composerDomProbeInvocationJs(): string {
+  return `element => (${composerDomProbeJs()})(element)`;
 }
 
 export function composerDomProbeJs(): string {
