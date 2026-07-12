@@ -84,6 +84,12 @@ describe("selectors — RU/EN composer & action regex", () => {
     expect(matchesExact("confirmDelete", "Poista")).toBe(true);
   });
 
+  it("showOriginal matches LinkedIn auto-translation controls", () => {
+    expect(matchesExact("showOriginal", "Show original")).toBe(true);
+    expect(matchesExact("showOriginal", "Näytä alkuperäinen")).toBe(true);
+    expect(matchesExact("showOriginal", "Original anzeigen")).toBe(true);
+  });
+
   // PUB-0032: shadow-walk DOM-click pattern SOURCES must stay in sync with the
   // Playwright-locator regexes and cover the same multi-locale labels.
   it("shadowClickPatterns cover multi-locale control-menu / delete / confirm", () => {
