@@ -65,6 +65,8 @@ async function dispatch(args: ParsedArgs): Promise<RunResult> {
       return runLogin(platform, profile, args);
     case "delete":
       return runDelete(platform, profile, args);
+    case "inspect":
+      return runInspect(platform, profile, args);
     case "edit":
       return runEdit(platform, profile, args);
     case "comment":
@@ -107,12 +109,35 @@ async function runEdit(platform: Platform, profile: string, args: ParsedArgs): P
     postUrl: args.targetUrl,
     text: readText(args),
     ...(args.images[0] ? { imagePath: args.images[0] } : {}),
-    ...(args.expectedContent ? { expectedContent: args.expectedContent } : {}),
+    ...(args.expectedContent || args.expectedContentFile
+      ? {
+          expectedContent:
+            args.expectedContent ??
+            readFileSync(args.expectedContentFile!, "utf8").replace(/\r?\n$/, ""),
+        }
+      : {}),
     ...(args.expectedMediaKind ? { expectedMediaKind: args.expectedMediaKind } : {}),
     ...(args.parentUrl ? { expectedParentUrl: args.parentUrl } : {}),
+    ...(args.videoWidth ? { videoWidth: args.videoWidth } : {}),
+    ...(args.videoHeight ? { videoHeight: args.videoHeight } : {}),
+    ...(args.videoDuration ? { videoDuration: args.videoDuration } : {}),
     profile,
   });
   return { code: ErrorCode.SUCCESS, message: `edited ${res.postUrl}` };
+}
+
+async function runInspect(
+  platform: Platform,
+  _profile: string,
+  args: ParsedArgs,
+): Promise<RunResult> {
+  if (platform !== "telegram" || !args.targetUrl)
+    return { code: ErrorCode.INVALID_ARGS, message: "inspect requires Telegram --target-url" };
+  const adapter = makeAdapter(platform, args) as unknown as {
+    inspect(postUrl: string): Promise<unknown>;
+  };
+  const result = await adapter.inspect(args.targetUrl);
+  return { code: ErrorCode.SUCCESS, message: JSON.stringify(result) };
 }
 
 async function runComment(

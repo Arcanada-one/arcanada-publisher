@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import { readFile } from "node:fs/promises";
 import {
@@ -37,6 +37,15 @@ export interface TelegramAdapterOptions {
   transport?: TelegramTransport;
   nonce?: () => string;
   allowedLiveChatIds?: string[];
+}
+
+export interface TelegramInspection {
+  chatId: string;
+  messageId: number;
+  content: string;
+  marker: string | null;
+  mediaKind: "image" | "video" | "none";
+  video?: NonNullable<TelegramMessage["video"]>;
 }
 
 export class TelegramAdapter extends BaseAdapter {
@@ -211,24 +220,49 @@ export class TelegramAdapter extends BaseAdapter {
     });
   }
 
+  async inspect(postUrl: string): Promise<TelegramInspection> {
+    const { chatId, messageId } = parseMessageUrl(postUrl);
+    if (!this.allowedLiveChatIds.has(chatId))
+      throw new AdapterError(
+        ErrorCode.NETWORK_GUARD,
+        `telegram: live chat '${chatId}' is not operator-allowed`,
+      );
+    const current = await this.forwardProbe(chatId, messageId);
+    const content = current.caption ?? current.text ?? "";
+    const marker = /(?:^|\n\n)(#PUB_0029_[A-Za-z0-9]+)$/.exec(content)?.[1] ?? null;
+    return {
+      chatId,
+      messageId,
+      content,
+      marker,
+      mediaKind: current.video ? "video" : current.photo?.length ? "image" : "none",
+      ...(current.video ? { video: current.video } : {}),
+    };
+  }
+
   private async editMedia(
     input: EditInput,
     chatId: string,
     messageId: number,
   ): Promise<EditResult> {
     if (
-      !input.expectedContent?.match(/^#PUB_0029_[A-Za-z0-9]+$/) ||
+      !input.expectedContent?.trim() ||
+      (!input.expectedContent.match(/^#PUB_0029_[A-Za-z0-9]+$/) &&
+        input.expectedContent !== input.text) ||
       !input.expectedMediaKind ||
-      input.expectedParentUrl !== undefined
+      input.expectedParentUrl !== undefined ||
+      (mediaKind(input.imagePath!) === "video" &&
+        (!input.videoWidth || !input.videoHeight || !input.videoDuration))
     )
       throw new AdapterError(
         ErrorCode.INVALID_ARGS,
-        "edit: Telegram media replacement requires a Publisher marker and expectedMediaKind; parent oracle is unsupported",
+        "edit: Telegram media replacement requires exact current content or Publisher marker, expectedMediaKind, and explicit video metadata; parent oracle is unsupported",
       );
     const bot = requireResult<{ id: number }>(await this.transport("getMe", undefined), "getMe");
     const current = await this.forwardProbe(chatId, messageId);
     this.assertCurrentArtifact(input, current, chatId, bot.id);
     const bytes = await readFile(input.imagePath!);
+    const uploadSha256 = createHash("sha256").update(bytes).digest("hex");
     const attachmentKind = mediaKind(input.imagePath!);
     const body = new FormData();
     body.set("chat_id", chatId);
@@ -239,6 +273,14 @@ export class TelegramAdapter extends BaseAdapter {
         type: attachmentKind === "video" ? "video" : "photo",
         media: "attach://media_file",
         caption: input.text,
+        ...(attachmentKind === "video"
+          ? {
+              width: input.videoWidth,
+              height: input.videoHeight,
+              duration: input.videoDuration,
+              supports_streaming: true,
+            }
+          : {}),
       }),
     );
     body.set("media_file", new Blob([bytes]), basename(input.imagePath!));
@@ -263,16 +305,30 @@ export class TelegramAdapter extends BaseAdapter {
       actual !== input.text ||
       returnedKind !== attachmentKind ||
       (attachmentKind === "video" &&
-        (message.video?.file_name !== basename(input.imagePath!) ||
-          message.video.file_size !== bytes.byteLength ||
-          message.video.width <= 0 ||
-          message.video.height <= 0 ||
-          message.video.duration <= 0))
+        (!message.video?.file_id ||
+          message.video.file_name !== basename(input.imagePath!) ||
+          message.video.width !== input.videoWidth ||
+          message.video.height !== input.videoHeight ||
+          message.video.duration !== input.videoDuration))
     )
       throw new AdapterError(
         ErrorCode.VERIFY_FAILED,
         "editMessageMedia: Telegram returned artifact failed identity/content/media read-back; state UNKNOWN",
-        { unknown: true, reconcileRequired: true, messageId },
+        {
+          unknown: true,
+          reconcileRequired: true,
+          messageId,
+          uploadSha256,
+          uploadedBytes: bytes.byteLength,
+          requested: {
+            width: input.videoWidth,
+            height: input.videoHeight,
+            duration: input.videoDuration,
+            fileName: basename(input.imagePath!),
+          },
+          returned: message.video ?? null,
+          note: "Telegram may transform file_size; file_id and requested media metadata are authoritative",
+        },
       );
     return EditResultSchema.parse({
       ok: true,

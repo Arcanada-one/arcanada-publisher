@@ -111,6 +111,32 @@ describe("cli parse-args (V-AC-11 flag contract)", () => {
     ).toThrow(CliParseError);
   });
 
+  it("parses Telegram inspect and explicit video metadata", () => {
+    const inspect = parseArgs([
+      "inspect",
+      "--platform",
+      "telegram",
+      "--target-url",
+      "https://t.me/valentovtypes/208",
+    ]);
+    expect(inspect.command).toBe("inspect");
+    const edit = parseArgs([
+      "edit",
+      "--platform",
+      "telegram",
+      "--expected-content-file",
+      "caption.txt",
+      "--video-width",
+      "1280",
+      "--video-height",
+      "720",
+      "--video-duration",
+      "245",
+    ]);
+    expect(edit.expectedContentFile).toBe("caption.txt");
+    expect([edit.videoWidth, edit.videoHeight, edit.videoDuration]).toEqual([1280, 720, 245]);
+  });
+
   it("parses the net-new server command with --bind + --port", () => {
     const a = parseArgs(["server", "--bind", "127.0.0.1", "--port", "8787"]);
     expect(a.command).toBe("server");
