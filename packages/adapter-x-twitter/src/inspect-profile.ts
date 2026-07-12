@@ -50,6 +50,7 @@ export interface InspectXPostSummary {
 }
 
 export interface InspectXProfileRecorder {
+  expandOwnPosts?(page: Page, expectedHandle: string): Promise<void>;
   scanLoadedPosts(page: Page): Promise<ObservedXProfilePost[]>;
   scroll(page: Page, index: number): Promise<void>;
 }
@@ -104,6 +105,7 @@ async function runInspection(
   const observed = new Map<string, ObservedXProfilePost>();
   let scrollsPerformed = 0;
   for (let pass = 0; pass <= input.maxScrolls; pass += 1) {
+    await recorder.expandOwnPosts?.(page, expectedHandle);
     for (const post of await recorder.scanLoadedPosts(page)) observed.set(post.statusId, post);
     if (pass < input.maxScrolls) {
       await recorder.scroll(page, pass + 1);
@@ -233,6 +235,41 @@ export function extractObservedXPostsFromDom(
 }
 
 export const defaultRecorder: InspectXProfileRecorder = {
+  async expandOwnPosts(page, expectedHandle) {
+    const articles = page.locator("article");
+    for (let index = 0, count = await articles.count(); index < count; index += 1) {
+      const article = articles.nth(index);
+      const owned = await article.evaluate((articleNode, handle) => {
+        if (articleNode.parentElement?.closest("article")) return false;
+        const time = [...articleNode.querySelectorAll("time[datetime]")].find(
+          (candidate) => candidate.closest("article") === articleNode,
+        );
+        const href = time?.closest("a[href]")?.getAttribute("href");
+        if (!href) return false;
+        const match = /^\/([^/]+)\/status\/\d+/.exec(
+          new URL(href, (globalThis as unknown as { location: { href: string } }).location.href)
+            .pathname,
+        );
+        return match?.[1]?.toLowerCase() === handle;
+      }, expectedHandle);
+      if (!owned) continue;
+      let expanders = article.locator('[data-testid="tweet-text-show-more-link"]');
+      if ((await expanders.count()) === 0) {
+        expanders = article.getByText(/^(Show more|Показать ещё|Показать больше)$/i, {
+          exact: true,
+        });
+      }
+      for (let button = 0, count = await expanders.count(); button < count; button += 1) {
+        const expander = expanders.nth(button);
+        const belongsToTopLevelArticle = await expander.evaluate((node) => {
+          const owner = node.closest("article");
+          return owner !== null && !owner.parentElement?.closest("article");
+        });
+        if (belongsToTopLevelArticle)
+          await expander.click({ force: true, timeout: 2_000 }).catch(() => undefined);
+      }
+    }
+  },
   async scanLoadedPosts(page) {
     return page.locator("article").evaluateAll(extractObservedXPostsFromDom, page.url());
   },
