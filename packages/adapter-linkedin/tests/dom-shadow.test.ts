@@ -309,6 +309,29 @@ describe("dom-shadow — scopedVideoCountJs (fail-closed video detection)", () =
 });
 
 describe("dom-shadow — markComposerScopeJs", () => {
+  it("supports the actual Locator.evaluate callback-plus-source contract", () => {
+    const attributes = new Map<string, string>();
+    const post = { innerText: "Post", getAttribute: () => null };
+    const wrapper = {
+      parentElement: null,
+      matches: () => true,
+      setAttribute: (name: string, value: string) => attributes.set(name, value),
+      querySelectorAll: (selector: string) => (selector.includes("button") ? [post] : []),
+      getRootNode: () => ({ host: null }),
+    };
+    const editor = {
+      parentElement: wrapper,
+      querySelectorAll: () => [],
+      getRootNode: () => ({ host: null }),
+    };
+    const callback = (element: object, source: string) => {
+      const marker = Function(`return ${source}`)() as (node: object) => boolean;
+      return marker(element);
+    };
+    expect(callback(editor, markComposerScopeJs())).toBe(true);
+    expect(attributes.get("data-arcanada-publish-composer")).toBe("true");
+  });
+
   it("marks a light-DOM semantic composer parent with one Post control", () => {
     const attributes = new Map<string, string>();
     const post = {
