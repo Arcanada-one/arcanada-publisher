@@ -128,11 +128,21 @@ async function runEdit(platform: Platform, profile: string, args: ParsedArgs): P
 
 async function runInspect(
   platform: Platform,
-  _profile: string,
+  profile: string,
   args: ParsedArgs,
 ): Promise<RunResult> {
+  if (platform === "linkedin" && !args.targetUrl) {
+    const adapter = makeAdapter(platform, args) as unknown as {
+      inspectComposer(profile: string): Promise<unknown>;
+    };
+    const result = await adapter.inspectComposer(profile);
+    return { code: ErrorCode.SUCCESS, message: JSON.stringify(result) };
+  }
   if (platform !== "telegram" || !args.targetUrl)
-    return { code: ErrorCode.INVALID_ARGS, message: "inspect requires Telegram --target-url" };
+    return {
+      code: ErrorCode.INVALID_ARGS,
+      message: "inspect requires Telegram --target-url or LinkedIn without --target-url",
+    };
   const adapter = makeAdapter(platform, args) as unknown as {
     inspect(postUrl: string): Promise<unknown>;
   };
