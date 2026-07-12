@@ -1,9 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
-import { ErrorCode, ProfileManager } from "@arcanada/publisher-core";
-import { publish, publishedTextMatchFragment, type PublishStepRecorder } from "../src/publish.js";
+import { ErrorCode, ProfileManager, type PublishInput } from "@arcanada/publisher-core";
+import {
+  publish as publishImpl,
+  publishedTextMatchFragment,
+  type PublishStepRecorder,
+} from "../src/publish.js";
 import { typeMultiline } from "../src/input.js";
 
 function makeProfiles(): ProfileManager {
@@ -20,8 +24,24 @@ function makeImage(ext = ".png"): string {
 }
 
 const FAKE_PROFILE = "p1";
+const EXPECTED_AUTHOR = "https://www.facebook.com/100012345";
+
+function publish(input: PublishInput, options?: Parameters<typeof publishImpl>[1]) {
+  return publishImpl(
+    { ...input, expectedAuthorProfileUrl: input.expectedAuthorProfileUrl ?? EXPECTED_AUTHOR },
+    options,
+  );
+}
 
 describe("facebook publish — input validation (R1 image-mandatory)", () => {
+  it("requires the caller stable-author oracle even with an injected recorder", async () => {
+    await expect(
+      publishImpl(
+        { text: "body", imagePaths: [makeImage()], profile: FAKE_PROFILE },
+        { profileManager: makeProfiles(), page: fakePage(), __recorder: makeRecorder() },
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.MISSING_INPUT });
+  });
   it("rejects empty text with MISSING_INPUT", async () => {
     await expect(
       publish({ text: "  ", imagePaths: [makeImage()], profile: FAKE_PROFILE }),
@@ -66,6 +86,18 @@ describe("facebook publish — input validation (R1 image-mandatory)", () => {
       ),
     ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
   });
+
+  it("does not expose an absolute image path in validation errors", async () => {
+    const secretPath = "/private/campaign/secret-hero.jpg";
+    let error: unknown;
+    try {
+      await publish({ text: "body", imagePaths: [secretPath], profile: FAKE_PROFILE });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({ code: ErrorCode.MISSING_INPUT });
+    expect(JSON.stringify(error)).not.toContain(secretPath);
+  });
 });
 
 // --- Call-sequence recorder fake page ------------------------------------
@@ -100,9 +132,13 @@ function makeRecorder(): PublishStepRecorder & {
     typeBody: vi.fn(async () => {
       order.push("typeBody");
     }),
-    preSubmitSnapshot: vi.fn(async () => {
+    preSubmitSnapshot: vi.fn(async (_page, input) => {
       order.push("preSubmitSnapshot");
-      return { hasText: true, hasImage: true };
+      const images = input.imagePaths?.length ? input.imagePaths : [input.imagePath!];
+      return {
+        normalizedBody: input.text.normalize("NFKC").replace(/\r\n/g, "\n").trim(),
+        attachments: images.map((image) => ({ name: basename(image), size: statSync(image).size })),
+      };
     }),
     submitAndConfirm: vi.fn(async (_page, publishedText?: string) => {
       order.push("submitAndConfirm");
@@ -111,7 +147,13 @@ function makeRecorder(): PublishStepRecorder & {
     }),
     postVerify: vi.fn(async () => {
       order.push("postVerify");
-      return true;
+      return {
+        canonicalPermalink: "https://www.facebook.com/100012345/posts/777",
+        authorProfileIdentity: "www.facebook.com/100012345",
+        normalizedBody: submitTextSeen.at(-1) ?? "",
+        hasImage: true,
+        mediaIdentity: "https://www.facebook.com/photo/?fbid=hero",
+      };
     }),
   };
 }
@@ -149,7 +191,7 @@ describe("facebook publish — R8 image-first ordering + R7 pre/post verify", ()
     const rec = makeRecorder();
     rec.preSubmitSnapshot = vi.fn(async () => {
       rec.order.push("preSubmitSnapshot");
-      return { hasText: false, hasImage: true };
+      return { normalizedBody: "wrong", attachments: [] };
     });
     await expect(
       publish(
@@ -160,11 +202,28 @@ describe("facebook publish — R8 image-first ordering + R7 pre/post verify", ()
     expect(rec.submitAndConfirm).not.toHaveBeenCalled();
   });
 
+  it("rejects title-only composer text before submit", async () => {
+    const rec = makeRecorder();
+    rec.preSubmitSnapshot = vi.fn(async () => ({ normalizedBody: "Title line", attachments: [] }));
+    await expect(
+      publish(
+        {
+          text: "Title line\n\nComplete body that must survive",
+          imagePaths: [makeImage()],
+          profile: FAKE_PROFILE,
+          expectedAuthorProfileUrl: "https://www.facebook.com/pavelvalentov",
+        },
+        { profileManager: makeProfiles(), page: fakePage(), __recorder: rec },
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    expect(rec.submitAndConfirm).not.toHaveBeenCalled();
+  });
+
   it("R7: ABORTS before submit when the pre-submit snapshot reports the image is gone", async () => {
     const rec = makeRecorder();
-    rec.preSubmitSnapshot = vi.fn(async () => {
+    rec.preSubmitSnapshot = vi.fn(async (_page, input) => {
       rec.order.push("preSubmitSnapshot");
-      return { hasText: true, hasImage: false };
+      return { normalizedBody: input.text, attachments: [] };
     });
     await expect(
       publish(
@@ -179,14 +238,17 @@ describe("facebook publish — R8 image-first ordering + R7 pre/post verify", ()
     const rec = makeRecorder();
     rec.postVerify = vi.fn(async () => {
       rec.order.push("postVerify");
-      return false;
+      throw new Error("ambiguous readback");
     });
     await expect(
       publish(
         { text: "line", imagePaths: [makeImage()], profile: FAKE_PROFILE },
         { profileManager: makeProfiles(), page: fakePage(), __recorder: rec },
       ),
-    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    ).rejects.toMatchObject({
+      code: ErrorCode.VERIFY_FAILED,
+      details: { unknown: true, reconcileRequired: true },
+    });
   });
 
   it("R1 multi-image: forwards every validated path to uploadImages in order", async () => {

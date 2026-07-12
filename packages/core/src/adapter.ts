@@ -29,6 +29,8 @@ export interface PublishInput {
    * 280 limit. Ignored by adapters without a tiered length limit.
    */
   premium?: boolean;
+  /** Stable author-profile oracle required by adapters that verify ownership after publish. */
+  expectedAuthorProfileUrl?: string;
 }
 
 export interface CommentInput {
@@ -47,6 +49,8 @@ export interface EditInput {
   expectedMediaKind?: "image" | "video" | "none";
   /** Explicit read-before-edit reply-parent oracle: exact URL or `none`. */
   expectedParentUrl?: string | "none";
+  /** Stable author-profile oracle for read-before/edit/read-after binding. */
+  expectedAuthorProfileUrl?: string;
   videoWidth?: number;
   videoHeight?: number;
   videoDuration?: number;

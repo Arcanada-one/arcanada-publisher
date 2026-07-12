@@ -38,6 +38,19 @@ describe("errors — fb-publish taxonomy → core ErrorCode mapping (AC-4)", () 
     expect(mapFbError("unknown").code).toBe(ErrorCode.INTERNAL_PANIC);
   });
 
+  it("drops raw cause messages and path-bearing nested details", () => {
+    const secret = "/private/operator/secret.txt";
+    const error = mapFbError("runtime_error", {
+      message: secret,
+      cause: new Error(secret),
+      extra: { cause: { message: secret }, filePath: secret, stage: "composer_open" },
+    });
+    const serialized = JSON.stringify(error.toJSON());
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain("cause");
+    expect(error.details).toEqual({ fbErrorType: "runtime_error", stage: "composer_open" });
+  });
+
   it("mapFbError refuses to map 'ok'", () => {
     expect(() => mapFbError("ok")).toThrow();
   });

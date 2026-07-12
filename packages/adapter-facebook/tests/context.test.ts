@@ -1,8 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
 import { tmpdir } from "node:os";
-import { resolveArtifactsDir, artifactFilename } from "../src/context.js";
+import {
+  resolveArtifactsDir,
+  artifactFilename,
+  screenshotOnFail,
+  withScreenshotOnFail,
+} from "../src/context.js";
 
 describe("context — helpers (Class B pure functions)", () => {
   let scratch: string;
@@ -20,6 +26,7 @@ describe("context — helpers (Class B pure functions)", () => {
     expect(out).toBe(target);
     expect(existsSync(target)).toBe(true);
     expect(statSync(target).isDirectory()).toBe(true);
+    expect(statSync(target).mode & 0o777).toBe(0o700);
   });
 
   it("resolveArtifactsDir is idempotent on an existing directory", () => {
@@ -35,5 +42,62 @@ describe("context — helpers (Class B pure functions)", () => {
     expect(a).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-publish-step\.png$/);
     const b = artifactFilename("negative parent_id", "txt");
     expect(b).toMatch(/-negative-parent-id\.txt$/);
+  });
+
+  it("stores screenshots as 0600 and exposes only artifact id", async () => {
+    const page = {
+      isClosed: () => false,
+      screenshot: async ({ path }: { path: string }) => writeFileSync(path, "png"),
+    } as never;
+    const shot = await screenshotOnFail(page, "secret-stage", scratch);
+    expect(shot).not.toBeNull();
+    expect(statSync(shot!).mode & 0o777).toBe(0o600);
+
+    let error: unknown;
+    try {
+      await withScreenshotOnFail(
+        page,
+        "private-stage",
+        async () => {
+          throw new Error("/private/secret/cause.txt");
+        },
+        scratch,
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    const serialized = JSON.stringify(error);
+    expect(serialized).not.toContain("/private/secret");
+    expect(serialized).not.toContain(scratch);
+    expect(serialized).toContain("artifactId");
+  });
+
+  it("sanitizes an existing AdapterError before rethrow", async () => {
+    const page = {
+      isClosed: () => false,
+      screenshot: async ({ path }: { path: string }) => writeFileSync(path, "png"),
+    } as never;
+    const secret = "/private/operator/secret.txt";
+    let error: unknown;
+    try {
+      await withScreenshotOnFail(
+        page,
+        "adapter-stage",
+        async () => {
+          throw new AdapterError(ErrorCode.INTERNAL_PANIC, "safe", {
+            cause: new Error(secret),
+            filePath: secret,
+            stage: "readback",
+          });
+        },
+        scratch,
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    const serialized = JSON.stringify(error);
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain("cause");
+    expect(serialized).toContain("artifactId");
   });
 });

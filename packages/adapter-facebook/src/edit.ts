@@ -13,6 +13,14 @@ import {
 import { selectors } from "./selectors.js";
 import { launchSession, withScreenshotOnFail } from "./context.js";
 import { extractAccountFromUrl } from "./url-extraction.js";
+import { typeMultiline } from "./input.js";
+import {
+  canonicalFacebookPostUrl,
+  facebookProfileIdentity,
+  normalizeFacebookText,
+  readFacebookPost,
+  type FacebookPostReadback,
+} from "./post-readback.js";
 
 /**
  * `EditInput` from core supports edit-post only; for edit-comment we accept
@@ -46,6 +54,15 @@ export async function edit(
       "edit: at least one of 'text' or 'imagePath' must be set",
     );
   }
+  if (!input.commentId && (!input.expectedContent || !input.expectedAuthorProfileUrl)) {
+    throw new AdapterError(
+      ErrorCode.MISSING_INPUT,
+      "edit-post requires expectedContent and expectedAuthorProfileUrl",
+    );
+  }
+  if (!input.commentId && input.expectedMediaKind !== "image") {
+    throw new AdapterError(ErrorCode.INVALID_ARGS, "edit-post requires expectedMediaKind=image");
+  }
 
   const profiles = options.profileManager ?? new ProfileManager();
   const profileDir = profiles.ensureProfileExists("facebook", input.profile);
@@ -76,7 +93,19 @@ export async function edit(
 
 async function editPostFlow(page: Page, input: FacebookEditInput): Promise<EditResult> {
   return withScreenshotOnFail(page, "edit-post", async () => {
-    await page.goto(input.postUrl);
+    const target = canonicalFacebookPostUrl(input.postUrl);
+    const expectedAuthor = facebookProfileIdentity(input.expectedAuthorProfileUrl!);
+    const before = await readFacebookPost(page, target);
+    if (
+      before.canonicalPermalink !== target ||
+      before.authorProfileIdentity !== expectedAuthor ||
+      before.normalizedBody !== normalizeFacebookText(input.expectedContent!) ||
+      !before.hasImage
+    ) {
+      throw new AdapterError(ErrorCode.VERIFY_FAILED, "edit-post: pre-edit oracle mismatch", {
+        stage: "pre_edit_verify",
+      });
+    }
     const actions = page
       .getByRole("button", { name: selectors.editPostAction })
       .or(page.getByRole("button", { name: selectors.editPostActionEn }))
@@ -96,7 +125,13 @@ async function editPostFlow(page: Page, input: FacebookEditInput): Promise<EditR
       await textbox.click();
       await page.keyboard.press("Control+A");
       await page.keyboard.press("Delete");
-      await page.keyboard.insertText(input.text);
+      await typeMultiline(page, input.text, { submit: false });
+      const composerBody = normalizeFacebookText(await textbox.innerText().catch(() => ""));
+      if (composerBody !== normalizeFacebookText(input.text)) {
+        throw new AdapterError(ErrorCode.VERIFY_FAILED, "edit-post: exact composer body mismatch", {
+          stage: "pre_save_text",
+        });
+      }
     }
 
     const save = page.getByRole("button", { name: selectors.saveButton, exact: true });
@@ -105,10 +140,27 @@ async function editPostFlow(page: Page, input: FacebookEditInput): Promise<EditR
         postUrl: input.postUrl,
       });
     }
-    await save.first().click();
-    await page.waitForTimeout(3_000);
-
-    return finalizeEditResult(page, input);
+    const after = await completePostEditMutation({
+      save: () => save.first().click(),
+      settle: () => page.waitForTimeout(3_000),
+      readback: () => readFacebookPost(page, target),
+      before,
+      target,
+      expectedAuthor,
+      expectedBody: input.text!,
+    });
+    void after;
+    try {
+      return EditResultSchema.parse({
+        ok: true,
+        platform: "facebook",
+        account: extractAccountFromUrl(target),
+        postUrl: target,
+        edited: true,
+      });
+    } catch {
+      throw unknownEdit();
+    }
   });
 }
 
@@ -126,20 +178,38 @@ async function editCommentFlow(_page: Page, input: FacebookEditInput): Promise<E
   );
 }
 
-async function finalizeEditResult(page: Page, input: FacebookEditInput): Promise<EditResult> {
-  await page.reload();
-  const editedMarker = page.getByText(selectors.editedMarker).first();
-  let edited = false;
-  try {
-    edited = await editedMarker.isVisible({ timeout: 5_000 } as never);
-  } catch {
-    edited = false;
-  }
-  return EditResultSchema.parse({
-    ok: true,
-    platform: "facebook",
-    account: extractAccountFromUrl(input.postUrl),
-    postUrl: input.postUrl,
-    edited,
+function unknownEdit(): AdapterError {
+  return new AdapterError(ErrorCode.VERIFY_FAILED, "edit-post: state unknown after save", {
+    unknown: true,
+    reconcileRequired: true,
+    stage: "post_edit_verify",
+    artifactId: "facebook-edit-unknown",
   });
+}
+
+export async function completePostEditMutation(input: {
+  save(): Promise<unknown>;
+  settle(): Promise<unknown>;
+  readback(): Promise<FacebookPostReadback>;
+  before: FacebookPostReadback;
+  target: string;
+  expectedAuthor: string;
+  expectedBody: string;
+}): Promise<FacebookPostReadback> {
+  try {
+    await input.save();
+    await input.settle();
+    const after = await input.readback();
+    if (
+      after.canonicalPermalink !== input.target ||
+      after.authorProfileIdentity !== input.expectedAuthor ||
+      after.normalizedBody !== normalizeFacebookText(input.expectedBody) ||
+      !after.hasImage ||
+      after.mediaIdentity !== input.before.mediaIdentity
+    )
+      throw new Error("post-edit mismatch");
+    return after;
+  } catch {
+    throw unknownEdit();
+  }
 }
