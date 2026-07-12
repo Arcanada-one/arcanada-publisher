@@ -182,7 +182,9 @@ this fixed order. It is the operator-confirmed sequence and avoids the failure m
    Post click. File pickers and `setInputFiles` remain forbidden. The fallback requires the
    same canonical path/size/SHA proof and unique composer scope as clipboard publishing. Run
    the attachment-only smoke first; a full publish is allowed only after that smoke renders a
-   scoped video preview and closes without typing or clicking Post.
+   scoped video preview or the exact validated video filename card and closes without typing or
+   clicking Post. LinkedIn may replace the composer subtree after attachment, so Publisher must
+   re-bind its exact composer marker before every attachment readback.
 5. **After publishing, re-verify against the live account** (§6.2): the post carries the
    **video** (play control / duration, not a still image), the text is complete, and the
    author is our account.
@@ -206,7 +208,9 @@ actual server-side upload runs **in the background after you click «Post»** �
 appears («Uploading… / Ladataan… keep this page open until the upload completes — N%»).
 
 - **Do NOT close the window / tear down the browser context until the upload bar reaches 100%
-  AND a few more seconds elapse** (the finalisation keeps spinning briefly after the bar fills).
+  AND the content-creation/share API confirms success, followed by a few more seconds** (the
+  finalisation keeps spinning briefly after the bar fills). Publisher waits up to ten minutes
+  for this lifecycle boundary; an arbitrary fixed sleep is not completion proof.
   Tearing down early publishes the post **text-only with no video** (real incident: the first
   Show-Me LinkedIn post went out video-less because the context closed mid-upload).
 - After the bar clears + grace pause, re-fetch the published post and assert `video` is present

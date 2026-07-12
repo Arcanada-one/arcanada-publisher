@@ -3,6 +3,7 @@ import {
   shadowClickButtonJs,
   shadowCountJs,
   scopedVideoCountJs,
+  scopedMediaAttachmentCountJs,
   shadowFindActivityUrnJs,
   markComposerScopeJs,
   shadowClickComposerButtonJs,
@@ -305,6 +306,38 @@ describe("dom-shadow — scopedVideoCountJs (fail-closed video detection)", () =
     });
     const r = run(scopedVideoCountJs(), [dialog]);
     expect(r).toBe(1);
+  });
+});
+
+describe("dom-shadow — scopedMediaAttachmentCountJs", () => {
+  it("accepts the exact LinkedIn pre-upload file card inside the marked composer", () => {
+    const fileCard = el({ tag: "div", text: "x-linkedin-en.mp4\n28 MB" });
+    const scope = el({
+      tag: "div",
+      text: "scope:[data-arcanada-publish-composer='true']",
+      children: [fileCard],
+    });
+    expect(run(scopedMediaAttachmentCountJs("x-linkedin-en.mp4"), [scope])).toBe(1);
+  });
+
+  it("rejects the same filename outside the exact marked composer", () => {
+    expect(
+      run(scopedMediaAttachmentCountJs("x-linkedin-en.mp4"), [
+        el({ tag: "span", text: "x-linkedin-en.mp4" }),
+      ]),
+    ).toBe(0);
+  });
+
+  it("rejects substring and different-extension filename matches", () => {
+    const scope = el({
+      tag: "div",
+      text: "scope:[data-arcanada-publish-composer='true']",
+      children: [
+        el({ tag: "span", text: "copy-of-x-linkedin-en.mp4" }),
+        el({ tag: "span", text: "x-linkedin-en.mov" }),
+      ],
+    });
+    expect(run(scopedMediaAttachmentCountJs("x-linkedin-en.mp4"), [scope])).toBe(0);
   });
 });
 

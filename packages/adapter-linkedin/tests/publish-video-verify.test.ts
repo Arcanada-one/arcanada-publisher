@@ -37,6 +37,7 @@ const ACTIVITY_URL = "https://www.linkedin.com/feed/update/urn:li:activity:74629
  * shadow-walk button clicks (ADD_MEDIA / NEXT_DONE / POST) all return true.
  */
 function fakeVideoPublishPage(): never {
+  const editorEvaluate = vi.fn(async () => true);
   const visibleLocator = {
     first: () => visibleLocator,
     waitFor: async () => {},
@@ -44,7 +45,7 @@ function fakeVideoPublishPage(): never {
     count: async () => 1,
     click: async () => {},
     focus: async () => {},
-    evaluate: async () => true,
+    evaluate: editorEvaluate,
   };
   const page = {
     goto: async () => {},
@@ -56,12 +57,13 @@ function fakeVideoPublishPage(): never {
       press: async () => {},
       insertText: async () => {},
     },
-    waitForResponse: async () => null,
+    waitForResponse: async () => ({ ok: () => true }),
+    __editorEvaluate: editorEvaluate,
     evaluate: async (source: string) => {
       // shadow-walk button clicks return true (control found + clicked).
       if (source.includes("hit.click()")) return true;
       // scoped video count (composer-side) → 1 (attached).
-      if (source.includes("scopeSel")) return 1;
+      if (source.includes("scopeSel") || source.includes("var expected=")) return 1;
       // visible href collector → the activity URL (extraction succeeds).
       if (source.includes("offsetParent")) return [ACTIVITY_URL];
       // generic shadow count (post-publish oracle path, if ever reached) → 0.
@@ -76,12 +78,16 @@ describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
     const vid = makeVideo();
     const page = fakeVideoPublishPage() as unknown as {
       evaluate(source: string | ((...args: never[]) => unknown)): Promise<unknown>;
+      __editorEvaluate: ReturnType<typeof vi.fn>;
     };
     let dragged = false;
     let beforeDragPolls = 0;
     const originalEvaluate = page.evaluate.bind(page);
     page.evaluate = async (source) => {
-      if (typeof source === "string" && source.includes("scopeSel")) {
+      if (
+        typeof source === "string" &&
+        (source.includes("scopeSel") || source.includes("var expected="))
+      ) {
         if (!dragged) beforeDragPolls += 1;
         return dragged ? 1 : 0;
       }
@@ -99,6 +105,7 @@ describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
       },
     );
     expect(beforeDragPolls).toBe(360);
+    expect(page.__editorEvaluate.mock.calls.length).toBeGreaterThan(1);
     expect(result).toMatchObject({ aborted: true, mediaAttached: true });
   });
 
@@ -112,7 +119,10 @@ describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
     page.keyboard.insertText = vi.fn(async () => {});
     const originalEvaluate = page.evaluate.bind(page);
     page.evaluate = async (source) =>
-      typeof source === "string" && source.includes("scopeSel") ? 0 : originalEvaluate(source);
+      typeof source === "string" &&
+      (source.includes("scopeSel") || source.includes("var expected="))
+        ? 0
+        : originalEvaluate(source);
     await expect(
       publish(
         { text: "never typed", imagePath: vid, profile: "p1" },
@@ -277,6 +287,27 @@ describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
     expect(verify).toHaveBeenCalledWith(expect.anything(), ACTIVITY_URL);
   });
 
+  it("keeps video publish fail-closed until the share API confirms upload completion", async () => {
+    const vid = makeVideo();
+    const page = fakeVideoPublishPage() as unknown as {
+      waitForResponse: ReturnType<typeof vi.fn>;
+    };
+    page.waitForResponse = vi.fn(async () => null);
+    await expect(
+      publish(
+        { text: "narration video", imagePath: vid, profile: "p1" },
+        {
+          profileManager: makeProfiles(),
+          page: page as never,
+          __verifyPostVideo: async () => true,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: ErrorCode.VERIFY_FAILED,
+      details: { stage: "video_share_api_unconfirmed" },
+    });
+  });
+
   it("succeeds and reports a video attachment when the post DOES carry a video (oracle=true)", async () => {
     const verify = vi.fn(async () => true);
     const vid = makeVideo();
@@ -326,7 +357,7 @@ describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
       isClosed: () => false,
       waitForTimeout: async () => {},
       keyboard: { press: async () => {}, insertText: async () => {} },
-      waitForResponse: async () => null,
+      waitForResponse: async () => ({ ok: () => true }),
       evaluate: async (source: string) => {
         if (source.includes("hit.click()")) {
           // Distinguish the POST click from add-media / next-done by the POST regex.
@@ -335,7 +366,7 @@ describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
           }
           return true;
         }
-        if (source.includes("scopeSel")) return 1; // scoped video attached
+        if (source.includes("scopeSel") || source.includes("var expected=")) return 1;
         if (source.includes("offsetParent")) return [ACTIVITY_URL];
         return 0;
       },
