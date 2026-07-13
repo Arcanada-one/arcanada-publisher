@@ -186,6 +186,74 @@ describe("Facebook read-only profile inspection", () => {
     ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
   });
 
+  it("matches an exact body when Facebook collapses paragraph blank lines", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "fb-inspect-")), "evidence");
+    const expectedBody = "Paragraph one.\n\nParagraph two.";
+    const observedBody = "Paragraph one.\nParagraph two.";
+
+    const result = await inspectFacebookProfilePost(
+      { ...input(evidenceDir), expectedBody },
+      options([[post({ body: observedBody })]]),
+    );
+
+    expect(result.canonicalParentPermalink).toContain("pfbid-content-0377");
+    expect(result.postBodyLength).toBe(observedBody.length);
+    expect(readFileSync(join(evidenceDir, "post-body.txt"), "utf8")).toBe(observedBody);
+  });
+
+  it("ignores non-comment DOM noise without a numeric id", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "fb-inspect-")), "evidence");
+    const result = await inspectFacebookProfilePost(
+      input(evidenceDir),
+      options([
+        [
+          post({
+            comments: [
+              {
+                id: "not-a-comment-id",
+                authorProfileHref: "https://www.facebook.com/facebook",
+                body: "Unrelated nested UI text",
+              },
+              {
+                id: "1326931196274132",
+                authorProfileHref: PROFILE_URL,
+                body: "Current first comment body",
+              },
+            ],
+          }),
+        ],
+      ]),
+    );
+
+    expect(result.comments).toEqual([expect.objectContaining({ id: "1326931196274132" })]);
+    expect(readFileSync(join(evidenceDir, "manifest.json"), "utf8")).not.toContain(
+      "not-a-comment-id",
+    );
+  });
+
+  it("fails closed when an expected-author comment has no numeric id", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "fb-inspect-")), "evidence");
+
+    await expect(
+      inspectFacebookProfilePost(
+        input(evidenceDir),
+        options([
+          [
+            post({
+              comments: [
+                {
+                  id: "not-a-comment-id",
+                  authorProfileHref: PROFILE_URL,
+                  body: "Current first comment body",
+                },
+              ],
+            }),
+          ],
+        ]),
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+  });
+
   it("keeps the inspection module free of mutation controls", () => {
     const source = readFileSync(new URL("../src/inspect-profile.ts", import.meta.url), "utf8");
     expect(source).not.toMatch(
