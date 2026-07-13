@@ -331,14 +331,14 @@ async function recoverVanityPermalink(
 ): Promise<string> {
   await page.goto(activityUrl, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1_000);
+  if (linkedInActivityIdFromUrl(page.url()) !== id) {
+    throw verifyError("detail page activity id does not match pre-navigation oracle");
+  }
   const copiedFromDom = await page.locator("html").evaluate(extractLinkedInVanityPermalink, {
     expectedAuthorIdentity,
     activityId: id,
   });
   if (copiedFromDom) return copiedFromDom;
-  if (linkedInActivityIdFromUrl(page.url()) !== id) {
-    throw verifyError("detail page activity id does not match pre-navigation oracle");
-  }
   const detailOracle: DetailPostMenuOracle = {
     expectedAuthorIdentity,
     expectedBodySha256,
@@ -902,6 +902,15 @@ export async function inspectExactDetailPostMenu(
     );
   };
   const menuPatterns = expected.controlMenuPatternSources.map((source) => new RegExp(source, "i"));
+  const isSupportedMenuLabel = (label: string): boolean => {
+    for (const pattern of menuPatterns) {
+      const match = pattern.exec(label);
+      if (!match || match.index !== 0) continue;
+      const suffix = label.slice(match[0].length);
+      if (suffix === "" || /^ for post by \S(?:.*\S)?$/i.test(suffix)) return true;
+    }
+    return false;
+  };
   const allCards = Array.from(root.querySelectorAll("article, .feed-shared-update-v2"));
   const topLevelCards = allCards.filter((card) => {
     let owner = card.parentElement;
@@ -950,7 +959,7 @@ export async function inspectExactDetailPostMenu(
   const menus = provenCards.map((card) =>
     owned(card, "button, [role='button']").filter((button) => {
       const label = (button.getAttribute("aria-label") ?? "").normalize("NFKC").trim();
-      return label !== "" && menuPatterns.some((pattern) => pattern.test(label));
+      return label !== "" && isSupportedMenuLabel(label);
     }),
   );
   const clicked = expected.click && provenCards.length === 1 && menus[0]?.length === 1;

@@ -43,6 +43,7 @@ function options(batches: ObservedLinkedInProfilePost[][]) {
   return {
     page: {
       goto: async () => {},
+      url: () => `https://www.linkedin.com/feed/update/urn:li:activity:${ID}/`,
       screenshot: async () => Buffer.from("png"),
       locator: () => ({ evaluate: async () => [] }),
       waitForTimeout: async () => {},
@@ -373,7 +374,7 @@ describe("LinkedIn read-only profile inspection", () => {
   it("binds one detail card by exact body hash, author, video, and localized menu", async () => {
     const root = new FakeNode("");
     const card = detailCard(root, {
-      menuLabel: "Avaa hallintavalikko julkaisulle",
+      menuLabel: "Avaa hallintavalikko",
     });
     const menu = card.querySelectorAll("button")[0]!;
 
@@ -472,6 +473,21 @@ describe("LinkedIn read-only profile inspection", () => {
 
     expect(diagnostic).toMatchObject({ exactAuthorCardCount: 1, nativeVideoCardCount: 0 });
     expect(diagnostic.clicked).toBe(false);
+    expect(menu.clickCount).toBe(0);
+  });
+
+  it("rejects unsupported localized-prefix lookalikes such as More comments", async () => {
+    const root = new FakeNode("");
+    const card = detailCard(root, { menuLabel: "More comments" });
+    const menu = card.querySelectorAll("button")[0]!;
+
+    const diagnostic = await inspectExactDetailPostMenu(root, detailOracle(true));
+
+    expect(diagnostic).toMatchObject({
+      provenCardCount: 1,
+      directOwnedMenuCounts: [0],
+      clicked: false,
+    });
     expect(menu.clickCount).toBe(0);
   });
 
@@ -602,6 +618,36 @@ describe("LinkedIn read-only profile inspection", () => {
       }),
     ).rejects.toThrow("detail page activity id does not match pre-navigation oracle");
     expect(snapshots).toBe(0);
+  });
+
+  it("rejects a wrong-id redirect before accepting an expected-id DOM permalink", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "li-detail-redirect-")), "evidence");
+    const root = new FakeNode("");
+    const canonical = new FakeNode(
+      "",
+      {
+        rel: "canonical",
+        href: `https://www.linkedin.com/posts/pavelvalentov_building-activity-${ID}-AbCd`,
+      },
+      "",
+      "link",
+    );
+    canonical.href = canonical.getAttribute("href") ?? undefined;
+    root.appendChild(canonical);
+    detailCard(root);
+    const page = detailInspectionPage(
+      root,
+      "https://www.linkedin.com/feed/update/urn:li:activity:999/",
+    );
+    const base = options([[post({ vanityPermalink: "" })]]);
+
+    await expect(
+      inspectLinkedInProfilePost(input(evidenceDir), {
+        ...base,
+        page: page as never,
+        __copyLinkRecorder: undefined,
+      }),
+    ).rejects.toThrow("detail page activity id does not match pre-navigation oracle");
   });
 
   it("reports privacy-safe structural diagnostics for exact activity menu ownership", () => {
