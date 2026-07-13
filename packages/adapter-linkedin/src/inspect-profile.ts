@@ -5,8 +5,14 @@ import { join, resolve } from "node:path";
 import type { Page } from "playwright";
 import { AdapterError, ErrorCode, ProfileManager } from "@arcanada/publisher-core";
 import { launchSession } from "./context.js";
+import { selectors } from "./selectors.js";
 
 const MAX_SCROLL_LIMIT = 50;
+
+export const DETAIL_CONTROL_MENU_PATTERN_SOURCES = [
+  selectors.editPostActionEn.source,
+  selectors.editPostActionRu.source,
+] as const;
 
 export interface ObservedLinkedInProfilePost {
   activityUrl: string;
@@ -164,6 +170,8 @@ async function runInspection(
   if (!matched.hasNativeVideo) return fail("exact post match has no native video");
   const id = activityId(matched.activityUrl);
   if (!id) return fail("exact post match has no activity id");
+  const matchedBody = normalizeExact(matched.body);
+  const matchedBodySha256 = createHash("sha256").update(matchedBody, "utf8").digest("hex");
   let vanityPermalink: string;
   try {
     vanityPermalink = isVanityPermalink(matched.vanityPermalink, id, expectedIdentity)
@@ -176,6 +184,8 @@ async function runInspection(
           copyLinkRecorder,
           clipboard,
           input.evidenceDir,
+          matchedBodySha256,
+          matchedBody.length,
         );
   } catch (error) {
     await captureFailure();
@@ -215,7 +225,7 @@ async function runInspection(
     if (error instanceof AdapterError) throw error;
     throw verifyError("failed to write private inspection evidence");
   }
-  const body = normalizeExact(matched.body);
+  const body = matchedBody;
   return {
     canonicalParentPermalink: vanityPermalink,
     activityUrl: matched.activityUrl,
@@ -273,12 +283,23 @@ function safeLinkedInProfileIdentity(rawUrl: string): string {
   }
 }
 
+export function linkedInActivityIdFromUrl(rawUrl: string): string | null {
+  try {
+    const parsed = new URL(rawUrl);
+    if (!/^(www\.)?linkedin\.com$/i.test(parsed.hostname)) return null;
+    const path = decodeURIComponent(parsed.pathname);
+    const feed = /^\/feed\/update\/urn:li:activity:(\d+)\/?$/.exec(path);
+    if (feed) return feed[1] ?? null;
+    if (!path.startsWith("/posts/")) return null;
+    const canonical = [...path.matchAll(/-activity-(\d+)-/g)];
+    return canonical.length === 1 ? (canonical[0]?.[1] ?? null) : null;
+  } catch {
+    return null;
+  }
+}
+
 function activityId(rawUrl: string): string | null {
-  return (
-    /^https:\/\/(?:www\.)?linkedin\.com\/feed\/update\/urn:li:activity:(\d+)\/?$/.exec(
-      rawUrl,
-    )?.[1] ?? null
-  );
+  return linkedInActivityIdFromUrl(rawUrl);
 }
 
 function isVanityPermalink(rawUrl: string, id: string, expectedAuthorIdentity: string): boolean {
@@ -305,16 +326,38 @@ async function recoverVanityPermalink(
   copyLinkRecorder: CopyLinkRecorder,
   clipboard: ClipboardPort,
   evidenceDir: string,
+  expectedBodySha256: string,
+  expectedBodyLength: number,
 ): Promise<string> {
   await page.goto(activityUrl, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1_000);
+  if (linkedInActivityIdFromUrl(page.url()) !== id) {
+    throw verifyError("detail page activity id does not match pre-navigation oracle");
+  }
   const copiedFromDom = await page.locator("html").evaluate(extractLinkedInVanityPermalink, {
     expectedAuthorIdentity,
     activityId: id,
   });
   if (copiedFromDom) return copiedFromDom;
-  await writeMenuLookupDiagnostic(page, evidenceDir, id);
-  return copyVanityFromActivityMenu(page, expectedAuthorIdentity, id, copyLinkRecorder, clipboard);
+  const detailOracle: DetailPostMenuOracle = {
+    expectedAuthorIdentity,
+    expectedBodySha256,
+    expectedBodyLength,
+    controlMenuPatternSources: DETAIL_CONTROL_MENU_PATTERN_SOURCES,
+    click: false,
+  };
+  const diagnostic = await writeMenuLookupDiagnostic(page, evidenceDir, id, detailOracle);
+  const target: CopyLinkTarget =
+    diagnostic.activityContainerCount > 0
+      ? { activityId: id, mode: "activity-container" }
+      : { activityId: id, mode: "detail-card", detailOracle };
+  return copyVanityFromActivityMenu(
+    page,
+    expectedAuthorIdentity,
+    target,
+    copyLinkRecorder,
+    clipboard,
+  );
 }
 
 export interface ClipboardPort {
@@ -324,22 +367,38 @@ export interface ClipboardPort {
 }
 
 export interface CopyLinkRecorder {
-  copy(page: Page, activityId: string): Promise<void>;
+  copy(page: Page, target: CopyLinkTarget): Promise<void>;
+}
+
+export type CopyLinkTarget =
+  | { activityId: string; mode: "activity-container" }
+  | { activityId: string; mode: "detail-card"; detailOracle: DetailPostMenuOracle };
+
+export interface DetailPostMenuOracle {
+  expectedAuthorIdentity: string;
+  expectedBodySha256: string;
+  expectedBodyLength: number;
+  controlMenuPatternSources: readonly string[];
+  click: boolean;
 }
 
 export async function copyVanityFromActivityMenu(
   page: Page,
   expectedAuthorIdentity: string,
-  id: string,
+  targetOrId: CopyLinkTarget | string,
   recorder: CopyLinkRecorder = defaultCopyLinkRecorder,
   clipboard: ClipboardPort = defaultClipboard,
 ): Promise<string> {
+  const target: CopyLinkTarget =
+    typeof targetOrId === "string"
+      ? { activityId: targetOrId, mode: "activity-container" }
+      : targetOrId;
   const snapshot = await clipboard.snapshot();
   try {
-    await recorder.copy(page, id);
+    await recorder.copy(page, target);
     await page.waitForTimeout(500);
     const copied = (await clipboard.readText()).trim();
-    return isVanityPermalink(copied, id, expectedAuthorIdentity) ? copied : "";
+    return isVanityPermalink(copied, target.activityId, expectedAuthorIdentity) ? copied : "";
   } finally {
     await clipboard.restore(snapshot);
   }
@@ -514,9 +573,23 @@ export function createMacPasteboardClipboard(
 const defaultClipboard = createMacPasteboardClipboard();
 
 const defaultCopyLinkRecorder: CopyLinkRecorder = {
-  async copy(page, id) {
-    const clicked = await page.locator("body").evaluate(clickExactActivityMenu, id);
-    if (!clicked) throw verifyError("exact direct-owned activity menu was not found");
+  async copy(page, target) {
+    const clicked =
+      target.mode === "activity-container"
+        ? await page.locator("body").evaluate(clickExactActivityMenu, target.activityId)
+        : (
+            await page.locator("body").evaluate(inspectExactDetailPostMenu, {
+              ...target.detailOracle,
+              click: true,
+            })
+          ).clicked;
+    if (!clicked) {
+      throw verifyError(
+        target.mode === "activity-container"
+          ? "exact direct-owned activity menu was not found"
+          : "exact proven detail-card menu was not found",
+      );
+    }
     const item = page.getByRole("menuitem", { name: "Copy link to post", exact: true });
     if ((await item.count()) !== 1)
       throw verifyError("exact Copy link to post menu item was not unique");
@@ -554,18 +627,29 @@ async function writeMenuLookupDiagnostic(
   page: Page,
   rawEvidenceDir: string,
   expectedId: string,
-): Promise<void> {
+  detailOracle: DetailPostMenuOracle,
+): Promise<ActivityMenuLookupDiagnostic & { detailCardFallback?: DetailPostMenuDiagnostic }> {
   const evidenceDir = resolve(rawEvidenceDir);
   try {
-    const diagnostic = await page
+    const activityDiagnostic = await page
       .locator("body")
       .evaluate(inspectExactActivityMenuLookup, expectedId);
+    const diagnostic =
+      activityDiagnostic.activityContainerCount === 0
+        ? {
+            ...activityDiagnostic,
+            detailCardFallback: await page
+              .locator("body")
+              .evaluate(inspectExactDetailPostMenu, { ...detailOracle, click: false }),
+          }
+        : activityDiagnostic;
     await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
     await chmod(evidenceDir, 0o700);
     await writePrivate(
       join(evidenceDir, "menu-lookup-diagnostic.json"),
       `${JSON.stringify(diagnostic, null, 2)}\n`,
     );
+    return diagnostic;
   } catch (error) {
     if (error instanceof AdapterError) throw error;
     throw verifyError("failed to write private menu lookup diagnostic");
@@ -729,6 +813,166 @@ export function inspectExactActivityMenuLookup(
         directOwnedMatchingMenuButtonCount: directOwnedMatchingMenus.length,
       };
     }),
+  };
+}
+
+export interface DetailPostMenuDiagnostic {
+  version: 1;
+  topLevelCardCount: number;
+  exactBodyCardCount: number;
+  exactAuthorCardCount: number;
+  nativeVideoCardCount: number;
+  provenCardCount: number;
+  directOwnedMenuCounts: number[];
+  clicked: boolean;
+}
+
+/**
+ * Browser-serializable fallback for LinkedIn activity detail pages that omit
+ * activity URNs. It clicks only when one top-level card is proven by the
+ * pre-navigation full-body hash/length, author identity, and native video.
+ * Returned diagnostics contain counts only—never content, labels, URLs, or
+ * clipboard state.
+ */
+export async function inspectExactDetailPostMenu(
+  root: BrowserNode,
+  expected: DetailPostMenuOracle,
+): Promise<DetailPostMenuDiagnostic> {
+  const isCard = (node: BrowserNode): boolean =>
+    node.tagName.toLowerCase() === "article" ||
+    /(?:^|\s)feed-shared-update-v2(?:\s|$)/.test(node.className ?? "");
+  const isBoundary = (node: BrowserNode): boolean => {
+    const raw = node.getAttribute("data-urn") ?? node.getAttribute("data-id") ?? "";
+    return (
+      /urn:li:activity:\d+/.test(raw) ||
+      /^urn:li:comment/.test(raw) ||
+      node.tagName.toLowerCase() === "article" ||
+      /comments-comment-item|mini-update/i.test(node.className ?? "")
+    );
+  };
+  const isOwned = (node: BrowserNode, card: BrowserNode): boolean => {
+    let owner = node.parentElement;
+    while (owner && owner !== card) {
+      if (isBoundary(owner)) return false;
+      owner = owner.parentElement;
+    }
+    return owner === card;
+  };
+  const owned = (card: BrowserNode, selector: string): BrowserNode[] =>
+    Array.from(card.querySelectorAll(selector)).filter((node) => isOwned(node, card));
+  const identity = (href: string): string => {
+    try {
+      const parsed = new URL(href, "https://www.linkedin.com");
+      if (!/^(www\.)?linkedin\.com$/i.test(parsed.hostname)) return "";
+      const match = /^\/in\/([^/]+)\/?$/.exec(parsed.pathname);
+      return match ? `www.linkedin.com/in/${match[1]!.toLowerCase()}` : "";
+    } catch {
+      return "";
+    }
+  };
+  const bodyText = (node: BrowserNode): string => {
+    let text = node.innerText ?? "";
+    for (const control of Array.from(
+      node.querySelectorAll(
+        "button, [role='button'], .feed-shared-inline-show-more-text__see-more-less-toggle",
+      ),
+    )) {
+      if (!isOwned(control, node)) continue;
+      const aria = (control.getAttribute("aria-label") ?? "").normalize("NFKC").trim();
+      const visual = (control.innerText ?? control.textContent ?? "").normalize("NFKC").trim();
+      if (
+        !/^(more|\.\.\.more|see more|see more, visually reveals content which is already detected by screen readers|…more)$/i.test(
+          aria || visual,
+        ) ||
+        !visual
+      )
+        continue;
+      const endTrimmed = text.trimEnd();
+      const terminalUiLine = `\n${visual}`;
+      if (endTrimmed.endsWith(terminalUiLine))
+        text = endTrimmed.slice(0, -terminalUiLine.length).trimEnd();
+    }
+    return text.normalize("NFKC").replace(/\r\n/g, "\n").trim();
+  };
+  const sha256 = async (value: string): Promise<string> => {
+    const bytes = new TextEncoder().encode(value);
+    const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(
+      "",
+    );
+  };
+  const menuPatterns = expected.controlMenuPatternSources.map((source) => new RegExp(source, "i"));
+  const isSupportedMenuLabel = (label: string): boolean => {
+    for (const pattern of menuPatterns) {
+      const match = pattern.exec(label);
+      if (!match || match.index !== 0) continue;
+      const suffix = label.slice(match[0].length);
+      if (suffix === "" || /^ for post by \S(?:.*\S)?$/i.test(suffix)) return true;
+    }
+    return false;
+  };
+  const allCards = Array.from(root.querySelectorAll("article, .feed-shared-update-v2"));
+  const topLevelCards = allCards.filter((card) => {
+    let owner = card.parentElement;
+    while (owner && owner !== root) {
+      if (isCard(owner)) return false;
+      owner = owner.parentElement;
+    }
+    return owner === root;
+  });
+  const exactBodyCards: BrowserNode[] = [];
+  for (const card of topLevelCards) {
+    const body =
+      owned(
+        card,
+        ".update-components-text, [data-testid='main-feed-activity-card__commentary'], .feed-shared-update-v2__description",
+      )
+        .map(bodyText)
+        .sort((a, b) => b.length - a.length)[0] ?? "";
+    if (
+      body.length === expected.expectedBodyLength &&
+      (await sha256(body)) === expected.expectedBodySha256
+    ) {
+      exactBodyCards.push(card);
+    }
+  }
+  const exactAuthorCards = exactBodyCards.filter((card) => {
+    const identities = owned(
+      card,
+      ".update-components-actor__meta-link[href*='/in/'], .update-components-actor__container-link[href*='/in/']",
+    )
+      .map((author) => identity(author.href ?? ""))
+      .filter(Boolean);
+    return (
+      identities.length > 0 &&
+      identities.every((authorIdentity) => authorIdentity === expected.expectedAuthorIdentity)
+    );
+  });
+  const nativeVideoCards = exactAuthorCards.filter(
+    (card) =>
+      owned(
+        card,
+        "video, [data-test-native-video], .video-js, [class*='video-player'], [data-vjs-player]",
+      ).length > 0,
+  );
+  const provenCards = nativeVideoCards;
+  const menus = provenCards.map((card) =>
+    owned(card, "button, [role='button']").filter((button) => {
+      const label = (button.getAttribute("aria-label") ?? "").normalize("NFKC").trim();
+      return label !== "" && isSupportedMenuLabel(label);
+    }),
+  );
+  const clicked = expected.click && provenCards.length === 1 && menus[0]?.length === 1;
+  if (clicked) menus[0]![0]!.click?.();
+  return {
+    version: 1,
+    topLevelCardCount: topLevelCards.length,
+    exactBodyCardCount: exactBodyCards.length,
+    exactAuthorCardCount: exactAuthorCards.length,
+    nativeVideoCardCount: nativeVideoCards.length,
+    provenCardCount: provenCards.length,
+    directOwnedMenuCounts: menus.map((items) => items.length),
+    clicked,
   };
 }
 
