@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,11 +10,15 @@ import {
   clickExactActivityMenu,
   copyVanityFromActivityMenu,
   createMacPasteboardClipboard,
+  DETAIL_CONTROL_MENU_PATTERN_SOURCES,
   expandMatchingLinkedInActivity,
   extractLinkedInVanityPermalink,
   extractLinkedInProfilePosts,
+  inspectExactDetailPostMenu,
   inspectExactActivityMenuLookup,
+  inspectLinkedInExpanders,
   inspectLinkedInProfilePost,
+  linkedInActivityIdFromUrl,
   type ObservedLinkedInProfilePost,
 } from "../src/inspect-profile.js";
 
@@ -365,6 +370,240 @@ describe("LinkedIn read-only profile inspection", () => {
     }
   });
 
+  it("binds one detail card by exact body hash, author, video, and localized menu", async () => {
+    const root = new FakeNode("");
+    const card = detailCard(root, {
+      menuLabel: "Avaa hallintavalikko julkaisulle",
+    });
+    const menu = card.querySelectorAll("button")[0]!;
+
+    const diagnostic = await inspectExactDetailPostMenu(root, detailOracle(true));
+
+    expect(diagnostic).toMatchObject({
+      topLevelCardCount: 1,
+      exactBodyCardCount: 1,
+      exactAuthorCardCount: 1,
+      nativeVideoCardCount: 1,
+      provenCardCount: 1,
+      directOwnedMenuCounts: [1],
+      clicked: true,
+    });
+    expect(menu.clickCount).toBe(1);
+  });
+
+  it("runs the detail-card oracle from serialized browser source with no closure", async () => {
+    const root = new FakeNode("");
+    detailCard(root);
+    const serialized = Function(
+      `return (${inspectExactDetailPostMenu.toString()})`,
+    )() as typeof inspectExactDetailPostMenu;
+
+    const diagnostic = await serialized(root, detailOracle(false));
+
+    expect(diagnostic).toMatchObject({ provenCardCount: 1, clicked: false });
+  });
+
+  it("rejects an impostor detail card with the same exact body", async () => {
+    const root = new FakeNode("");
+    const card = detailCard(root, { authorHref: "https://www.linkedin.com/in/impostor/" });
+    const menu = card.querySelectorAll("button")[0]!;
+
+    const diagnostic = await inspectExactDetailPostMenu(root, detailOracle(true));
+
+    expect(diagnostic).toMatchObject({ exactBodyCardCount: 1, exactAuthorCardCount: 0 });
+    expect(diagnostic.clicked).toBe(false);
+    expect(menu.clickCount).toBe(0);
+  });
+
+  it("rejects exact body and menu owned only by a nested repost", async () => {
+    const root = new FakeNode("");
+    const outer = new FakeNode("", {}, "feed-shared-update-v2");
+    root.appendChild(outer);
+    outer.child("Different outer body", "update-components-text");
+    outer.child("Pavel", "update-components-actor__meta-link", PROFILE);
+    outer.child("video", "video-player");
+    const repost = new FakeNode("", {}, "mini-update");
+    outer.appendChild(repost);
+    const nested = new FakeNode("", {}, "", "article");
+    repost.appendChild(nested);
+    nested.child(BODY, "update-components-text");
+    nested.child("Pavel", "update-components-actor__meta-link", PROFILE);
+    nested.child("video", "video-player");
+    const nestedMenu = nested.child("", "button", undefined, undefined, undefined, {
+      "aria-label": "Open control menu for post by Pavel Valentov",
+    });
+
+    const diagnostic = await inspectExactDetailPostMenu(root, detailOracle(true));
+
+    expect(diagnostic).toMatchObject({ topLevelCardCount: 1, exactBodyCardCount: 0 });
+    expect(diagnostic.clicked).toBe(false);
+    expect(nestedMenu.clickCount).toBe(0);
+  });
+
+  it("rejects multiple exact detail cards and multiple direct-owned menus", async () => {
+    const multipleCardsRoot = new FakeNode("");
+    const first = detailCard(multipleCardsRoot);
+    const second = detailCard(multipleCardsRoot);
+    const multipleCards = await inspectExactDetailPostMenu(multipleCardsRoot, detailOracle(true));
+    expect(multipleCards).toMatchObject({ provenCardCount: 2, clicked: false });
+    expect(first.querySelectorAll("button")[0]?.clickCount).toBe(0);
+    expect(second.querySelectorAll("button")[0]?.clickCount).toBe(0);
+
+    const multipleMenusRoot = new FakeNode("");
+    const card = detailCard(multipleMenusRoot);
+    card.child("", "button", undefined, undefined, undefined, {
+      "aria-label": "More actions for post by Pavel Valentov",
+    });
+    const multipleMenus = await inspectExactDetailPostMenu(multipleMenusRoot, detailOracle(true));
+    expect(multipleMenus).toMatchObject({
+      provenCardCount: 1,
+      directOwnedMenuCounts: [2],
+      clicked: false,
+    });
+    expect(card.querySelectorAll("button").every((button) => button.clickCount === 0)).toBe(true);
+  });
+
+  it("rejects an otherwise exact detail card without native video", async () => {
+    const root = new FakeNode("");
+    const card = detailCard(root, { hasVideo: false });
+    const menu = card.querySelectorAll("button")[0]!;
+
+    const diagnostic = await inspectExactDetailPostMenu(root, detailOracle(true));
+
+    expect(diagnostic).toMatchObject({ exactAuthorCardCount: 1, nativeVideoCardCount: 0 });
+    expect(diagnostic.clicked).toBe(false);
+    expect(menu.clickCount).toBe(0);
+  });
+
+  it("parses only structural LinkedIn feed or canonical activity ids", () => {
+    expect(
+      linkedInActivityIdFromUrl(
+        `https://www.linkedin.com/feed/update/urn:li:activity:${ID}/?tracking=ignored`,
+      ),
+    ).toBe(ID);
+    expect(
+      linkedInActivityIdFromUrl(
+        `https://www.linkedin.com/posts/pavelvalentov_building-activity-${ID}-AbCd/`,
+      ),
+    ).toBe(ID);
+    expect(
+      linkedInActivityIdFromUrl(
+        `https://www.linkedin.com/posts/pavelvalentov_${ID}-decoy-activity-999-AbCd/`,
+      ),
+    ).toBe("999");
+    expect(
+      linkedInActivityIdFromUrl(
+        `https://www.linkedin.com/posts/pavelvalentov_a-activity-${ID}-x-activity-999-y/`,
+      ),
+    ).toBeNull();
+    expect(
+      linkedInActivityIdFromUrl(`https://example.test/feed/update/urn:li:activity:${ID}/`),
+    ).toBeNull();
+  });
+
+  it("routes a zero-activity detail page through the proven-card copy flow", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "li-detail-flow-")), "evidence");
+    const root = new FakeNode("");
+    detailCard(root);
+    const vanity = `https://www.linkedin.com/posts/pavelvalentov_building-activity-${ID}-AbCd`;
+    let clipboardText = "original";
+    let restored = false;
+    const page = detailInspectionPage(
+      root,
+      `https://www.linkedin.com/feed/update/urn:li:activity:${ID}/`,
+      () => {
+        clipboardText = vanity;
+      },
+    );
+    const base = options([[post({ vanityPermalink: "" })]]);
+
+    const result = await inspectLinkedInProfilePost(input(evidenceDir), {
+      ...base,
+      page: page as never,
+      __copyLinkRecorder: undefined,
+      __clipboard: {
+        snapshot: async () => Buffer.from("original"),
+        readText: async () => clipboardText,
+        restore: async () => {
+          restored = true;
+          clipboardText = "original";
+        },
+      },
+    });
+
+    expect(result.canonicalParentPermalink).toBe(vanity);
+    expect(restored).toBe(true);
+    expect(clipboardText).toBe("original");
+    const diagnostic = JSON.parse(
+      readFileSync(join(evidenceDir, "menu-lookup-diagnostic.json"), "utf8"),
+    );
+    expect(diagnostic.detailCardFallback).toMatchObject({
+      provenCardCount: 1,
+      directOwnedMenuCounts: [1],
+      clicked: false,
+    });
+    expect(JSON.stringify(diagnostic)).not.toContain(BODY);
+  });
+
+  it("keeps strict data-urn precedence when an exact detail card also exists", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "li-strict-precedence-")), "evidence");
+    const root = new FakeNode("");
+    const activity = new FakeNode("", { "data-urn": `urn:li:activity:${ID}` });
+    root.appendChild(activity);
+    activity.child("", "button", undefined, undefined, undefined, {
+      "aria-label": "Delete post",
+    });
+    detailCard(root);
+    let detailEvaluations = 0;
+    const page = detailInspectionPage(
+      root,
+      `https://www.linkedin.com/feed/update/urn:li:activity:${ID}/`,
+      undefined,
+      () => {
+        detailEvaluations += 1;
+      },
+    );
+    const base = options([[post({ vanityPermalink: "" })]]);
+
+    await expect(
+      inspectLinkedInProfilePost(input(evidenceDir), {
+        ...base,
+        page: page as never,
+        __copyLinkRecorder: undefined,
+      }),
+    ).rejects.toThrow("exact direct-owned activity menu was not found");
+    expect(detailEvaluations).toBe(0);
+  });
+
+  it("rejects detail fallback when page activity id differs from the pre-navigation oracle", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "li-detail-id-")), "evidence");
+    const root = new FakeNode("");
+    detailCard(root);
+    const page = detailInspectionPage(
+      root,
+      "https://www.linkedin.com/feed/update/urn:li:activity:999/",
+    );
+    const base = options([[post({ vanityPermalink: "" })]]);
+    let snapshots = 0;
+
+    await expect(
+      inspectLinkedInProfilePost(input(evidenceDir), {
+        ...base,
+        page: page as never,
+        __copyLinkRecorder: undefined,
+        __clipboard: {
+          snapshot: async () => {
+            snapshots += 1;
+            return Buffer.from("original");
+          },
+          readText: async () => "",
+          restore: async () => {},
+        },
+      }),
+    ).rejects.toThrow("detail page activity id does not match pre-navigation oracle");
+    expect(snapshots).toBe(0);
+  });
+
   it("reports privacy-safe structural diagnostics for exact activity menu ownership", () => {
     const root = new FakeNode("");
     const outer = new FakeNode("PRIVATE POST BODY", { "data-urn": `urn:li:activity:${ID}` });
@@ -418,6 +657,7 @@ describe("LinkedIn read-only profile inspection", () => {
     const base = options([[post({ vanityPermalink: "" })]]);
     const page = {
       goto: async () => {},
+      url: () => `https://www.linkedin.com/feed/update/urn:li:activity:${ID}/`,
       screenshot: async () => Buffer.from("png"),
       waitForTimeout: async () => {},
       locator: () => ({
@@ -985,6 +1225,11 @@ class FakeNode {
     const descendants = (node: FakeNode): FakeNode[] =>
       node.children.flatMap((child) => [child, ...descendants(child)]);
     return descendants(this).filter((node) => {
+      if (selector === "article, .feed-shared-update-v2")
+        return (
+          node.tagName.toLowerCase() === "article" ||
+          node.className.includes("feed-shared-update-v2")
+        );
       if (selector.includes("urn:li:activity"))
         return /urn:li:activity:/.test(
           node.getAttribute("data-urn") ?? node.getAttribute("data-id") ?? "",
@@ -1008,6 +1253,74 @@ class FakeNode {
   }
 
   private onClick?: () => void;
+}
+
+function detailOracle(click: boolean) {
+  return {
+    expectedAuthorIdentity: "www.linkedin.com/in/pavelvalentov",
+    expectedBodySha256: createHash("sha256").update(BODY, "utf8").digest("hex"),
+    expectedBodyLength: BODY.length,
+    controlMenuPatternSources: DETAIL_CONTROL_MENU_PATTERN_SOURCES,
+    click,
+  };
+}
+
+function detailCard(
+  root: FakeNode,
+  options: {
+    authorHref?: string;
+    hasVideo?: boolean;
+    menuLabel?: string;
+  } = {},
+): FakeNode {
+  const card = new FakeNode("", {}, "", "article");
+  root.appendChild(card);
+  card.child(BODY, "update-components-text");
+  card.child("Pavel", "update-components-actor__meta-link", options.authorHref ?? PROFILE);
+  if (options.hasVideo !== false) card.child("video", "video-player");
+  card.child("", "button", undefined, undefined, undefined, {
+    "aria-label": options.menuLabel ?? "Open control menu for post by Pavel Valentov",
+  });
+  return card;
+}
+
+function detailInspectionPage(
+  root: FakeNode,
+  url: string,
+  onCopy?: () => void,
+  onDetailEvaluate?: () => void,
+) {
+  return {
+    goto: async () => {},
+    url: () => url,
+    waitForTimeout: async () => {},
+    screenshot: async () => Buffer.from("png"),
+    locator: () => ({
+      evaluate: async (fn: unknown, arg?: unknown) => {
+        if (fn === extractLinkedInVanityPermalink)
+          return extractLinkedInVanityPermalink(root, arg as never);
+        if (fn === inspectExactActivityMenuLookup)
+          return inspectExactActivityMenuLookup(root, String(arg));
+        if (fn === inspectExactDetailPostMenu) {
+          onDetailEvaluate?.();
+          return inspectExactDetailPostMenu(root, arg as never);
+        }
+        if (fn === clickExactActivityMenu) {
+          const activityId =
+            typeof arg === "string"
+              ? arg
+              : String((arg as { activityId?: string } | undefined)?.activityId ?? "");
+          return clickExactActivityMenu(root, activityId);
+        }
+        if (fn === inspectLinkedInExpanders) return inspectLinkedInExpanders(root);
+        throw new Error(`unexpected evaluator: ${String(fn)}`);
+      },
+    }),
+    getByRole: () => ({
+      count: async () => 1,
+      click: async () => onCopy?.(),
+    }),
+  };
 }
 
 function failingRoot(label: string): FakeNode {
