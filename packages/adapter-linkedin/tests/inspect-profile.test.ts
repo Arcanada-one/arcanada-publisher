@@ -12,6 +12,7 @@ import {
   expandMatchingLinkedInActivity,
   extractLinkedInVanityPermalink,
   extractLinkedInProfilePosts,
+  inspectExactActivityMenuLookup,
   inspectLinkedInProfilePost,
   type ObservedLinkedInProfilePost,
 } from "../src/inspect-profile.js";
@@ -362,6 +363,98 @@ describe("LinkedIn read-only profile inspection", () => {
       expect(clickExactActivityMenu(nestedRoot, ID)).toBe(false);
       expect(nestedExactMenu.clickCount).toBe(0);
     }
+  });
+
+  it("reports privacy-safe structural diagnostics for exact activity menu ownership", () => {
+    const root = new FakeNode("");
+    const outer = new FakeNode("PRIVATE POST BODY", { "data-urn": `urn:li:activity:${ID}` });
+    outer.child("PRIVATE AUTHOR", "button", undefined, undefined, undefined, {
+      "aria-label": "Open control menu for post by Private Author",
+    });
+    root.appendChild(outer);
+    const article = new FakeNode("PRIVATE REPOST BODY", {}, "", "article");
+    root.appendChild(article);
+    const nested = new FakeNode("PRIVATE NESTED BODY", { "data-id": `urn:li:activity:${ID}` });
+    article.appendChild(nested);
+    nested.child("PRIVATE AUTHOR", "button", undefined, undefined, undefined, {
+      "aria-label": "Open control menu for post by Private Author",
+    });
+
+    const diagnostic = inspectExactActivityMenuLookup(root, ID);
+    expect(diagnostic).toEqual({
+      version: 1,
+      expectedActivityId: ID,
+      activityContainerCount: 2,
+      exactCandidateCount: 2,
+      exactCandidates: [
+        {
+          ancestorBoundaries: [],
+          buttonCount: 1,
+          matchingMenuButtonCount: 1,
+          directOwnedMatchingMenuButtonCount: 1,
+        },
+        {
+          ancestorBoundaries: ["article"],
+          buttonCount: 1,
+          matchingMenuButtonCount: 1,
+          directOwnedMatchingMenuButtonCount: 1,
+        },
+      ],
+    });
+    expect(JSON.stringify(diagnostic)).not.toMatch(/PRIVATE|post body|author/i);
+  });
+
+  it("persists menu diagnostics before copy and preserves adapter failure artifacts", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "li-inspect-menu-")), "evidence");
+    const root = new FakeNode("");
+    const article = new FakeNode("", {}, "", "article");
+    root.appendChild(article);
+    const nested = new FakeNode("", { "data-urn": `urn:li:activity:${ID}` });
+    article.appendChild(nested);
+    nested.child("", "button", undefined, undefined, undefined, {
+      "aria-label": "Open control menu for post by Pavel Valentov",
+    });
+    let copyAttempted = false;
+    const base = options([[post({ vanityPermalink: "" })]]);
+    const page = {
+      goto: async () => {},
+      screenshot: async () => Buffer.from("png"),
+      waitForTimeout: async () => {},
+      locator: () => ({
+        evaluate: async (fn: unknown, arg?: unknown) => {
+          if (fn === extractLinkedInVanityPermalink) return "";
+          if (fn === inspectExactActivityMenuLookup) {
+            expect(copyAttempted).toBe(false);
+            return inspectExactActivityMenuLookup(root, String(arg));
+          }
+          return [];
+        },
+      }),
+    };
+    await expect(
+      inspectLinkedInProfilePost(input(evidenceDir), {
+        ...base,
+        page: page as never,
+        __copyLinkRecorder: {
+          copy: async () => {
+            copyAttempted = true;
+            throw new Error("menu lookup failed");
+          },
+        },
+      }),
+    ).rejects.toThrow("menu lookup failed");
+
+    const diagnosticPath = join(evidenceDir, "menu-lookup-diagnostic.json");
+    expect(statSync(diagnosticPath).mode & 0o777).toBe(0o600);
+    const diagnostic = JSON.parse(readFileSync(diagnosticPath, "utf8"));
+    expect(diagnostic).toMatchObject({
+      expectedActivityId: ID,
+      exactCandidateCount: 1,
+      exactCandidates: [{ ancestorBoundaries: ["article"] }],
+    });
+    expect(JSON.stringify(diagnostic)).not.toContain(BODY);
+    expect(statSync(join(evidenceDir, "failure-manifest.json")).mode & 0o777).toBe(0o600);
+    expect(statSync(join(evidenceDir, "failure-readback.png")).mode & 0o777).toBe(0o600);
   });
 
   it("restores clipboard for valid, impostor, and failed copy-link flows", async () => {
