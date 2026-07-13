@@ -14,11 +14,19 @@ export interface ObservedFacebookComment {
   body: string;
 }
 
+export interface FacebookExpanderDiagnostics {
+  labels: Record<string, number>;
+  reasons: Record<string, number>;
+  clicked: number;
+  clickFailed: number;
+}
+
 export interface ObservedFacebookProfilePost {
   canonicalPermalink: string;
   authorProfileHref: string;
   body: string;
   comments: ObservedFacebookComment[];
+  expanderDiagnostics?: FacebookExpanderDiagnostics;
 }
 
 export interface InspectFacebookProfilePostInput {
@@ -101,7 +109,14 @@ async function runInspection(
   for (let pass = 0; pass <= input.maxScrolls; pass += 1) {
     for (const candidate of await recorder.scanLoadedPosts(page)) {
       if (!isStablePostPermalink(candidate.canonicalPermalink)) continue;
-      observed.set(candidate.canonicalPermalink, candidate);
+      const previous = observed.get(candidate.canonicalPermalink);
+      observed.set(candidate.canonicalPermalink, {
+        ...candidate,
+        expanderDiagnostics: mergeExpanderDiagnostics(
+          previous?.expanderDiagnostics,
+          candidate.expanderDiagnostics,
+        ),
+      });
     }
     if (pass < input.maxScrolls) {
       await recorder.scroll(page, pass + 1);
@@ -120,6 +135,9 @@ async function runInspection(
     postsInspected: observed.size,
   };
   if (contentMatches.length === 0) {
+    await writeFailureEvidence(page, input.evidenceDir, "no-matching-post", coverage, [
+      ...observed.values(),
+    ]);
     throw verifyError(
       `no matching post found after ${coverage.scrollsPerformed} scrolls and ${coverage.postsInspected} inspected posts`,
     );
@@ -128,9 +146,15 @@ async function runInspection(
     (candidate) => facebookProfileIdentity(candidate.authorProfileHref) !== expectedIdentity,
   );
   if (wrongAuthor) {
+    await writeFailureEvidence(page, input.evidenceDir, "matching-content-wrong-author", coverage, [
+      ...observed.values(),
+    ]);
     throw verifyError("matching content belongs to a different stable header profile identity");
   }
   if (contentMatches.length !== 1) {
+    await writeFailureEvidence(page, input.evidenceDir, "ambiguous-matching-posts", coverage, [
+      ...observed.values(),
+    ]);
     throw verifyError(
       `expected one matching post, found ${contentMatches.length} after ${coverage.scrollsPerformed} scrolls and ${coverage.postsInspected} inspected posts`,
     );
@@ -276,6 +300,89 @@ function isStablePostPermalink(rawUrl: string): boolean {
   }
 }
 
+function emptyExpanderDiagnostics(): FacebookExpanderDiagnostics {
+  return { labels: {}, reasons: {}, clicked: 0, clickFailed: 0 };
+}
+
+function mergeExpanderDiagnostics(
+  left?: FacebookExpanderDiagnostics,
+  right?: FacebookExpanderDiagnostics,
+): FacebookExpanderDiagnostics {
+  const merged = emptyExpanderDiagnostics();
+  for (const source of [left, right]) {
+    if (!source) continue;
+    for (const [label, count] of Object.entries(source.labels)) {
+      merged.labels[label] = (merged.labels[label] ?? 0) + count;
+    }
+    for (const [reason, count] of Object.entries(source.reasons)) {
+      merged.reasons[reason] = (merged.reasons[reason] ?? 0) + count;
+    }
+    merged.clicked += source.clicked;
+    merged.clickFailed += source.clickFailed;
+  }
+  return merged;
+}
+
+async function writeFailureEvidence(
+  page: Page,
+  evidenceDirInput: string,
+  reason: string,
+  coverage: InspectFacebookProfilePostResult["coverage"],
+  posts: ObservedFacebookProfilePost[],
+): Promise<void> {
+  const evidenceDir = resolve(evidenceDirInput);
+  const screenshotPath = join(evidenceDir, "failure-readback.png");
+  try {
+    await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
+    await chmod(evidenceDir, 0o700);
+    await writePrivate(
+      join(evidenceDir, "failure-manifest.json"),
+      `${JSON.stringify(
+        {
+          version: 1,
+          status: "verify-failed",
+          reason,
+          coverage,
+          posts: posts
+            .map((post) => {
+              const body = normalizeExact(post.body);
+              let permalinkId = "unknown";
+              try {
+                permalinkId =
+                  new URL(post.canonicalPermalink).pathname.split("/").filter(Boolean).at(-1) ??
+                  "unknown";
+              } catch {
+                // Keep the raw permalink out of failure evidence.
+              }
+              let authorProfileIdentity = "invalid";
+              try {
+                authorProfileIdentity = facebookProfileIdentity(post.authorProfileHref);
+              } catch {
+                // Preserve a privacy-safe diagnostic even for malformed observed hrefs.
+              }
+              return {
+                permalinkId,
+                permalinkSha256: sha256(post.canonicalPermalink),
+                authorProfileIdentity,
+                bodySha256: sha256(body),
+                bodyLength: body.length,
+                expanderDiagnostics: post.expanderDiagnostics ?? emptyExpanderDiagnostics(),
+              };
+            })
+            .sort((a, b) => a.permalinkId.localeCompare(b.permalinkId)),
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    await chmod(screenshotPath, 0o600);
+  } catch (error) {
+    if (error instanceof AdapterError) throw error;
+    throw verifyError("failed to write private failure evidence");
+  }
+}
+
 async function writePrivate(path: string, content: string): Promise<void> {
   const handle = await open(path, "w", 0o600);
   try {
@@ -292,64 +399,146 @@ const defaultRecorder: InspectFacebookProfileRecorder = {
       name: /^(See more|Показать ещё|Ещё|Näytä lisää)$/i,
     });
     const expanderHandles = await expanders.elementHandles().catch(() => []);
+    const diagnosticsByPermalink = new Map<string, FacebookExpanderDiagnostics>();
+    const recordDiagnostic = (permalink: string, label: string, reason: string): void => {
+      const diagnostics = diagnosticsByPermalink.get(permalink) ?? emptyExpanderDiagnostics();
+      diagnostics.labels[label] = (diagnostics.labels[label] ?? 0) + 1;
+      diagnostics.reasons[reason] = (diagnostics.reasons[reason] ?? 0) + 1;
+      diagnosticsByPermalink.set(permalink, diagnostics);
+    };
     let expandedCount = 0;
     for (const expander of expanderHandles) {
-      const ownsStablePost = await expander
+      const classification = await expander
         .evaluate((control) => {
           type BrowserElement = {
+            innerText: string;
             href?: string;
             parentElement: BrowserElement | null;
+            contains(other: BrowserElement): boolean;
             closest(selector: string): BrowserElement | null;
+            querySelector(selector: string): BrowserElement | null;
             querySelectorAll(
               selector: string,
             ): ArrayLike<BrowserElement> & Iterable<BrowserElement>;
+            getAttribute(name: string): string | null;
           };
           const button = control as unknown as BrowserElement;
-          const messageBody = button.closest(
-            '[data-ad-preview="message"], [data-ad-comet-preview="message"]',
-          );
-          if (!messageBody) return false;
-          let stableOwner: BrowserElement | null = null;
+          const rawLabel = (button.getAttribute("aria-label") ?? button.innerText)
+            .normalize("NFKC")
+            .trim();
+          const labelClass = /^Ещё$/i.test(rawLabel)
+            ? "more_ru"
+            : /^Показать ещё$/i.test(rawLabel)
+              ? "show_more_ru"
+              : /^Näytä lisää$/i.test(rawLabel)
+                ? "show_more_fi"
+                : "see_more_en";
+          const stableOwners: Array<{ element: BrowserElement; permalink: string }> = [];
+          let hasCommentBoundary = false;
           let boundary = button.closest('[role="article"]');
           while (boundary) {
-            let ownsStablePermalink = false;
+            let stablePermalink: string | null = null;
             for (const anchor of Array.from(boundary.querySelectorAll("a[href]"))) {
               if (anchor.closest('[role="article"]') !== boundary || !anchor.href) continue;
               try {
                 const parsed = new URL(anchor.href, "https://www.facebook.com");
-                if (parsed.searchParams.has("comment_id")) return false;
+                if (parsed.searchParams.has("comment_id")) {
+                  hasCommentBoundary = true;
+                  continue;
+                }
                 const segments = parsed.pathname.split("/").filter(Boolean);
                 if (segments.length >= 3 && segments[1] === "posts") {
-                  ownsStablePermalink = true;
+                  stablePermalink ??= parsed.pathname;
                 }
               } catch {
                 continue;
               }
             }
-            if (ownsStablePermalink) {
-              if (stableOwner && stableOwner !== boundary) return false;
-              stableOwner = boundary;
+            if (stablePermalink) {
+              stableOwners.push({ element: boundary, permalink: stablePermalink });
             }
             boundary = boundary.parentElement?.closest('[role="article"]') ?? null;
           }
-          if (!stableOwner) return false;
-          let bodyBoundary = messageBody.closest('[role="article"]');
-          while (bodyBoundary) {
-            if (bodyBoundary === stableOwner) return true;
-            bodyBoundary = bodyBoundary.parentElement?.closest('[role="article"]') ?? null;
-          }
-          return false;
+          const postPermalinks = stableOwners.map((owner) => owner.permalink);
+          if (hasCommentBoundary)
+            return {
+              accepted: false,
+              reason: "comment_boundary",
+              labelClass,
+              postPermalinks,
+            };
+          if (stableOwners.length === 0)
+            return {
+              accepted: false,
+              reason: "no_post_owner",
+              labelClass,
+              postPermalinks,
+            };
+          if (stableOwners.length !== 1)
+            return {
+              accepted: false,
+              reason: "ambiguous_post_owner",
+              labelClass,
+              postPermalinks,
+            };
+          const stableOwner = stableOwners[0]!.element;
+          const preferred = stableOwner.querySelector(
+            '[data-ad-preview="message"], [data-ad-comet-preview="message"]',
+          );
+          const preferredBody =
+            preferred?.closest('[role="article"]') === stableOwner ? preferred : null;
+          const fallbackBodies = Array.from(stableOwner.querySelectorAll('[dir="auto"]')).filter(
+            (node) =>
+              node.closest('[role="article"]') === stableOwner &&
+              !node.closest('a[role="link"], strong') &&
+              !Array.from(node.querySelectorAll('[dir="auto"]')).some(
+                (child) => child !== node && child.closest('[role="article"]') === stableOwner,
+              ) &&
+              node.innerText.trim() !== "",
+          );
+          const terminalBody =
+            preferredBody ??
+            fallbackBodies.sort((a, b) => b.innerText.length - a.innerText.length)[0] ??
+            null;
+          if (!terminalBody)
+            return {
+              accepted: false,
+              reason: "no_terminal_body",
+              labelClass,
+              postPermalinks,
+            };
+          if (!terminalBody.contains(button))
+            return {
+              accepted: false,
+              reason: "terminal_body_mismatch",
+              labelClass,
+              postPermalinks,
+            };
+          return { accepted: true, reason: "owned", labelClass, postPermalinks };
         })
-        .catch(() => false);
-      if (!ownsStablePost) continue;
+        .catch(() => ({
+          accepted: false,
+          reason: "classification_failed",
+          labelClass: "unknown",
+          postPermalinks: [] as string[],
+        }));
+      for (const permalink of classification.postPermalinks) {
+        recordDiagnostic(permalink, classification.labelClass, classification.reason);
+      }
+      if (!classification.accepted) continue;
       const clicked = await expander
         .click({ timeout: POST_EXPANDER_CLICK_TIMEOUT_MS })
         .then(() => true)
         .catch(() => false);
+      for (const permalink of classification.postPermalinks) {
+        const diagnostics = diagnosticsByPermalink.get(permalink)!;
+        if (clicked) diagnostics.clicked += 1;
+        else diagnostics.clickFailed += 1;
+      }
       if (clicked) expandedCount += 1;
     }
     if (expandedCount > 0) await page.waitForTimeout(250);
-    return page.locator("body").evaluate((root) => {
+    const posts = await page.locator("body").evaluate((root) => {
       type DomElement = {
         innerText: string;
         href?: string;
@@ -448,6 +637,12 @@ const defaultRecorder: InspectFacebookProfileRecorder = {
       }
       return posts;
     });
+    return posts.map((post) => ({
+      ...post,
+      expanderDiagnostics:
+        diagnosticsByPermalink.get(new URL(post.canonicalPermalink).pathname) ??
+        emptyExpanderDiagnostics(),
+    }));
   },
   async scroll(page) {
     await page.evaluate(() => {

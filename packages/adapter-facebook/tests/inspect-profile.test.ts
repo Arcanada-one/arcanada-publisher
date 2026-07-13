@@ -196,6 +196,77 @@ describe("Facebook read-only profile inspection", () => {
     expect(page.postExpander.clickCount).toBe(0);
   });
 
+  it("accepts the longest direct-owned terminal dir-auto body fallback", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "fb-inspect-dom-")), "evidence");
+    const page = fakeDomPage(evidenceDir, true, false, "nested-body", "dir-auto");
+
+    const result = await inspectFacebookProfilePost(input(evidenceDir), {
+      page: page as never,
+      skipTeardown: true,
+    });
+
+    expect(result.postBodyLength).toBe(BODY.length);
+    expect(page.postExpander.clickCount).toBe(1);
+  });
+
+  it("rejects a menu expander inside a non-terminal dir-auto node", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "fb-inspect-dom-")), "evidence");
+    const page = fakeDomPage(evidenceDir, true, false, "direct", "dir-auto-menu");
+
+    await expect(
+      inspectFacebookProfilePost(input(evidenceDir), {
+        page: page as never,
+        skipTeardown: true,
+      }),
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    expect(page.postExpander.clickCount).toBe(0);
+  });
+
+  it("writes private hash-only diagnostics when exact matching fails", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "fb-inspect-failure-")), "evidence");
+    const page = fakeDomPage(evidenceDir, true, false, "direct", "dir-auto-menu");
+
+    await expect(
+      inspectFacebookProfilePost(input(evidenceDir), {
+        page: page as never,
+        skipTeardown: true,
+      }),
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+
+    const manifestPath = join(evidenceDir, "failure-manifest.json");
+    const manifestText = readFileSync(manifestPath, "utf8");
+    const manifest = JSON.parse(manifestText);
+    expect(manifest).toMatchObject({
+      version: 1,
+      status: "verify-failed",
+      reason: "no-matching-post",
+      posts: [
+        {
+          permalinkId: "pfbid-content-0377",
+          permalinkSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          authorProfileIdentity: "www.facebook.com/pavelvalentov",
+          bodySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          bodyLength: expect.any(Number),
+          expanderDiagnostics: {
+            labels: { more_ru: expect.any(Number) },
+            reasons: { terminal_body_mismatch: expect.any(Number) },
+            clicked: 0,
+            clickFailed: 0,
+          },
+        },
+      ],
+    });
+    expect(manifest.posts).toHaveLength(1);
+    expect(manifest.posts[0].expanderDiagnostics.labels.more_ru).toBeGreaterThan(0);
+    expect(manifest.posts[0].expanderDiagnostics.reasons.terminal_body_mismatch).toBeGreaterThan(0);
+    expect(manifestText).not.toContain(BODY);
+    expect(manifestText).not.toContain(PROFILE_URL);
+    expect(manifestText).not.toContain("canonicalPermalink");
+    expect(statSync(evidenceDir).mode & 0o777).toBe(0o700);
+    expect(statSync(manifestPath).mode & 0o777).toBe(0o600);
+    expect(statSync(join(evidenceDir, "failure-readback.png")).mode & 0o777).toBe(0o600);
+  });
+
   it("fails closed when content matches a different header profile without leaking the body", async () => {
     const secret = "SECRET_CONTENT_MUST_NOT_LEAK";
     const evidenceDir = join(mkdtempSync(join(tmpdir(), "fb-inspect-")), "evidence");
@@ -362,6 +433,7 @@ class FakeNode {
   messageBody: FakeNode | null = null;
   clickCount = 0;
   lastClickTimeout?: number;
+  readonly containedNodes = new Set<FakeNode>();
 
   constructor(
     public innerText: string,
@@ -395,6 +467,10 @@ class FakeNode {
   getAttribute(name: string): string | null {
     return this.attributes[name] ?? null;
   }
+
+  contains(other: FakeNode): boolean {
+    return this === other || this.containedNodes.has(other);
+  }
 }
 
 function fakeDomPage(
@@ -402,6 +478,7 @@ function fakeDomPage(
   collapsed = false,
   virtualized = false,
   topology: "direct" | "nested-body" | "shared-post" | "ambiguous-posts" = "direct",
+  bodyMode: "preferred" | "dir-auto" | "dir-auto-menu" = "preferred",
 ) {
   const postSelectors: FakeSelectorMap = {};
   const commentSelectors: FakeSelectorMap = {};
@@ -436,7 +513,11 @@ function fakeDomPage(
   commentWrapper.article = post;
   comment.parentElement = commentWrapper;
   const postExpander = new FakeNode("Ещё");
-  postExpander.messageBody = body;
+  if (bodyMode === "preferred") postExpander.messageBody = body;
+  const menuTerminal = new FakeNode("Menu");
+  menuTerminal.article = post;
+  if (bodyMode === "dir-auto-menu") menuTerminal.containedNodes.add(postExpander);
+  else body.containedNodes.add(postExpander);
   const commentExpander = new FakeNode("Ещё");
   commentExpander.article = comment;
   commentExpander.messageBody = commentBody;
@@ -489,8 +570,11 @@ function fakeDomPage(
   const unrelatedPostExpander = new FakeNode("Ещё");
   unrelatedPostExpander.article = unrelatedPost;
   unrelatedPostExpander.messageBody = unrelatedBody;
+  unrelatedBody.containedNodes.add(unrelatedPostExpander);
 
-  postSelectors['[data-ad-preview="message"], [data-ad-comet-preview="message"]'] = [body];
+  postSelectors['[data-ad-preview="message"], [data-ad-comet-preview="message"]'] =
+    bodyMode === "preferred" ? [body] : [];
+  postSelectors['[dir="auto"]'] = bodyMode === "dir-auto-menu" ? [body, menuTerminal] : [body];
   postSelectors['a[role="link"][href]'] = [author];
   postSelectors["a[href]"] = [author, permalink, commentPermalink];
   postSelectors['a[href*="comment_id="]'] = [commentPermalink];
@@ -582,10 +666,8 @@ function fakeDomPage(
     }),
     evaluate: async () => {},
     waitForTimeout: async () => {},
-    screenshot: async () => {
-      await import("node:fs/promises").then((fs) =>
-        fs.writeFile(join(evidenceDir, "readback.png"), "png"),
-      );
+    screenshot: async ({ path }: { path: string }) => {
+      await import("node:fs/promises").then((fs) => fs.writeFile(path, "png"));
     },
     postExpander,
     commentExpander,
