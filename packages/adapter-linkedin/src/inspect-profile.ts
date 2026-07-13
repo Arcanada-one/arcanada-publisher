@@ -132,7 +132,7 @@ async function runInspection(
     scrollsPerformed,
     postsInspected: observed.size,
   };
-  const fail = async (message: string): Promise<never> => {
+  const captureFailure = async (): Promise<void> => {
     const expansionClickCounts = isDiagnosticRecorder(activeRecorder)
       ? [...activeRecorder.expansionClickCounts]
       : [];
@@ -142,6 +142,9 @@ async function runInspection(
       [...observed.values()],
       expansionClickCounts,
     );
+  };
+  const fail = async (message: string): Promise<never> => {
+    await captureFailure();
     throw verifyError(message);
   };
   if (matches.length === 0) {
@@ -161,16 +164,23 @@ async function runInspection(
   if (!matched.hasNativeVideo) return fail("exact post match has no native video");
   const id = activityId(matched.activityUrl);
   if (!id) return fail("exact post match has no activity id");
-  const vanityPermalink = isVanityPermalink(matched.vanityPermalink, id, expectedIdentity)
-    ? matched.vanityPermalink
-    : await recoverVanityPermalink(
-        page,
-        matched.activityUrl,
-        expectedIdentity,
-        id,
-        copyLinkRecorder,
-        clipboard,
-      );
+  let vanityPermalink: string;
+  try {
+    vanityPermalink = isVanityPermalink(matched.vanityPermalink, id, expectedIdentity)
+      ? matched.vanityPermalink
+      : await recoverVanityPermalink(
+          page,
+          matched.activityUrl,
+          expectedIdentity,
+          id,
+          copyLinkRecorder,
+          clipboard,
+          input.evidenceDir,
+        );
+  } catch (error) {
+    await captureFailure();
+    throw error;
+  }
   if (!isVanityPermalink(vanityPermalink, id, expectedIdentity)) {
     return fail("exact post match has no bound vanity permalink");
   }
@@ -294,6 +304,7 @@ async function recoverVanityPermalink(
   id: string,
   copyLinkRecorder: CopyLinkRecorder,
   clipboard: ClipboardPort,
+  evidenceDir: string,
 ): Promise<string> {
   await page.goto(activityUrl, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1_000);
@@ -302,6 +313,7 @@ async function recoverVanityPermalink(
     activityId: id,
   });
   if (copiedFromDom) return copiedFromDom;
+  await writeMenuLookupDiagnostic(page, evidenceDir, id);
   return copyVanityFromActivityMenu(page, expectedAuthorIdentity, id, copyLinkRecorder, clipboard);
 }
 
@@ -538,6 +550,28 @@ async function writePrivate(path: string, content: string | Uint8Array): Promise
   }
 }
 
+async function writeMenuLookupDiagnostic(
+  page: Page,
+  rawEvidenceDir: string,
+  expectedId: string,
+): Promise<void> {
+  const evidenceDir = resolve(rawEvidenceDir);
+  try {
+    const diagnostic = await page
+      .locator("body")
+      .evaluate(inspectExactActivityMenuLookup, expectedId);
+    await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
+    await chmod(evidenceDir, 0o700);
+    await writePrivate(
+      join(evidenceDir, "menu-lookup-diagnostic.json"),
+      `${JSON.stringify(diagnostic, null, 2)}\n`,
+    );
+  } catch (error) {
+    if (error instanceof AdapterError) throw error;
+    throw verifyError("failed to write private menu lookup diagnostic");
+  }
+}
+
 async function writeFailureEvidence(
   page: Page,
   rawEvidenceDir: string,
@@ -620,6 +654,82 @@ interface BrowserNode {
   cloneNode?(deep?: boolean): BrowserNode;
   remove?(): void;
   click?(): void;
+}
+
+type ActivityBoundaryKind = "activity" | "comment" | "article" | "mini-update";
+
+export interface ActivityMenuLookupDiagnostic {
+  version: 1;
+  expectedActivityId: string;
+  activityContainerCount: number;
+  exactCandidateCount: number;
+  exactCandidates: Array<{
+    ancestorBoundaries: ActivityBoundaryKind[];
+    buttonCount: number;
+    matchingMenuButtonCount: number;
+    directOwnedMatchingMenuButtonCount: number;
+  }>;
+}
+
+/**
+ * Return structural menu-ownership facts only. This deliberately excludes DOM
+ * text, author labels, URLs, attributes, and clipboard data so a failure
+ * artifact cannot leak post or local pasteboard content.
+ */
+export function inspectExactActivityMenuLookup(
+  root: BrowserNode,
+  expectedId: string,
+): ActivityMenuLookupDiagnostic {
+  const boundaryKind = (node: BrowserNode): ActivityBoundaryKind | null => {
+    const raw = node.getAttribute("data-urn") ?? node.getAttribute("data-id") ?? "";
+    if (/urn:li:activity:\d+/.test(raw)) return "activity";
+    if (/^urn:li:comment/.test(raw)) return "comment";
+    if (node.tagName.toLowerCase() === "article") return "article";
+    if (/comments-comment-item|mini-update/i.test(node.className ?? "")) return "mini-update";
+    return null;
+  };
+  const isMenu = (node: BrowserNode): boolean =>
+    /^open control menu for post by .+$/i.test(
+      (node.getAttribute("aria-label") ?? "").normalize("NFKC").trim(),
+    );
+  const containers = Array.from(
+    root.querySelectorAll("[data-urn*='urn:li:activity'], [data-id*='urn:li:activity']"),
+  );
+  const exact = containers.filter((container) => {
+    const raw = container.getAttribute("data-urn") ?? container.getAttribute("data-id") ?? "";
+    return /urn:li:activity:(\d+)/.exec(raw)?.[1] === expectedId;
+  });
+  return {
+    version: 1,
+    expectedActivityId: expectedId,
+    activityContainerCount: containers.length,
+    exactCandidateCount: exact.length,
+    exactCandidates: exact.map((container) => {
+      const ancestorBoundaries: ActivityBoundaryKind[] = [];
+      let owner = container.parentElement;
+      while (owner && owner !== root) {
+        const kind = boundaryKind(owner);
+        if (kind) ancestorBoundaries.push(kind);
+        owner = owner.parentElement;
+      }
+      const buttons = Array.from(container.querySelectorAll("button"));
+      const matchingMenus = buttons.filter(isMenu);
+      const directOwnedMatchingMenus = matchingMenus.filter((button) => {
+        let buttonOwner = button.parentElement;
+        while (buttonOwner && buttonOwner !== container) {
+          if (boundaryKind(buttonOwner)) return false;
+          buttonOwner = buttonOwner.parentElement;
+        }
+        return buttonOwner === container;
+      });
+      return {
+        ancestorBoundaries,
+        buttonCount: buttons.length,
+        matchingMenuButtonCount: matchingMenus.length,
+        directOwnedMatchingMenuButtonCount: directOwnedMatchingMenus.length,
+      };
+    }),
+  };
 }
 
 export function clickExactActivityMenu(root: BrowserNode, expectedId: string): boolean {
