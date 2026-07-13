@@ -288,16 +288,49 @@ async function writePrivate(path: string, content: string): Promise<void> {
 const defaultRecorder: InspectFacebookProfileRecorder = {
   async scanLoadedPosts(page) {
     const expanders = page.getByRole("button", {
-      name: /^(See more|Показать ещё|Näytä lisää)$/i,
+      name: /^(See more|Показать ещё|Ещё|Näytä lisää)$/i,
     });
     const expanderCount = await expanders.count().catch(() => 0);
+    let expandedCount = 0;
     for (let index = 0; index < expanderCount; index += 1) {
-      await expanders
-        .nth(index)
+      const expander = expanders.nth(index);
+      const ownsStablePost = await expander
+        .evaluate((control) => {
+          type BrowserElement = {
+            href?: string;
+            closest(selector: string): BrowserElement | null;
+            querySelectorAll(
+              selector: string,
+            ): ArrayLike<BrowserElement> & Iterable<BrowserElement>;
+          };
+          const button = control as unknown as BrowserElement;
+          const article = button.closest('[role="article"]');
+          if (!article) return false;
+          return Array.from(article.querySelectorAll("a[href]")).some((anchor) => {
+            if (anchor.closest('[role="article"]') !== article) return false;
+            try {
+              if (!anchor.href) return false;
+              const parsed = new URL(anchor.href, "https://www.facebook.com");
+              const segments = parsed.pathname.split("/").filter(Boolean);
+              return (
+                !parsed.searchParams.has("comment_id") &&
+                segments.length >= 3 &&
+                segments[1] === "posts"
+              );
+            } catch {
+              return false;
+            }
+          });
+        })
+        .catch(() => false);
+      if (!ownsStablePost) continue;
+      const clicked = await expander
         .click()
-        .catch(() => undefined);
+        .then(() => true)
+        .catch(() => false);
+      if (clicked) expandedCount += 1;
     }
-    if (expanderCount > 0) await page.waitForTimeout(250);
+    if (expandedCount > 0) await page.waitForTimeout(250);
     return page.locator("body").evaluate((root) => {
       type DomElement = {
         innerText: string;
