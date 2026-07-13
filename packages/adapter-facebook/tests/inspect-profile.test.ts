@@ -156,6 +156,46 @@ describe("Facebook read-only profile inspection", () => {
     expect(page.commentExpander.clickCount).toBe(0);
   });
 
+  it("finds a stable post owner above a permalink-free body article wrapper", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "fb-inspect-dom-")), "evidence");
+    const page = fakeDomPage(evidenceDir, true, false, "nested-body");
+
+    const result = await inspectFacebookProfilePost(input(evidenceDir), {
+      page: page as never,
+      skipTeardown: true,
+    });
+
+    expect(result.postBodyLength).toBe(BODY.length);
+    expect(page.postExpander.clickCount).toBe(1);
+    expect(page.commentExpander.clickCount).toBe(0);
+  });
+
+  it("rejects an expander inside nested shared post content", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "fb-inspect-dom-")), "evidence");
+    const page = fakeDomPage(evidenceDir, true, false, "shared-post");
+
+    await expect(
+      inspectFacebookProfilePost(input(evidenceDir), {
+        page: page as never,
+        skipTeardown: true,
+      }),
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    expect(page.postExpander.clickCount).toBe(0);
+  });
+
+  it("fails closed when multiple post ancestors could own an expander", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "fb-inspect-dom-")), "evidence");
+    const page = fakeDomPage(evidenceDir, true, false, "ambiguous-posts");
+
+    await expect(
+      inspectFacebookProfilePost(input(evidenceDir), {
+        page: page as never,
+        skipTeardown: true,
+      }),
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    expect(page.postExpander.clickCount).toBe(0);
+  });
+
   it("fails closed when content matches a different header profile without leaking the body", async () => {
     const secret = "SECRET_CONTENT_MUST_NOT_LEAK";
     const evidenceDir = join(mkdtempSync(join(tmpdir(), "fb-inspect-")), "evidence");
@@ -319,6 +359,7 @@ class FakeNode {
   parentElement: FakeNode | null = null;
   article: FakeNode | null = null;
   before: FakeNode | null = null;
+  messageBody: FakeNode | null = null;
   clickCount = 0;
   lastClickTimeout?: number;
 
@@ -333,6 +374,8 @@ class FakeNode {
 
   closest(selector: string): FakeNode | null {
     if (selector === '[role="article"]') return this.article;
+    if (selector === '[data-ad-preview="message"], [data-ad-comet-preview="message"]')
+      return this.messageBody;
     if (selector === 'a[role="link"], strong') return null;
     return null;
   }
@@ -354,7 +397,12 @@ class FakeNode {
   }
 }
 
-function fakeDomPage(evidenceDir: string, collapsed = false, virtualized = false) {
+function fakeDomPage(
+  evidenceDir: string,
+  collapsed = false,
+  virtualized = false,
+  topology: "direct" | "nested-body" | "shared-post" | "ambiguous-posts" = "direct",
+) {
   const postSelectors: FakeSelectorMap = {};
   const commentSelectors: FakeSelectorMap = {};
   const unrelatedPostSelectors: FakeSelectorMap = {};
@@ -388,9 +436,44 @@ function fakeDomPage(evidenceDir: string, collapsed = false, virtualized = false
   commentWrapper.article = post;
   comment.parentElement = commentWrapper;
   const postExpander = new FakeNode("Ещё");
-  postExpander.article = post;
+  postExpander.messageBody = body;
   const commentExpander = new FakeNode("Ещё");
   commentExpander.article = comment;
+  commentExpander.messageBody = commentBody;
+  const nestedArticles: FakeNode[] = [];
+  if (topology === "direct") {
+    postExpander.article = post;
+  } else {
+    const nestedSelectors: FakeSelectorMap = {};
+    const nested = new FakeNode("", undefined, nestedSelectors);
+    nested.article = nested;
+    nested.parentElement = post;
+    nestedSelectors["a[href]"] = [];
+    nestedArticles.push(nested);
+    postExpander.article = nested;
+    if (topology === "shared-post" || topology === "ambiguous-posts") {
+      const sharedPermalink = new FakeNode(
+        "shared",
+        "https://www.facebook.com/pavelvalentov/posts/pfbid-shared",
+      );
+      sharedPermalink.article = nested;
+      nestedSelectors["a[href]"] = [sharedPermalink];
+    }
+    if (topology === "ambiguous-posts") {
+      const innerSelectors: FakeSelectorMap = {};
+      const inner = new FakeNode("", undefined, innerSelectors);
+      inner.article = inner;
+      inner.parentElement = nested;
+      const innerPermalink = new FakeNode(
+        "inner",
+        "https://www.facebook.com/pavelvalentov/posts/pfbid-inner",
+      );
+      innerPermalink.article = inner;
+      innerSelectors["a[href]"] = [innerPermalink];
+      nestedArticles.push(inner);
+      postExpander.article = inner;
+    }
+  }
   const unrelatedPost = new FakeNode("", undefined, unrelatedPostSelectors);
   unrelatedPost.article = unrelatedPost;
   const unrelatedBody = new FakeNode("Unrelated collapsed post\nЕщё");
@@ -405,6 +488,7 @@ function fakeDomPage(evidenceDir: string, collapsed = false, virtualized = false
   unrelatedPermalink.article = unrelatedPost;
   const unrelatedPostExpander = new FakeNode("Ещё");
   unrelatedPostExpander.article = unrelatedPost;
+  unrelatedPostExpander.messageBody = unrelatedBody;
 
   postSelectors['[data-ad-preview="message"], [data-ad-comet-preview="message"]'] = [body];
   postSelectors['a[role="link"][href]'] = [author];
@@ -423,8 +507,8 @@ function fakeDomPage(evidenceDir: string, collapsed = false, virtualized = false
   unrelatedPostSelectors["a[href]"] = [unrelatedAuthor, unrelatedPermalink];
   unrelatedPostSelectors['a[href*="comment_id="]'] = [];
   rootSelectors['[role="article"]'] = virtualized
-    ? [unrelatedPost, post, comment]
-    : [post, comment];
+    ? [unrelatedPost, post, ...nestedArticles, comment]
+    : [post, ...nestedArticles, comment];
   const root = new FakeNode("", undefined, rootSelectors);
 
   const activeExpanders = (unrelatedVisible: boolean) =>

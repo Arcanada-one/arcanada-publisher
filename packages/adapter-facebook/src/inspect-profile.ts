@@ -298,29 +298,47 @@ const defaultRecorder: InspectFacebookProfileRecorder = {
         .evaluate((control) => {
           type BrowserElement = {
             href?: string;
+            parentElement: BrowserElement | null;
             closest(selector: string): BrowserElement | null;
             querySelectorAll(
               selector: string,
             ): ArrayLike<BrowserElement> & Iterable<BrowserElement>;
           };
           const button = control as unknown as BrowserElement;
-          const article = button.closest('[role="article"]');
-          if (!article) return false;
-          return Array.from(article.querySelectorAll("a[href]")).some((anchor) => {
-            if (anchor.closest('[role="article"]') !== article) return false;
-            try {
-              if (!anchor.href) return false;
-              const parsed = new URL(anchor.href, "https://www.facebook.com");
-              const segments = parsed.pathname.split("/").filter(Boolean);
-              return (
-                !parsed.searchParams.has("comment_id") &&
-                segments.length >= 3 &&
-                segments[1] === "posts"
-              );
-            } catch {
-              return false;
+          const messageBody = button.closest(
+            '[data-ad-preview="message"], [data-ad-comet-preview="message"]',
+          );
+          if (!messageBody) return false;
+          let stableOwner: BrowserElement | null = null;
+          let boundary = button.closest('[role="article"]');
+          while (boundary) {
+            let ownsStablePermalink = false;
+            for (const anchor of Array.from(boundary.querySelectorAll("a[href]"))) {
+              if (anchor.closest('[role="article"]') !== boundary || !anchor.href) continue;
+              try {
+                const parsed = new URL(anchor.href, "https://www.facebook.com");
+                if (parsed.searchParams.has("comment_id")) return false;
+                const segments = parsed.pathname.split("/").filter(Boolean);
+                if (segments.length >= 3 && segments[1] === "posts") {
+                  ownsStablePermalink = true;
+                }
+              } catch {
+                continue;
+              }
             }
-          });
+            if (ownsStablePermalink) {
+              if (stableOwner && stableOwner !== boundary) return false;
+              stableOwner = boundary;
+            }
+            boundary = boundary.parentElement?.closest('[role="article"]') ?? null;
+          }
+          if (!stableOwner) return false;
+          let bodyBoundary = messageBody.closest('[role="article"]');
+          while (bodyBoundary) {
+            if (bodyBoundary === stableOwner) return true;
+            bodyBoundary = bodyBoundary.parentElement?.closest('[role="article"]') ?? null;
+          }
+          return false;
         })
         .catch(() => false);
       if (!ownsStablePost) continue;
