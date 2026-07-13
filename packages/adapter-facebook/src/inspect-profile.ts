@@ -6,6 +6,7 @@ import { AdapterError, ErrorCode, ProfileManager } from "@arcanada/publisher-cor
 import { launchSession } from "./context.js";
 
 const MAX_SCROLL_LIMIT = 50;
+const POST_EXPANDER_CLICK_TIMEOUT_MS = 1_500;
 
 export interface ObservedFacebookComment {
   id: string;
@@ -290,10 +291,9 @@ const defaultRecorder: InspectFacebookProfileRecorder = {
     const expanders = page.getByRole("button", {
       name: /^(See more|Показать ещё|Ещё|Näytä lisää)$/i,
     });
-    const expanderCount = await expanders.count().catch(() => 0);
+    const expanderHandles = await expanders.elementHandles().catch(() => []);
     let expandedCount = 0;
-    for (let index = 0; index < expanderCount; index += 1) {
-      const expander = expanders.nth(index);
+    for (const expander of expanderHandles) {
       const ownsStablePost = await expander
         .evaluate((control) => {
           type BrowserElement = {
@@ -325,7 +325,7 @@ const defaultRecorder: InspectFacebookProfileRecorder = {
         .catch(() => false);
       if (!ownsStablePost) continue;
       const clicked = await expander
-        .click()
+        .click({ timeout: POST_EXPANDER_CLICK_TIMEOUT_MS })
         .then(() => true)
         .catch(() => false);
       if (clicked) expandedCount += 1;
