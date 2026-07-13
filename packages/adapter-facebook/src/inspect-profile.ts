@@ -140,18 +140,26 @@ async function runInspection(
   const postBodyEvidencePath = join(evidenceDir, "post-body.txt");
   const screenshotPath = join(evidenceDir, "readback.png");
   const comments: InspectFacebookCommentSummary[] = [];
+  const verifiedComments: ObservedFacebookComment[] = [];
   try {
     await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
     await chmod(evidenceDir, 0o700);
     await writePrivate(postBodyEvidencePath, matched.body);
     for (const comment of matched.comments) {
-      if (!/^\d+$/.test(comment.id)) throw verifyError("observed comment has no numeric id");
+      const authorProfileIdentity = facebookProfileIdentity(comment.authorProfileHref);
+      if (!/^\d+$/.test(comment.id)) {
+        if (authorProfileIdentity === expectedIdentity) {
+          throw verifyError("expected-author comment has no numeric id");
+        }
+        continue;
+      }
       const body = normalizeExact(comment.body);
       const bodyEvidencePath = join(evidenceDir, `comment-${comment.id}.txt`);
       await writePrivate(bodyEvidencePath, comment.body);
+      verifiedComments.push(comment);
       comments.push({
         id: comment.id,
-        authorProfileIdentity: facebookProfileIdentity(comment.authorProfileHref),
+        authorProfileIdentity,
         bodySha256: sha256(body),
         bodyLength: body.length,
       });
@@ -167,7 +175,7 @@ async function runInspection(
           authorProfileIdentity: expectedIdentity,
           postBodyEvidencePath,
           screenshotPath,
-          comments: matched.comments.map((comment) => ({
+          comments: verifiedComments.map((comment) => ({
             id: comment.id,
             bodyEvidencePath: join(evidenceDir, `comment-${comment.id}.txt`),
           })),
@@ -217,7 +225,11 @@ function validateInput(input: InspectFacebookProfilePostInput): void {
 }
 
 function normalizeExact(value: string): string {
-  return value.normalize("NFKC").replace(/\r\n/g, "\n").trim();
+  return value
+    .normalize("NFKC")
+    .replace(/\r\n/g, "\n")
+    .replace(/\n(?:[\t ]*\n)+/g, "\n")
+    .trim();
 }
 
 function sha256(value: string): string {
@@ -276,16 +288,49 @@ async function writePrivate(path: string, content: string): Promise<void> {
 const defaultRecorder: InspectFacebookProfileRecorder = {
   async scanLoadedPosts(page) {
     const expanders = page.getByRole("button", {
-      name: /^(See more|Показать ещё|Näytä lisää)$/i,
+      name: /^(See more|Показать ещё|Ещё|Näytä lisää)$/i,
     });
     const expanderCount = await expanders.count().catch(() => 0);
+    let expandedCount = 0;
     for (let index = 0; index < expanderCount; index += 1) {
-      await expanders
-        .nth(index)
+      const expander = expanders.nth(index);
+      const ownsStablePost = await expander
+        .evaluate((control) => {
+          type BrowserElement = {
+            href?: string;
+            closest(selector: string): BrowserElement | null;
+            querySelectorAll(
+              selector: string,
+            ): ArrayLike<BrowserElement> & Iterable<BrowserElement>;
+          };
+          const button = control as unknown as BrowserElement;
+          const article = button.closest('[role="article"]');
+          if (!article) return false;
+          return Array.from(article.querySelectorAll("a[href]")).some((anchor) => {
+            if (anchor.closest('[role="article"]') !== article) return false;
+            try {
+              if (!anchor.href) return false;
+              const parsed = new URL(anchor.href, "https://www.facebook.com");
+              const segments = parsed.pathname.split("/").filter(Boolean);
+              return (
+                !parsed.searchParams.has("comment_id") &&
+                segments.length >= 3 &&
+                segments[1] === "posts"
+              );
+            } catch {
+              return false;
+            }
+          });
+        })
+        .catch(() => false);
+      if (!ownsStablePost) continue;
+      const clicked = await expander
         .click()
-        .catch(() => undefined);
+        .then(() => true)
+        .catch(() => false);
+      if (clicked) expandedCount += 1;
     }
-    if (expanderCount > 0) await page.waitForTimeout(250);
+    if (expandedCount > 0) await page.waitForTimeout(250);
     return page.locator("body").evaluate((root) => {
       type DomElement = {
         innerText: string;

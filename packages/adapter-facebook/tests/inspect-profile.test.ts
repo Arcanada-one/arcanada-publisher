@@ -125,6 +125,20 @@ describe("Facebook read-only profile inspection", () => {
     expect(readFileSync(join(evidenceDir, "post-body.txt"), "utf8")).toBe(BODY);
   });
 
+  it("expands a Russian collapsed post without clicking comment expanders", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "fb-inspect-dom-")), "evidence");
+    const page = fakeDomPage(evidenceDir, true);
+
+    const result = await inspectFacebookProfilePost(input(evidenceDir), {
+      page: page as never,
+      skipTeardown: true,
+    });
+
+    expect(result.postBodyLength).toBe(BODY.length);
+    expect(page.postExpander.clickCount).toBe(1);
+    expect(page.commentExpander.clickCount).toBe(0);
+  });
+
   it("fails closed when content matches a different header profile without leaking the body", async () => {
     const secret = "SECRET_CONTENT_MUST_NOT_LEAK";
     const evidenceDir = join(mkdtempSync(join(tmpdir(), "fb-inspect-")), "evidence");
@@ -186,6 +200,74 @@ describe("Facebook read-only profile inspection", () => {
     ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
   });
 
+  it("matches an exact body when Facebook collapses paragraph blank lines", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "fb-inspect-")), "evidence");
+    const expectedBody = "Paragraph one.\n\nParagraph two.";
+    const observedBody = "Paragraph one.\nParagraph two.";
+
+    const result = await inspectFacebookProfilePost(
+      { ...input(evidenceDir), expectedBody },
+      options([[post({ body: observedBody })]]),
+    );
+
+    expect(result.canonicalParentPermalink).toContain("pfbid-content-0377");
+    expect(result.postBodyLength).toBe(observedBody.length);
+    expect(readFileSync(join(evidenceDir, "post-body.txt"), "utf8")).toBe(observedBody);
+  });
+
+  it("ignores non-comment DOM noise without a numeric id", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "fb-inspect-")), "evidence");
+    const result = await inspectFacebookProfilePost(
+      input(evidenceDir),
+      options([
+        [
+          post({
+            comments: [
+              {
+                id: "not-a-comment-id",
+                authorProfileHref: "https://www.facebook.com/facebook",
+                body: "Unrelated nested UI text",
+              },
+              {
+                id: "1326931196274132",
+                authorProfileHref: PROFILE_URL,
+                body: "Current first comment body",
+              },
+            ],
+          }),
+        ],
+      ]),
+    );
+
+    expect(result.comments).toEqual([expect.objectContaining({ id: "1326931196274132" })]);
+    expect(readFileSync(join(evidenceDir, "manifest.json"), "utf8")).not.toContain(
+      "not-a-comment-id",
+    );
+  });
+
+  it("fails closed when an expected-author comment has no numeric id", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "fb-inspect-")), "evidence");
+
+    await expect(
+      inspectFacebookProfilePost(
+        input(evidenceDir),
+        options([
+          [
+            post({
+              comments: [
+                {
+                  id: "not-a-comment-id",
+                  authorProfileHref: PROFILE_URL,
+                  body: "Current first comment body",
+                },
+              ],
+            }),
+          ],
+        ]),
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+  });
+
   it("keeps the inspection module free of mutation controls", () => {
     const source = readFileSync(new URL("../src/inspect-profile.ts", import.meta.url), "utf8");
     expect(source).not.toMatch(
@@ -220,9 +302,10 @@ class FakeNode {
   parentElement: FakeNode | null = null;
   article: FakeNode | null = null;
   before: FakeNode | null = null;
+  clickCount = 0;
 
   constructor(
-    readonly innerText: string,
+    public innerText: string,
     href?: string,
     private readonly selectors: FakeSelectorMap = {},
     private readonly attributes: Record<string, string> = {},
@@ -253,7 +336,7 @@ class FakeNode {
   }
 }
 
-function fakeDomPage(evidenceDir: string) {
+function fakeDomPage(evidenceDir: string, collapsed = false) {
   const postSelectors: FakeSelectorMap = {};
   const commentSelectors: FakeSelectorMap = {};
   const rootSelectors: FakeSelectorMap = {};
@@ -262,7 +345,7 @@ function fakeDomPage(evidenceDir: string) {
   post.article = post;
   comment.article = comment;
 
-  const body = new FakeNode(BODY);
+  const body = new FakeNode(collapsed ? `${BODY.slice(0, 40)}\nЕщё` : BODY);
   body.article = post;
   const commentBody = new FakeNode("Current first comment body");
   commentBody.article = comment;
@@ -285,6 +368,10 @@ function fakeDomPage(evidenceDir: string) {
   const commentWrapper = new FakeNode("");
   commentWrapper.article = post;
   comment.parentElement = commentWrapper;
+  const postExpander = new FakeNode("Ещё");
+  postExpander.article = post;
+  const commentExpander = new FakeNode("Ещё");
+  commentExpander.article = comment;
 
   postSelectors['[data-ad-preview="message"], [data-ad-comet-preview="message"]'] = [body];
   postSelectors['a[role="link"][href]'] = [author];
@@ -301,7 +388,23 @@ function fakeDomPage(evidenceDir: string) {
 
   return {
     goto: async () => {},
-    getByRole: () => ({ count: async () => 0 }),
+    getByRole: (_role: string, options: { name: RegExp }) => {
+      const expanders =
+        collapsed && options.name.test("Ещё")
+          ? [postExpander, commentExpander].filter((expander) => expander.clickCount === 0)
+          : [];
+      return {
+        count: async () => expanders.length,
+        nth: (index: number) => ({
+          evaluate: async (callback: (node: FakeNode) => unknown) => callback(expanders[index]!),
+          click: async () => {
+            const expander = expanders[index]!;
+            expander.clickCount += 1;
+            if (expander === postExpander) body.innerText = BODY;
+          },
+        }),
+      };
+    },
     locator: () => ({
       evaluate: async (callback: (node: FakeNode) => unknown) => {
         const previousLocation = (globalThis as { location?: unknown }).location;
@@ -329,5 +432,7 @@ function fakeDomPage(evidenceDir: string) {
         fs.writeFile(join(evidenceDir, "readback.png"), "png"),
       );
     },
+    postExpander,
+    commentExpander,
   };
 }
