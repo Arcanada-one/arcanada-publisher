@@ -139,6 +139,23 @@ describe("Facebook read-only profile inspection", () => {
     expect(page.commentExpander.clickCount).toBe(0);
   });
 
+  it("uses stable bounded expander handles across profile rerenders", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "fb-inspect-dom-")), "evidence");
+    const page = fakeDomPage(evidenceDir, true, true);
+
+    const result = await inspectFacebookProfilePost(input(evidenceDir), {
+      page: page as never,
+      skipTeardown: true,
+    });
+
+    expect(result.postBodyLength).toBe(BODY.length);
+    expect(page.unrelatedPostExpander.clickCount).toBeGreaterThan(0);
+    expect(page.postExpander.clickCount).toBe(1);
+    expect(page.postExpander.lastClickTimeout).toBeGreaterThan(0);
+    expect(page.postExpander.lastClickTimeout).toBeLessThanOrEqual(2_000);
+    expect(page.commentExpander.clickCount).toBe(0);
+  });
+
   it("fails closed when content matches a different header profile without leaking the body", async () => {
     const secret = "SECRET_CONTENT_MUST_NOT_LEAK";
     const evidenceDir = join(mkdtempSync(join(tmpdir(), "fb-inspect-")), "evidence");
@@ -303,6 +320,7 @@ class FakeNode {
   article: FakeNode | null = null;
   before: FakeNode | null = null;
   clickCount = 0;
+  lastClickTimeout?: number;
 
   constructor(
     public innerText: string,
@@ -336,9 +354,10 @@ class FakeNode {
   }
 }
 
-function fakeDomPage(evidenceDir: string, collapsed = false) {
+function fakeDomPage(evidenceDir: string, collapsed = false, virtualized = false) {
   const postSelectors: FakeSelectorMap = {};
   const commentSelectors: FakeSelectorMap = {};
+  const unrelatedPostSelectors: FakeSelectorMap = {};
   const rootSelectors: FakeSelectorMap = {};
   const post = new FakeNode("", undefined, postSelectors);
   const comment = new FakeNode("", undefined, commentSelectors);
@@ -372,6 +391,20 @@ function fakeDomPage(evidenceDir: string, collapsed = false) {
   postExpander.article = post;
   const commentExpander = new FakeNode("Ещё");
   commentExpander.article = comment;
+  const unrelatedPost = new FakeNode("", undefined, unrelatedPostSelectors);
+  unrelatedPost.article = unrelatedPost;
+  const unrelatedBody = new FakeNode("Unrelated collapsed post\nЕщё");
+  unrelatedBody.article = unrelatedPost;
+  const unrelatedAuthor = new FakeNode("Pavel Valentov", PROFILE_URL);
+  unrelatedAuthor.article = unrelatedPost;
+  unrelatedAuthor.before = unrelatedBody;
+  const unrelatedPermalink = new FakeNode(
+    "3h",
+    "https://www.facebook.com/pavelvalentov/posts/pfbid-unrelated",
+  );
+  unrelatedPermalink.article = unrelatedPost;
+  const unrelatedPostExpander = new FakeNode("Ещё");
+  unrelatedPostExpander.article = unrelatedPost;
 
   postSelectors['[data-ad-preview="message"], [data-ad-comet-preview="message"]'] = [body];
   postSelectors['a[role="link"][href]'] = [author];
@@ -383,26 +416,64 @@ function fakeDomPage(evidenceDir: string, collapsed = false) {
   commentSelectors['a[role="link"][href]'] = [commentAuthor];
   commentSelectors["a[href]"] = [commentAuthor, commentPermalink];
   commentSelectors['a[href*="comment_id="]'] = [commentPermalink];
-  rootSelectors['[role="article"]'] = [post, comment];
+  unrelatedPostSelectors['[data-ad-preview="message"], [data-ad-comet-preview="message"]'] = [
+    unrelatedBody,
+  ];
+  unrelatedPostSelectors['a[role="link"][href]'] = [unrelatedAuthor];
+  unrelatedPostSelectors["a[href]"] = [unrelatedAuthor, unrelatedPermalink];
+  unrelatedPostSelectors['a[href*="comment_id="]'] = [];
+  rootSelectors['[role="article"]'] = virtualized
+    ? [unrelatedPost, post, comment]
+    : [post, comment];
   const root = new FakeNode("", undefined, rootSelectors);
+
+  const activeExpanders = (unrelatedVisible: boolean) =>
+    collapsed
+      ? [
+          ...(unrelatedVisible ? [unrelatedPostExpander] : []),
+          postExpander,
+          commentExpander,
+        ].filter((expander) => expander === unrelatedPostExpander || expander.clickCount === 0)
+      : [];
+  const handleFor = (expander: FakeNode) => ({
+    evaluate: async (callback: (node: FakeNode) => unknown) => callback(expander),
+    click: async (options?: { timeout?: number }) => {
+      expander.clickCount += 1;
+      expander.lastClickTimeout = options?.timeout;
+      if (expander === postExpander) body.innerText = BODY;
+      if (expander === unrelatedPostExpander) unrelatedBody.innerText = "Unrelated expanded post";
+    },
+  });
 
   return {
     goto: async () => {},
     getByRole: (_role: string, options: { name: RegExp }) => {
-      const expanders =
-        collapsed && options.name.test("Ещё")
-          ? [postExpander, commentExpander].filter((expander) => expander.clickCount === 0)
-          : [];
+      let unrelatedVisible = virtualized;
+      const matchingExpanders = () =>
+        options.name.test("Ещё") ? activeExpanders(unrelatedVisible) : [];
+      const dynamicHandle = (index: number) => ({
+        evaluate: async (callback: (node: FakeNode) => unknown) =>
+          callback(matchingExpanders()[index]!),
+        click: async (clickOptions?: { timeout?: number }) => {
+          const expander = matchingExpanders()[index]!;
+          await handleFor(expander).click(clickOptions);
+          if (expander === unrelatedPostExpander) unrelatedVisible = false;
+        },
+      });
       return {
-        count: async () => expanders.length,
-        nth: (index: number) => ({
-          evaluate: async (callback: (node: FakeNode) => unknown) => callback(expanders[index]!),
-          click: async () => {
-            const expander = expanders[index]!;
-            expander.clickCount += 1;
-            if (expander === postExpander) body.innerText = BODY;
-          },
-        }),
+        count: async () => matchingExpanders().length,
+        nth: dynamicHandle,
+        elementHandles: async () =>
+          matchingExpanders().map((expander) => {
+            const handle = handleFor(expander);
+            return {
+              ...handle,
+              click: async (clickOptions?: { timeout?: number }) => {
+                await handle.click(clickOptions);
+                if (expander === unrelatedPostExpander) unrelatedVisible = false;
+              },
+            };
+          }),
       };
     },
     locator: () => ({
@@ -434,5 +505,6 @@ function fakeDomPage(evidenceDir: string, collapsed = false) {
     },
     postExpander,
     commentExpander,
+    unrelatedPostExpander,
   };
 }
