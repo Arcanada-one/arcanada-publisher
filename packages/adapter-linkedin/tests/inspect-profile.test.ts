@@ -1,10 +1,14 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ErrorCode } from "@arcanada/publisher-core";
 import {
   bodyTextWithoutDirectControls,
+  clickExactActivityMenu,
+  copyVanityFromActivityMenu,
+  createMacPasteboardClipboard,
   expandMatchingLinkedInActivity,
   extractLinkedInVanityPermalink,
   extractLinkedInProfilePosts,
@@ -29,6 +33,7 @@ function post(overrides: Partial<ObservedLinkedInProfilePost> = {}): ObservedLin
 
 function options(batches: ObservedLinkedInProfilePost[][]) {
   let scan = 0;
+  let clipboardValue = Buffer.from("original");
   return {
     page: {
       goto: async () => {},
@@ -40,6 +45,14 @@ function options(batches: ObservedLinkedInProfilePost[][]) {
     __recorder: {
       scanLoadedPosts: async () => batches[Math.min(scan++, batches.length - 1)] ?? [],
       scroll: async () => {},
+    },
+    __copyLinkRecorder: { copy: async () => {} },
+    __clipboard: {
+      snapshot: async () => Buffer.from(clipboardValue),
+      readText: async () => clipboardValue.toString("utf8"),
+      restore: async (value: Uint8Array) => {
+        clipboardValue = Buffer.from(value);
+      },
     },
   };
 }
@@ -315,6 +328,294 @@ describe("LinkedIn read-only profile inspection", () => {
     expect(bodyTextWithoutDirectControls(nestedBody)).toBe("Body\n...more");
   });
 
+  it("opens only the exact direct-owned activity menu", () => {
+    const outer = new FakeNode("", { "data-urn": `urn:li:activity:${ID}` });
+    const exact = outer.child("", "button", undefined, undefined, undefined, {
+      "aria-label": "Open control menu for post by Pavel Valentov",
+    });
+    const nested = outer.child("", "mini-update");
+    const nestedMenu = nested.child("", "button", undefined, undefined, undefined, {
+      "aria-label": "Open control menu for post by Pavel Valentov",
+    });
+    const root = new FakeNode("");
+    root.children.push(outer);
+    expect(clickExactActivityMenu(root, ID)).toBe(true);
+    expect(exact.clickCount).toBe(1);
+    expect(nestedMenu.clickCount).toBe(0);
+
+    exact.attrsForTest["aria-label"] = "Delete post";
+    expect(clickExactActivityMenu(root, ID)).toBe(false);
+
+    for (const boundary of [
+      new FakeNode("", { "data-urn": "urn:li:activity:999" }),
+      new FakeNode("", { "data-id": "urn:li:comment:(urn:li:activity:999,1)" }),
+      new FakeNode("", {}, "mini-update"),
+      new FakeNode("", {}, "", "article"),
+    ]) {
+      const nestedRoot = new FakeNode("");
+      nestedRoot.appendChild(boundary);
+      const nestedExact = new FakeNode("", { "data-urn": `urn:li:activity:${ID}` });
+      boundary.appendChild(nestedExact);
+      const nestedExactMenu = nestedExact.child("", "button", undefined, undefined, undefined, {
+        "aria-label": "Open control menu for post by Pavel Valentov",
+      });
+      expect(clickExactActivityMenu(nestedRoot, ID)).toBe(false);
+      expect(nestedExactMenu.clickCount).toBe(0);
+    }
+  });
+
+  it("restores clipboard for valid, impostor, and failed copy-link flows", async () => {
+    const valid = `https://www.linkedin.com/posts/pavelvalentov_post-activity-${ID}-AbCd`;
+    const page = { waitForTimeout: async () => {} } as never;
+    const originalSnapshot = Buffer.from(
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            flavors: [
+              { type: "public.file-url", dataBase64: "ZmlsZTovLy90bXAvYS5tcDQ=" },
+              { type: "NSFilenamesPboardType", dataBase64: "YnBsaXN0MDDUAQ==" },
+            ],
+          },
+          {
+            flavors: [
+              { type: "public.png", dataBase64: "iVBORw0KGgoAAAANSUhEUg==" },
+              { type: "public.rtf", dataBase64: "e1xydGYxIEJvbGR9" },
+              { type: "public.utf8-plain-text", dataBase64: "cmljaCB0ZXh0" },
+            ],
+          },
+        ],
+        boardFlavors: [
+          { type: "public.file-url", dataBase64: "ZmlsZTovLy90bXAvYS5tcDQ=" },
+          { type: "NSFilenamesPboardType", dataBase64: "YnBsaXN0MDDUAQ==" },
+          { type: "public.png", dataBase64: "iVBORw0KGgoAAAANSUhEUg==" },
+          { type: "public.rtf", dataBase64: "e1xydGYxIEJvbGR9" },
+        ],
+      }),
+    );
+    const run = async (copied: string, throws = false) => {
+      let state = Buffer.from(originalSnapshot);
+      let copiedText = "";
+      let restoreCalls = 0;
+      const clipboard = {
+        snapshot: async () => Buffer.from(state),
+        readText: async () => copiedText,
+        restore: async (snapshot: Uint8Array) => {
+          restoreCalls += 1;
+          state = Buffer.from(snapshot);
+        },
+        // Deliberately destructive legacy seam: the regression must prove the
+        // production path no longer falls back to text-only read/write.
+        read: async () => "ORIGINAL_CLIPBOARD_TEXT_ONLY",
+        write: async (next: string) => {
+          state = Buffer.from(next);
+        },
+      };
+      const recorder = {
+        copy: async () => {
+          if (throws) throw new Error("wrong menu");
+          copiedText = copied;
+          state = Buffer.from("LINKEDIN_REPLACED_THE_CLIPBOARD");
+        },
+      };
+      const promise = copyVanityFromActivityMenu(
+        page,
+        "www.linkedin.com/in/pavelvalentov",
+        ID,
+        recorder,
+        clipboard as never,
+      );
+      if (throws) await expect(promise).rejects.toThrow("wrong menu");
+      else expect(await promise).toBe(copied === valid ? valid : "");
+      expect(restoreCalls).toBe(1);
+      expect(state.equals(originalSnapshot)).toBe(true);
+    };
+    await run(valid);
+    await run(`https://www.linkedin.com/posts/impostor_post-activity-${ID}-AbCd`);
+    await run(valid, true);
+  });
+
+  it("moves the full pasteboard archive through memory and restore stdin only", async () => {
+    const privateMarker = "PRIVATE_FILE_IMAGE_RTF_BYTES";
+    const archive = Buffer.from(
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            flavors: [
+              {
+                type: "public.file-url",
+                dataBase64: Buffer.from(privateMarker).toString("base64"),
+              },
+              { type: "NSFilenamesPboardType", dataBase64: "YnBsaXN0MDDUAQ==" },
+            ],
+          },
+          {
+            flavors: [
+              { type: "public.png", dataBase64: "iVBORw0KGgoAAAANSUhEUg==" },
+              { type: "public.rtf", dataBase64: "e1xydGYxIEJvbGR9" },
+              { type: "public.utf8-plain-text", dataBase64: "cmljaCB0ZXh0" },
+            ],
+          },
+        ],
+        boardFlavors: [
+          { type: "public.file-url", dataBase64: Buffer.from(privateMarker).toString("base64") },
+          { type: "NSFilenamesPboardType", dataBase64: "YnBsaXN0MDDUAQ==" },
+          { type: "public.png", dataBase64: "iVBORw0KGgoAAAANSUhEUg==" },
+          { type: "public.rtf", dataBase64: "e1xydGYxIEJvbGR9" },
+        ],
+      }),
+    );
+    const valid = `https://www.linkedin.com/posts/pavelvalentov_post-activity-${ID}-AbCd`;
+    const exec = vi.fn((_file: string, args: readonly string[], options: { input?: Buffer }) => {
+      const script = args.join("\n");
+      expect(args).not.toContain(privateMarker);
+      expect(script).not.toContain(privateMarker);
+      expect(script).not.toMatch(/pbcopy|pbpaste|writeFile|\/tmp\//);
+      if (script.includes("readDataToEndOfFile")) {
+        expect(options.input).toEqual(archive);
+        expect(script).toContain("setDataForType");
+        return Buffer.from("ok");
+      }
+      if (script.includes("stringForType")) return Buffer.from(valid);
+      expect(script).toContain("pb.pasteboardItems");
+      expect(script).toContain("dataForType");
+      expect(script).toContain("base64EncodedStringWithOptions");
+      return Buffer.from(archive);
+    });
+    const clipboard = createMacPasteboardClipboard({ platform: "darwin", exec: exec as never });
+
+    const snapshot = await clipboard.snapshot();
+    expect(Buffer.from(snapshot).equals(archive)).toBe(true);
+    expect(await clipboard.readText()).toBe(valid);
+    await clipboard.restore(snapshot);
+    expect(exec).toHaveBeenCalledTimes(4);
+  });
+
+  it.runIf(process.platform === "darwin")(
+    "round-trips ordered multi-item and multi-flavor bytes through a private NSPasteboard",
+    async () => {
+      const pasteboardName = `org.arcanada.publisher.tests.${process.pid}.${Date.now()}`;
+      const seedScript = [
+        "ObjC.import('AppKit');",
+        "ObjC.import('Foundation');",
+        "function data(value) {",
+        "  return $.NSData.alloc.initWithBase64EncodedStringOptions($(value), 0);",
+        "}",
+        "function run(argv) {",
+        "  const pb = $.NSPasteboard.pasteboardWithName($(ObjC.unwrap(argv[0])));",
+        "  const first = $.NSPasteboardItem.alloc.init;",
+        "  first.setDataForType(data('ZmlsZTovLy90bXAvdmlkZW8gY2xpcC5tcDQ='), $('public.file-url'));",
+        "  const second = $.NSPasteboardItem.alloc.init;",
+        "  second.setDataForType(data('AAEC/w=='), $('public.png'));",
+        "  second.setDataForType(data('e1xydGYxXGIgQm9sZH0='), $('public.rtf'));",
+        "  const items = $.NSMutableArray.array;",
+        "  items.addObject(first);",
+        "  items.addObject(second);",
+        "  pb.clearContents;",
+        "  if (!pb.writeObjects(items)) throw new Error('seed write failed');",
+        "  return 'ok';",
+        "}",
+      ].join("\n");
+      execFileSync("osascript", ["-l", "JavaScript", "-e", seedScript, "--", pasteboardName], {
+        encoding: "utf8",
+      });
+      const emptyArchive = Buffer.from(JSON.stringify({ version: 1, items: [], boardFlavors: [] }));
+      const clipboard = createMacPasteboardClipboard({
+        platform: "darwin",
+        exec: execFileSync,
+        pasteboardName,
+      });
+      try {
+        const archive = await clipboard.snapshot();
+        const decoded = JSON.parse(Buffer.from(archive).toString("utf8"));
+        expect(decoded.items).toHaveLength(2);
+        expect(decoded.items[1].flavors.map((flavor: { type: string }) => flavor.type)).toEqual([
+          "public.png",
+          "public.rtf",
+        ]);
+        expect(
+          decoded.boardFlavors.some(
+            (flavor: { type: string }) => flavor.type === "NSFilenamesPboardType",
+          ),
+        ).toBe(true);
+        await clipboard.restore(emptyArchive);
+        const faultExec = vi.fn(execFileSync as never) as never;
+        const recoveryClipboard = createMacPasteboardClipboard({
+          platform: "darwin",
+          exec: faultExec,
+          pasteboardName,
+          __failAfterClearOnce: true,
+        } as never);
+        await recoveryClipboard.restore(archive);
+        expect(
+          faultExec.mock.calls.some((call: unknown[]) =>
+            String((call[1] as string[]).join("\n")).includes("injected post-clear failure"),
+          ),
+        ).toBe(true);
+        const roundTrip = await clipboard.snapshot();
+        expect(Buffer.from(roundTrip).equals(Buffer.from(archive))).toBe(true);
+      } finally {
+        await clipboard.restore(emptyArchive);
+      }
+    },
+  );
+
+  it("fails closed without exposing pasteboard content or invoking JXA off macOS", async () => {
+    const privateMarker = "PRIVATE_CLIPBOARD_SECRET";
+    const failingExec = vi.fn(() => {
+      throw new Error(privateMarker);
+    });
+    const mac = createMacPasteboardClipboard({
+      platform: "darwin",
+      exec: failingExec as never,
+    });
+    try {
+      await mac.snapshot();
+      throw new Error("expected snapshot failure");
+    } catch (error) {
+      expect(String(error)).not.toContain(privateMarker);
+      expect(error).toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    }
+
+    const offMacExec = vi.fn();
+    const offMac = createMacPasteboardClipboard({
+      platform: "linux",
+      exec: offMacExec as never,
+    });
+    await expect(offMac.snapshot()).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    expect(offMacExec).not.toHaveBeenCalled();
+
+    const archive = Buffer.from(
+      JSON.stringify({
+        version: 1,
+        items: [{ flavors: [{ type: "public.rtf", dataBase64: privateMarker }] }],
+        boardFlavors: [],
+      }),
+    );
+    const mismatchExec = vi.fn((_file: string, args: readonly string[]) =>
+      Buffer.from(
+        args.join("\n").includes("readDataToEndOfFile")
+          ? "ok"
+          : JSON.stringify({ version: 1, items: [], boardFlavors: [] }),
+      ),
+    );
+    const mismatch = createMacPasteboardClipboard({
+      platform: "darwin",
+      exec: mismatchExec as never,
+    });
+    try {
+      await mismatch.restore(archive);
+      throw new Error("expected restore verification failure");
+    } catch (error) {
+      expect(String(error)).not.toContain(privateMarker);
+      expect(error).toMatchObject({
+        code: ErrorCode.VERIFY_FAILED,
+        details: { stage: "macos_pasteboard_restore", clipboardState: "unverified" },
+      });
+    }
+  });
+
   it("recovers only copied same-author same-activity vanity URLs", () => {
     const root = new FakeNode("");
     const canonical = new FakeNode(
@@ -335,6 +636,14 @@ describe("LinkedIn read-only profile inspection", () => {
       }),
     ).toBe(`https://www.linkedin.com/posts/pavelvalentov_building-activity-${ID}-AbCd`);
     canonical.href = `https://www.linkedin.com/posts/impostor_building-activity-${ID}-AbCd`;
+    expect(
+      extractLinkedInVanityPermalink(root, {
+        expectedAuthorIdentity: "www.linkedin.com/in/pavelvalentov",
+        activityId: ID,
+      }),
+    ).toBe("");
+
+    canonical.href = `https://www.linkedin.com/posts/pavelvalentov_slug-${ID}-decoy-activity-999-AbCd`;
     expect(
       extractLinkedInVanityPermalink(root, {
         expectedAuthorIdentity: "www.linkedin.com/in/pavelvalentov",
@@ -365,6 +674,25 @@ describe("LinkedIn read-only profile inspection", () => {
     prefixActivity.attrsForTest["data-urn"] = `urn:li:activity:${ID}`;
     expect(
       extractLinkedInVanityPermalink(adversarialRoot, {
+        expectedAuthorIdentity: "www.linkedin.com/in/pavelvalentov",
+        activityId: ID,
+      }),
+    ).toBe("");
+
+    const repost = new FakeNode("", { "data-urn": "urn:li:activity:999" });
+    const miniUpdate = repost.child("", "mini-update");
+    const nestedExact = new FakeNode("", { "data-urn": `urn:li:activity:${ID}` });
+    miniUpdate.appendChild(nestedExact);
+    nestedExact.child("Pavel", "update-components-actor__meta-link", PROFILE);
+    nestedExact.child(
+      "time",
+      "",
+      `https://www.linkedin.com/posts/pavelvalentov_building-activity-${ID}-AbCd`,
+    );
+    const nestedRoot = new FakeNode("");
+    nestedRoot.appendChild(repost);
+    expect(
+      extractLinkedInVanityPermalink(nestedRoot, {
         expectedAuthorIdentity: "www.linkedin.com/in/pavelvalentov",
         activityId: ID,
       }),

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { chmod, mkdir, open } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Page } from "playwright";
@@ -51,6 +52,8 @@ export interface InspectLinkedInProfilePostOptions {
   headed?: boolean;
   skipTeardown?: boolean;
   __recorder?: InspectLinkedInProfileRecorder;
+  __copyLinkRecorder?: CopyLinkRecorder;
+  __clipboard?: ClipboardPort;
 }
 
 export async function inspectLinkedInProfilePost(
@@ -62,7 +65,15 @@ export async function inspectLinkedInProfilePost(
   if (linkedInProfileIdentity(input.profileUrl) !== expectedIdentity) {
     throw verifyError("profile surface does not match expected author identity");
   }
-  if (options.page) return runInspection(options.page, input, expectedIdentity, options.__recorder);
+  if (options.page)
+    return runInspection(
+      options.page,
+      input,
+      expectedIdentity,
+      options.__recorder,
+      options.__copyLinkRecorder,
+      options.__clipboard,
+    );
 
   const profiles = options.profileManager ?? new ProfileManager();
   const profileDir = profiles.ensureProfileExists("linkedin", input.profile);
@@ -71,7 +82,14 @@ export async function inspectLinkedInProfilePost(
     ...(options.headed !== undefined ? { headed: options.headed } : {}),
   });
   try {
-    return await runInspection(session.page, input, expectedIdentity, options.__recorder);
+    return await runInspection(
+      session.page,
+      input,
+      expectedIdentity,
+      options.__recorder,
+      options.__copyLinkRecorder,
+      options.__clipboard,
+    );
   } finally {
     if (!options.skipTeardown) await session.close();
   }
@@ -82,6 +100,8 @@ async function runInspection(
   input: InspectLinkedInProfilePostInput,
   expectedIdentity: string,
   recorder?: InspectLinkedInProfileRecorder,
+  copyLinkRecorder: CopyLinkRecorder = defaultCopyLinkRecorder,
+  clipboard: ClipboardPort = defaultClipboard,
 ): Promise<InspectLinkedInProfilePostResult> {
   const activeRecorder = recorder ?? createDefaultRecorder();
   const activitySurface = `${input.profileUrl.replace(/\/$/, "")}/recent-activity/all/`;
@@ -143,7 +163,14 @@ async function runInspection(
   if (!id) return fail("exact post match has no activity id");
   const vanityPermalink = isVanityPermalink(matched.vanityPermalink, id, expectedIdentity)
     ? matched.vanityPermalink
-    : await recoverVanityPermalink(page, matched.activityUrl, expectedIdentity, id);
+    : await recoverVanityPermalink(
+        page,
+        matched.activityUrl,
+        expectedIdentity,
+        id,
+        copyLinkRecorder,
+        clipboard,
+      );
   if (!isVanityPermalink(vanityPermalink, id, expectedIdentity)) {
     return fail("exact post match has no bound vanity permalink");
   }
@@ -248,10 +275,12 @@ function isVanityPermalink(rawUrl: string, id: string, expectedAuthorIdentity: s
   try {
     const parsed = new URL(rawUrl);
     const authorSlug = expectedAuthorIdentity.split("/in/")[1]?.toLowerCase() ?? "";
+    const activityComponents = [...parsed.pathname.matchAll(/-activity-(\d+)-/g)];
     return (
       /^(www\.)?linkedin\.com$/i.test(parsed.hostname) &&
       parsed.pathname.toLowerCase().startsWith(`/posts/${authorSlug}_`) &&
-      parsed.pathname.includes(`-${id}-`)
+      activityComponents.length === 1 &&
+      activityComponents[0]?.[1] === id
     );
   } catch {
     return false;
@@ -263,14 +292,225 @@ async function recoverVanityPermalink(
   activityUrl: string,
   expectedAuthorIdentity: string,
   id: string,
+  copyLinkRecorder: CopyLinkRecorder,
+  clipboard: ClipboardPort,
 ): Promise<string> {
   await page.goto(activityUrl, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1_000);
-  return page.locator("html").evaluate(extractLinkedInVanityPermalink, {
+  const copiedFromDom = await page.locator("html").evaluate(extractLinkedInVanityPermalink, {
     expectedAuthorIdentity,
     activityId: id,
   });
+  if (copiedFromDom) return copiedFromDom;
+  return copyVanityFromActivityMenu(page, expectedAuthorIdentity, id, copyLinkRecorder, clipboard);
 }
+
+export interface ClipboardPort {
+  snapshot(): Promise<Uint8Array>;
+  readText(): Promise<string>;
+  restore(snapshot: Uint8Array): Promise<void>;
+}
+
+export interface CopyLinkRecorder {
+  copy(page: Page, activityId: string): Promise<void>;
+}
+
+export async function copyVanityFromActivityMenu(
+  page: Page,
+  expectedAuthorIdentity: string,
+  id: string,
+  recorder: CopyLinkRecorder = defaultCopyLinkRecorder,
+  clipboard: ClipboardPort = defaultClipboard,
+): Promise<string> {
+  const snapshot = await clipboard.snapshot();
+  try {
+    await recorder.copy(page, id);
+    await page.waitForTimeout(500);
+    const copied = (await clipboard.readText()).trim();
+    return isVanityPermalink(copied, id, expectedAuthorIdentity) ? copied : "";
+  } finally {
+    await clipboard.restore(snapshot);
+  }
+}
+
+interface MacPasteboardDeps {
+  platform: NodeJS.Platform;
+  exec: typeof execFileSync;
+  pasteboardName?: string;
+  __failAfterClearOnce?: boolean;
+}
+
+const MAX_PASTEBOARD_ARCHIVE_BYTES = 512 * 1024 * 1024;
+
+const SNAPSHOT_PASTEBOARD_JXA = [
+  "ObjC.import('AppKit');",
+  "function encode(data, stage) {",
+  "  if (!data || typeof data.base64EncodedStringWithOptions !== 'function')",
+  "    throw new Error(stage);",
+  "  return ObjC.unwrap(data.base64EncodedStringWithOptions(0));",
+  "}",
+  "function run(argv) {",
+  "  const pb = argv.length > 0",
+  "    ? $.NSPasteboard.pasteboardWithName($(ObjC.unwrap(argv[0])))",
+  "    : $.NSPasteboard.generalPasteboard;",
+  "  // Force board-level promised conversions before enumerating item types.",
+  "  // Some AppKit providers add item representations lazily when read.",
+  "  const sourceBoardTypes = pb.types;",
+  "  const boardFlavors = [];",
+  "  for (let typeIndex = 0; typeIndex < Number(sourceBoardTypes.count); typeIndex += 1) {",
+  "    const nativeType = sourceBoardTypes.objectAtIndex(typeIndex);",
+  "    const data = pb.dataForType(nativeType);",
+  "    boardFlavors.push({",
+  "      type: ObjC.unwrap(nativeType),",
+  "      dataBase64: encode(data, 'pasteboard board flavor unavailable'),",
+  "    });",
+  "  }",
+  "  const sourceItems = pb.pasteboardItems;",
+  "  const items = [];",
+  "  for (let itemIndex = 0; itemIndex < Number(sourceItems.count); itemIndex += 1) {",
+  "    const sourceItem = sourceItems.objectAtIndex(itemIndex);",
+  "    const sourceTypes = sourceItem.types;",
+  "    const flavors = [];",
+  "    for (let typeIndex = 0; typeIndex < Number(sourceTypes.count); typeIndex += 1) {",
+  "      const nativeType = sourceTypes.objectAtIndex(typeIndex);",
+  "      const data = sourceItem.dataForType(nativeType);",
+  "      flavors.push({",
+  "        type: ObjC.unwrap(nativeType),",
+  "        dataBase64: encode(data, `pasteboard item flavor unavailable ${itemIndex}:${typeIndex}`),",
+  "      });",
+  "    }",
+  "    items.push({ flavors });",
+  "  }",
+  "  return JSON.stringify({ version: 1, items, boardFlavors });",
+  "}",
+].join("\n");
+
+const READ_PASTEBOARD_TEXT_JXA = [
+  "ObjC.import('AppKit');",
+  "function run(argv) {",
+  "  const pb = argv.length > 0",
+  "    ? $.NSPasteboard.pasteboardWithName($(ObjC.unwrap(argv[0])))",
+  "    : $.NSPasteboard.generalPasteboard;",
+  "  const value = pb.stringForType($.NSPasteboardTypeString);",
+  "  return value ? ObjC.unwrap(value) : '';",
+  "}",
+].join("\n");
+
+const RESTORE_PASTEBOARD_JXA = [
+  "ObjC.import('AppKit');",
+  "ObjC.import('Foundation');",
+  "function run(argv) {",
+  "  const stdin = $.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile;",
+  "  const source = $.NSString.alloc.initWithDataEncoding(stdin, $.NSUTF8StringEncoding);",
+  "  if (!source) throw new Error('invalid pasteboard archive');",
+  "  const archive = JSON.parse(ObjC.unwrap(source));",
+  "  if (!archive || archive.version !== 1 || !Array.isArray(archive.items) ||",
+  "      !Array.isArray(archive.boardFlavors))",
+  "    throw new Error('invalid pasteboard archive');",
+  "  const restoredItems = $.NSMutableArray.array;",
+  "  for (const archivedItem of archive.items) {",
+  "    if (!archivedItem || !Array.isArray(archivedItem.flavors))",
+  "      throw new Error('invalid pasteboard item');",
+  "    const item = $.NSPasteboardItem.alloc.init;",
+  "    for (const flavor of archivedItem.flavors) {",
+  "      if (!flavor || typeof flavor.type !== 'string' || typeof flavor.dataBase64 !== 'string')",
+  "        throw new Error('invalid pasteboard flavor');",
+  "      const data = $.NSData.alloc.initWithBase64EncodedStringOptions($(flavor.dataBase64), 0);",
+  "      if (!data || !item.setDataForType(data, $(flavor.type)))",
+  "        throw new Error('invalid pasteboard flavor data');",
+  "    }",
+  "    restoredItems.addObject(item);",
+  "  }",
+  "  const pb = argv.length > 0",
+  "    ? $.NSPasteboard.pasteboardWithName($(ObjC.unwrap(argv[0])))",
+  "    : $.NSPasteboard.generalPasteboard;",
+  "  pb.clearContents;",
+  "  if (archive.items.length > 0 && !pb.writeObjects(restoredItems))",
+  "    throw new Error('pasteboard restore failed');",
+  "  for (const flavor of archive.boardFlavors) {",
+  "    if (!flavor || typeof flavor.type !== 'string' || typeof flavor.dataBase64 !== 'string')",
+  "      throw new Error('invalid pasteboard board flavor');",
+  "    const currentTypes = ObjC.deepUnwrap(pb.types);",
+  "    if (currentTypes.indexOf(flavor.type) >= 0) continue;",
+  "    const data = $.NSData.alloc.initWithBase64EncodedStringOptions($(flavor.dataBase64), 0);",
+  "    if (!data || !pb.setDataForType(data, $(flavor.type)))",
+  "      throw new Error('invalid pasteboard board flavor data');",
+  "  }",
+  "  return 'ok';",
+  "}",
+].join("\n");
+
+export function createMacPasteboardClipboard(
+  deps: MacPasteboardDeps = { platform: process.platform, exec: execFileSync },
+): ClipboardPort {
+  const run = (script: string, input?: Uint8Array): Buffer => {
+    if (deps.platform !== "darwin") {
+      throw verifyError("macOS pasteboard is unavailable on this platform");
+    }
+    try {
+      const args = [
+        "-l",
+        "JavaScript",
+        "-e",
+        script,
+        ...(deps.pasteboardName ? ["--", deps.pasteboardName] : []),
+      ];
+      const output = deps.exec("osascript", args, {
+        ...(input ? { input: Buffer.from(input) } : {}),
+        maxBuffer: MAX_PASTEBOARD_ARCHIVE_BYTES,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      return Buffer.from(output);
+    } catch {
+      throw verifyError("macOS pasteboard operation failed");
+    }
+  };
+  return {
+    async snapshot() {
+      return Buffer.from(run(SNAPSHOT_PASTEBOARD_JXA).toString("utf8").trim(), "utf8");
+    },
+    async readText() {
+      return run(READ_PASTEBOARD_TEXT_JXA).toString("utf8");
+    },
+    async restore(snapshot) {
+      const backup = Buffer.from(snapshot);
+      let injectPostClearFailure = deps.__failAfterClearOnce === true;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const restoreScript = injectPostClearFailure
+            ? RESTORE_PASTEBOARD_JXA.replace(
+                "  pb.clearContents;",
+                "  pb.clearContents;\n  throw new Error('injected post-clear failure');",
+              )
+            : RESTORE_PASTEBOARD_JXA;
+          injectPostClearFailure = false;
+          run(restoreScript, backup);
+          const restored = Buffer.from(
+            run(SNAPSHOT_PASTEBOARD_JXA).toString("utf8").trim(),
+            "utf8",
+          );
+          if (restored.equals(backup)) return;
+        } catch {
+          injectPostClearFailure = false;
+        }
+      }
+      throw pasteboardRestoreError();
+    },
+  };
+}
+
+const defaultClipboard = createMacPasteboardClipboard();
+
+const defaultCopyLinkRecorder: CopyLinkRecorder = {
+  async copy(page, id) {
+    const clicked = await page.locator("body").evaluate(clickExactActivityMenu, id);
+    if (!clicked) throw verifyError("exact direct-owned activity menu was not found");
+    const item = page.getByRole("menuitem", { name: "Copy link to post", exact: true });
+    if ((await item.count()) !== 1)
+      throw verifyError("exact Copy link to post menu item was not unique");
+    await item.click();
+  },
+};
 
 function normalizeExact(value: string): string {
   return value.normalize("NFKC").replace(/\r\n/g, "\n").trim();
@@ -278,6 +518,14 @@ function normalizeExact(value: string): string {
 
 function verifyError(message: string): AdapterError {
   return new AdapterError(ErrorCode.VERIFY_FAILED, `inspect-profile-post: ${message}`);
+}
+
+function pasteboardRestoreError(): AdapterError {
+  return new AdapterError(
+    ErrorCode.VERIFY_FAILED,
+    "inspect-profile-post: macOS pasteboard restore failed; clipboard state is unverified",
+    { stage: "macos_pasteboard_restore", clipboardState: "unverified" },
+  );
 }
 
 async function writePrivate(path: string, content: string | Uint8Array): Promise<void> {
@@ -372,6 +620,52 @@ interface BrowserNode {
   cloneNode?(deep?: boolean): BrowserNode;
   remove?(): void;
   click?(): void;
+}
+
+export function clickExactActivityMenu(root: BrowserNode, expectedId: string): boolean {
+  const isBoundary = (node: BrowserNode): boolean => {
+    const raw = node.getAttribute("data-urn") ?? node.getAttribute("data-id") ?? "";
+    return (
+      /urn:li:activity:\d+/.test(raw) ||
+      /^urn:li:comment/.test(raw) ||
+      node.tagName.toLowerCase() === "article" ||
+      /comments-comment-item|mini-update/i.test(node.className ?? "")
+    );
+  };
+  const isNestedActivity = (container: BrowserNode): boolean => {
+    let owner = container.parentElement;
+    while (owner && owner !== root) {
+      if (isBoundary(owner)) return true;
+      owner = owner.parentElement;
+    }
+    return false;
+  };
+  const containers = Array.from(
+    root.querySelectorAll("[data-urn*='urn:li:activity'], [data-id*='urn:li:activity']"),
+  ).filter((container) => {
+    const raw = container.getAttribute("data-urn") ?? container.getAttribute("data-id") ?? "";
+    return /urn:li:activity:(\d+)/.exec(raw)?.[1] === expectedId && !isNestedActivity(container);
+  });
+  if (containers.length !== 1) return false;
+  const container = containers[0]!;
+  const directOwned = (node: BrowserNode): boolean => {
+    let owner = node.parentElement;
+    while (owner && owner !== container) {
+      if (isBoundary(owner)) return false;
+      owner = owner.parentElement;
+    }
+    return owner === container;
+  };
+  const menus = Array.from(container.querySelectorAll("button"))
+    .filter(directOwned)
+    .filter((button) =>
+      /^open control menu for post by .+$/i.test(
+        (button.getAttribute("aria-label") ?? "").normalize("NFKC").trim(),
+      ),
+    );
+  if (menus.length !== 1) return false;
+  menus[0]!.click?.();
+  return true;
 }
 
 export function inspectLinkedInExpanders(
@@ -637,7 +931,12 @@ export function extractLinkedInVanityPermalink(
       const parsed = new URL(raw, "https://www.linkedin.com");
       if (!/^(www\.)?linkedin\.com$/i.test(parsed.hostname)) return "";
       const path = decodeURIComponent(parsed.pathname);
-      if (!path.startsWith(`/posts/${authorSlug}_`) || !path.includes(`-${expected.activityId}-`))
+      const activityComponents = [...path.matchAll(/-activity-(\d+)-/g)];
+      if (
+        !path.startsWith(`/posts/${authorSlug}_`) ||
+        activityComponents.length !== 1 ||
+        activityComponents[0]?.[1] !== expected.activityId
+      )
         return "";
       parsed.search = "";
       parsed.hash = "";
@@ -655,9 +954,30 @@ export function extractLinkedInVanityPermalink(
     if (value) return value;
   }
   const activitySelector = "[data-urn*='urn:li:activity'], [data-id*='urn:li:activity']";
+  const isBoundary = (node: BrowserNode): boolean => {
+    const raw = node.getAttribute("data-urn") ?? node.getAttribute("data-id") ?? "";
+    return (
+      /urn:li:activity:\d+/.test(raw) ||
+      /^urn:li:comment/.test(raw) ||
+      node.tagName.toLowerCase() === "article" ||
+      /comments-comment-item|mini-update/i.test(node.className ?? "")
+    );
+  };
+  const isNestedActivity = (container: BrowserNode): boolean => {
+    let owner = container.parentElement;
+    while (owner && owner !== root) {
+      if (isBoundary(owner)) return true;
+      owner = owner.parentElement;
+    }
+    return false;
+  };
   for (const container of Array.from(root.querySelectorAll(activitySelector))) {
     const raw = container.getAttribute("data-urn") ?? container.getAttribute("data-id") ?? "";
-    if (/urn:li:activity:(\d+)/.exec(raw)?.[1] !== expected.activityId) continue;
+    if (
+      /urn:li:activity:(\d+)/.exec(raw)?.[1] !== expected.activityId ||
+      isNestedActivity(container)
+    )
+      continue;
     const author = Array.from(
       container.querySelectorAll(
         ".update-components-actor__meta-link[href*='/in/'], .update-components-actor__container-link[href*='/in/']",
