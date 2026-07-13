@@ -275,10 +275,12 @@ function isVanityPermalink(rawUrl: string, id: string, expectedAuthorIdentity: s
   try {
     const parsed = new URL(rawUrl);
     const authorSlug = expectedAuthorIdentity.split("/in/")[1]?.toLowerCase() ?? "";
+    const activityComponents = [...parsed.pathname.matchAll(/-activity-(\d+)-/g)];
     return (
       /^(www\.)?linkedin\.com$/i.test(parsed.hostname) &&
       parsed.pathname.toLowerCase().startsWith(`/posts/${authorSlug}_`) &&
-      parsed.pathname.includes(`-${id}-`)
+      activityComponents.length === 1 &&
+      activityComponents[0]?.[1] === id
     );
   } catch {
     return false;
@@ -335,6 +337,7 @@ interface MacPasteboardDeps {
   platform: NodeJS.Platform;
   exec: typeof execFileSync;
   pasteboardName?: string;
+  __failAfterClearOnce?: boolean;
 }
 
 const MAX_PASTEBOARD_ARCHIVE_BYTES = 512 * 1024 * 1024;
@@ -470,11 +473,28 @@ export function createMacPasteboardClipboard(
       return run(READ_PASTEBOARD_TEXT_JXA).toString("utf8");
     },
     async restore(snapshot) {
-      run(RESTORE_PASTEBOARD_JXA, snapshot);
-      const restored = Buffer.from(run(SNAPSHOT_PASTEBOARD_JXA).toString("utf8").trim(), "utf8");
-      if (!restored.equals(Buffer.from(snapshot))) {
-        throw verifyError("macOS pasteboard restore verification failed");
+      const backup = Buffer.from(snapshot);
+      let injectPostClearFailure = deps.__failAfterClearOnce === true;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const restoreScript = injectPostClearFailure
+            ? RESTORE_PASTEBOARD_JXA.replace(
+                "  pb.clearContents;",
+                "  pb.clearContents;\n  throw new Error('injected post-clear failure');",
+              )
+            : RESTORE_PASTEBOARD_JXA;
+          injectPostClearFailure = false;
+          run(restoreScript, backup);
+          const restored = Buffer.from(
+            run(SNAPSHOT_PASTEBOARD_JXA).toString("utf8").trim(),
+            "utf8",
+          );
+          if (restored.equals(backup)) return;
+        } catch {
+          injectPostClearFailure = false;
+        }
       }
+      throw pasteboardRestoreError();
     },
   };
 }
@@ -498,6 +518,14 @@ function normalizeExact(value: string): string {
 
 function verifyError(message: string): AdapterError {
   return new AdapterError(ErrorCode.VERIFY_FAILED, `inspect-profile-post: ${message}`);
+}
+
+function pasteboardRestoreError(): AdapterError {
+  return new AdapterError(
+    ErrorCode.VERIFY_FAILED,
+    "inspect-profile-post: macOS pasteboard restore failed; clipboard state is unverified",
+    { stage: "macos_pasteboard_restore", clipboardState: "unverified" },
+  );
 }
 
 async function writePrivate(path: string, content: string | Uint8Array): Promise<void> {
@@ -595,14 +623,6 @@ interface BrowserNode {
 }
 
 export function clickExactActivityMenu(root: BrowserNode, expectedId: string): boolean {
-  const containers = Array.from(
-    root.querySelectorAll("[data-urn*='urn:li:activity'], [data-id*='urn:li:activity']"),
-  ).filter((container) => {
-    const raw = container.getAttribute("data-urn") ?? container.getAttribute("data-id") ?? "";
-    return /urn:li:activity:(\d+)/.exec(raw)?.[1] === expectedId;
-  });
-  if (containers.length !== 1) return false;
-  const container = containers[0]!;
   const isBoundary = (node: BrowserNode): boolean => {
     const raw = node.getAttribute("data-urn") ?? node.getAttribute("data-id") ?? "";
     return (
@@ -612,6 +632,22 @@ export function clickExactActivityMenu(root: BrowserNode, expectedId: string): b
       /comments-comment-item|mini-update/i.test(node.className ?? "")
     );
   };
+  const isNestedActivity = (container: BrowserNode): boolean => {
+    let owner = container.parentElement;
+    while (owner && owner !== root) {
+      if (isBoundary(owner)) return true;
+      owner = owner.parentElement;
+    }
+    return false;
+  };
+  const containers = Array.from(
+    root.querySelectorAll("[data-urn*='urn:li:activity'], [data-id*='urn:li:activity']"),
+  ).filter((container) => {
+    const raw = container.getAttribute("data-urn") ?? container.getAttribute("data-id") ?? "";
+    return /urn:li:activity:(\d+)/.exec(raw)?.[1] === expectedId && !isNestedActivity(container);
+  });
+  if (containers.length !== 1) return false;
+  const container = containers[0]!;
   const directOwned = (node: BrowserNode): boolean => {
     let owner = node.parentElement;
     while (owner && owner !== container) {
@@ -895,7 +931,12 @@ export function extractLinkedInVanityPermalink(
       const parsed = new URL(raw, "https://www.linkedin.com");
       if (!/^(www\.)?linkedin\.com$/i.test(parsed.hostname)) return "";
       const path = decodeURIComponent(parsed.pathname);
-      if (!path.startsWith(`/posts/${authorSlug}_`) || !path.includes(`-${expected.activityId}-`))
+      const activityComponents = [...path.matchAll(/-activity-(\d+)-/g)];
+      if (
+        !path.startsWith(`/posts/${authorSlug}_`) ||
+        activityComponents.length !== 1 ||
+        activityComponents[0]?.[1] !== expected.activityId
+      )
         return "";
       parsed.search = "";
       parsed.hash = "";
@@ -913,9 +954,30 @@ export function extractLinkedInVanityPermalink(
     if (value) return value;
   }
   const activitySelector = "[data-urn*='urn:li:activity'], [data-id*='urn:li:activity']";
+  const isBoundary = (node: BrowserNode): boolean => {
+    const raw = node.getAttribute("data-urn") ?? node.getAttribute("data-id") ?? "";
+    return (
+      /urn:li:activity:\d+/.test(raw) ||
+      /^urn:li:comment/.test(raw) ||
+      node.tagName.toLowerCase() === "article" ||
+      /comments-comment-item|mini-update/i.test(node.className ?? "")
+    );
+  };
+  const isNestedActivity = (container: BrowserNode): boolean => {
+    let owner = container.parentElement;
+    while (owner && owner !== root) {
+      if (isBoundary(owner)) return true;
+      owner = owner.parentElement;
+    }
+    return false;
+  };
   for (const container of Array.from(root.querySelectorAll(activitySelector))) {
     const raw = container.getAttribute("data-urn") ?? container.getAttribute("data-id") ?? "";
-    if (/urn:li:activity:(\d+)/.exec(raw)?.[1] !== expected.activityId) continue;
+    if (
+      /urn:li:activity:(\d+)/.exec(raw)?.[1] !== expected.activityId ||
+      isNestedActivity(container)
+    )
+      continue;
     const author = Array.from(
       container.querySelectorAll(
         ".update-components-actor__meta-link[href*='/in/'], .update-components-actor__container-link[href*='/in/']",

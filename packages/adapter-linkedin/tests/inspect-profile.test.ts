@@ -345,6 +345,23 @@ describe("LinkedIn read-only profile inspection", () => {
 
     exact.attrsForTest["aria-label"] = "Delete post";
     expect(clickExactActivityMenu(root, ID)).toBe(false);
+
+    for (const boundary of [
+      new FakeNode("", { "data-urn": "urn:li:activity:999" }),
+      new FakeNode("", { "data-id": "urn:li:comment:(urn:li:activity:999,1)" }),
+      new FakeNode("", {}, "mini-update"),
+      new FakeNode("", {}, "", "article"),
+    ]) {
+      const nestedRoot = new FakeNode("");
+      nestedRoot.appendChild(boundary);
+      const nestedExact = new FakeNode("", { "data-urn": `urn:li:activity:${ID}` });
+      boundary.appendChild(nestedExact);
+      const nestedExactMenu = nestedExact.child("", "button", undefined, undefined, undefined, {
+        "aria-label": "Open control menu for post by Pavel Valentov",
+      });
+      expect(clickExactActivityMenu(nestedRoot, ID)).toBe(false);
+      expect(nestedExactMenu.clickCount).toBe(0);
+    }
   });
 
   it("restores clipboard for valid, impostor, and failed copy-link flows", async () => {
@@ -523,7 +540,19 @@ describe("LinkedIn read-only profile inspection", () => {
           ),
         ).toBe(true);
         await clipboard.restore(emptyArchive);
-        await clipboard.restore(archive);
+        const faultExec = vi.fn(execFileSync as never) as never;
+        const recoveryClipboard = createMacPasteboardClipboard({
+          platform: "darwin",
+          exec: faultExec,
+          pasteboardName,
+          __failAfterClearOnce: true,
+        } as never);
+        await recoveryClipboard.restore(archive);
+        expect(
+          faultExec.mock.calls.some((call: unknown[]) =>
+            String((call[1] as string[]).join("\n")).includes("injected post-clear failure"),
+          ),
+        ).toBe(true);
         const roundTrip = await clipboard.snapshot();
         expect(Buffer.from(roundTrip).equals(Buffer.from(archive))).toBe(true);
       } finally {
@@ -580,7 +609,10 @@ describe("LinkedIn read-only profile inspection", () => {
       throw new Error("expected restore verification failure");
     } catch (error) {
       expect(String(error)).not.toContain(privateMarker);
-      expect(error).toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+      expect(error).toMatchObject({
+        code: ErrorCode.VERIFY_FAILED,
+        details: { stage: "macos_pasteboard_restore", clipboardState: "unverified" },
+      });
     }
   });
 
@@ -611,6 +643,14 @@ describe("LinkedIn read-only profile inspection", () => {
       }),
     ).toBe("");
 
+    canonical.href = `https://www.linkedin.com/posts/pavelvalentov_slug-${ID}-decoy-activity-999-AbCd`;
+    expect(
+      extractLinkedInVanityPermalink(root, {
+        expectedAuthorIdentity: "www.linkedin.com/in/pavelvalentov",
+        activityId: ID,
+      }),
+    ).toBe("");
+
     const prefixActivity = new FakeNode("", { "data-urn": `urn:li:activity:${ID}9` });
     prefixActivity.child(
       "Pavel",
@@ -634,6 +674,25 @@ describe("LinkedIn read-only profile inspection", () => {
     prefixActivity.attrsForTest["data-urn"] = `urn:li:activity:${ID}`;
     expect(
       extractLinkedInVanityPermalink(adversarialRoot, {
+        expectedAuthorIdentity: "www.linkedin.com/in/pavelvalentov",
+        activityId: ID,
+      }),
+    ).toBe("");
+
+    const repost = new FakeNode("", { "data-urn": "urn:li:activity:999" });
+    const miniUpdate = repost.child("", "mini-update");
+    const nestedExact = new FakeNode("", { "data-urn": `urn:li:activity:${ID}` });
+    miniUpdate.appendChild(nestedExact);
+    nestedExact.child("Pavel", "update-components-actor__meta-link", PROFILE);
+    nestedExact.child(
+      "time",
+      "",
+      `https://www.linkedin.com/posts/pavelvalentov_building-activity-${ID}-AbCd`,
+    );
+    const nestedRoot = new FakeNode("");
+    nestedRoot.appendChild(repost);
+    expect(
+      extractLinkedInVanityPermalink(nestedRoot, {
         expectedAuthorIdentity: "www.linkedin.com/in/pavelvalentov",
         activityId: ID,
       }),
