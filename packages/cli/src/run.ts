@@ -3,12 +3,19 @@
 // = failure) so the binary and the unit tests share one entry point.
 
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   AdapterError,
   ErrorCode,
   enforce,
   PolicyConfigSchema,
   isPlatform,
+  CampaignGuard,
+  type CampaignPublicAction,
+  type CampaignMutationInput,
+  setupCampaignPolicy,
+  deEnrollCampaignPolicy,
   type PolicyConfig,
   type Platform,
 } from "@arcanada/publisher-core";
@@ -21,7 +28,24 @@ export interface RunResult {
   message: string;
 }
 
-export async function run(argv: string[]): Promise<RunResult> {
+type CampaignGuardPort = Pick<CampaignGuard, "authorize" | "preflight"> &
+  Partial<Pick<CampaignGuard, "recordResult">>;
+
+export interface RunDeps {
+  makeAdapter?: typeof makeAdapter;
+  campaignGuard?: CampaignGuardPort;
+  setupCampaignPolicy?: () => { enrolled: true };
+  deEnrollCampaignPolicy?: (confirmed: boolean) => { enrolled: false; archiveDir: string };
+}
+
+interface ResolvedRunDeps {
+  makeAdapter: typeof makeAdapter;
+  campaignGuard: CampaignGuardPort;
+  setupCampaignPolicy: () => { enrolled: true };
+  deEnrollCampaignPolicy: (confirmed: boolean) => { enrolled: false; archiveDir: string };
+}
+
+export async function run(argv: string[], deps: RunDeps = {}): Promise<RunResult> {
   let args: ParsedArgs;
   try {
     args = parseArgs(argv);
@@ -33,7 +57,15 @@ export async function run(argv: string[]): Promise<RunResult> {
   }
 
   try {
-    return await dispatch(args);
+    const campaignPaths = defaultCampaignPolicyPaths();
+    return await dispatch(args, {
+      makeAdapter: deps.makeAdapter ?? makeAdapter,
+      campaignGuard: deps.campaignGuard ?? new CampaignGuard(),
+      setupCampaignPolicy: deps.setupCampaignPolicy ?? (() => setupCampaignPolicy(campaignPaths)),
+      deEnrollCampaignPolicy:
+        deps.deEnrollCampaignPolicy ??
+        ((confirmed) => deEnrollCampaignPolicy({ ...campaignPaths, confirmed })),
+    });
   } catch (err) {
     if (err instanceof AdapterError) {
       if (err.details?.["unknown"] === true && err.details?.["reconcileRequired"] === true) {
@@ -48,13 +80,21 @@ export async function run(argv: string[]): Promise<RunResult> {
   }
 }
 
-async function dispatch(args: ParsedArgs): Promise<RunResult> {
+async function dispatch(args: ParsedArgs, deps: ResolvedRunDeps): Promise<RunResult> {
   // Platform-agnostic commands first.
   if (args.command === "server") {
     return runServer(args);
   }
   if (args.command === "video") {
     return runVideo(args);
+  }
+  if (args.command === "campaign-setup") {
+    deps.setupCampaignPolicy();
+    return { code: ErrorCode.SUCCESS, message: "managed campaign policy enrolled" };
+  }
+  if (args.command === "campaign-deenroll") {
+    deps.deEnrollCampaignPolicy(args.confirmManagedDeenroll);
+    return { code: ErrorCode.SUCCESS, message: "managed campaign policy de-enrolled" };
   }
 
   if (!args.platform || !isPlatform(args.platform)) {
@@ -63,23 +103,27 @@ async function dispatch(args: ParsedArgs): Promise<RunResult> {
   const platform = args.platform;
   const profile = args.profile ?? "default";
 
+  if (args.command === "campaign-preflight") {
+    return runCampaignPreflight(platform, profile, args, deps);
+  }
+
   switch (args.command) {
     case "login":
       return runLogin(platform, profile, args);
     case "delete":
-      return runDelete(platform, profile, args);
+      return runDelete(platform, profile, args, deps);
     case "inspect":
       return runInspect(platform, profile, args);
     case "edit":
-      return runEdit(platform, profile, args);
+      return runEdit(platform, profile, args, deps);
     case "comment":
-      return runComment(platform, profile, args);
+      return runComment(platform, profile, args, deps);
     case "replace-comment":
-      return runReplaceComment(platform, profile, args);
+      return runReplaceComment(platform, profile, args, deps);
     case "inspect-profile-post":
       return runInspectProfilePost(platform, profile, args);
     case "publish":
-      return runPublish(platform, profile, args);
+      return runPublish(platform, profile, args, deps);
   }
 }
 
@@ -92,6 +136,7 @@ async function runDelete(
   platform: Platform,
   profile: string,
   args: ParsedArgs,
+  deps: ResolvedRunDeps,
 ): Promise<RunResult> {
   if (!args.targetUrl || (!args.expectedContent && !args.expectedContentFile)) {
     return {
@@ -109,16 +154,31 @@ async function runDelete(
   const expectedContent = args.expectedContentFile
     ? readDeleteOracle(args.expectedContentFile)
     : args.expectedContent!;
-  const res = await makeAdapter(platform, args).delete({
+  const authorization = await authorizeMutation(
+    deps,
+    platform,
+    profile,
+    args,
+    "delete",
+    expectedContent,
+    [],
+  );
+  const res = await deps.makeAdapter(platform, args).delete({
     targetUrl: args.targetUrl,
     kind: "post",
     expectedContent,
     profile,
   });
+  deps.campaignGuard.recordResult?.(authorization, res.targetUrl);
   return { code: ErrorCode.SUCCESS, message: `deleted ${res.targetUrl}` };
 }
 
-async function runEdit(platform: Platform, profile: string, args: ParsedArgs): Promise<RunResult> {
+async function runEdit(
+  platform: Platform,
+  profile: string,
+  args: ParsedArgs,
+  deps: ResolvedRunDeps,
+): Promise<RunResult> {
   if (!args.targetUrl || !args.textFile) {
     return { code: ErrorCode.MISSING_INPUT, message: "edit requires --target-url and --text-file" };
   }
@@ -134,19 +194,29 @@ async function runEdit(platform: Platform, profile: string, args: ParsedArgs): P
         "Facebook edit requires --expected-content-file, --expected-author-profile-url, and --expected-media-kind image",
     };
   }
-  const res = await makeAdapter(platform, args).edit({
+  const text = readText(args);
+  const expectedContent =
+    args.expectedContent ??
+    (args.expectedContentFile
+      ? platform === "facebook"
+        ? readFacebookEditOracle(args.expectedContentFile)
+        : readFileSync(args.expectedContentFile, "utf8").replace(/\r?\n$/, "")
+      : undefined);
+  const authorization = await authorizeMutation(
+    deps,
+    platform,
+    profile,
+    args,
+    "edit",
+    text,
+    args.images,
+    expectedContent,
+  );
+  const res = await deps.makeAdapter(platform, args).edit({
     postUrl: args.targetUrl,
-    text: readText(args),
+    text,
     ...(args.images[0] ? { imagePath: args.images[0] } : {}),
-    ...(args.expectedContent || args.expectedContentFile
-      ? {
-          expectedContent:
-            args.expectedContent ??
-            (platform === "facebook"
-              ? readFacebookEditOracle(args.expectedContentFile!)
-              : readFileSync(args.expectedContentFile!, "utf8").replace(/\r?\n$/, "")),
-        }
-      : {}),
+    ...(expectedContent ? { expectedContent } : {}),
     ...(args.expectedMediaKind ? { expectedMediaKind: args.expectedMediaKind } : {}),
     ...(args.parentUrl ? { expectedParentUrl: args.parentUrl } : {}),
     ...(args.expectedAuthorProfileUrl
@@ -157,6 +227,7 @@ async function runEdit(platform: Platform, profile: string, args: ParsedArgs): P
     ...(args.videoDuration ? { videoDuration: args.videoDuration } : {}),
     profile,
   });
+  deps.campaignGuard.recordResult?.(authorization, res.postUrl);
   return { code: ErrorCode.SUCCESS, message: `edited ${res.postUrl}` };
 }
 
@@ -188,16 +259,19 @@ async function runComment(
   platform: Platform,
   profile: string,
   args: ParsedArgs,
+  deps: ResolvedRunDeps,
 ): Promise<RunResult> {
   if (!args.parentUrl) {
     return { code: ErrorCode.MISSING_INPUT, message: "comment requires --parent-url" };
   }
   const body = applyPolicy(readText(args), platform, loadPolicy(args.policyConfig));
-  const res = await makeAdapter(platform, args).comment({
+  const authorization = await authorizeMutation(deps, platform, profile, args, "comment", body, []);
+  const res = await deps.makeAdapter(platform, args).comment({
     parentPostUrl: args.parentUrl,
     text: body,
     profile,
   });
+  deps.campaignGuard.recordResult?.(authorization, `${res.parentPostUrl}#comment:${res.commentId}`);
   return { code: ErrorCode.SUCCESS, message: `comment posted: ${res.commentId}` };
 }
 
@@ -205,6 +279,7 @@ async function runReplaceComment(
   platform: Platform,
   profile: string,
   args: ParsedArgs,
+  deps: ResolvedRunDeps,
 ): Promise<RunResult> {
   if (platform !== "facebook" && platform !== "x" && platform !== "linkedin") {
     return {
@@ -225,7 +300,20 @@ async function runReplaceComment(
         "replace-comment requires --parent-url, --comment-id, --expected-author-profile-url, --expected-content-file, and --text-file",
     };
   }
-  const adapter = makeAdapter(platform, args) as unknown as {
+  const replacement = readExactMutationText(args.textFile);
+  const oldText = readExactMutationText(args.expectedContentFile);
+  const authorization = await authorizeMutation(
+    deps,
+    platform,
+    profile,
+    args,
+    "edit",
+    replacement,
+    [],
+    oldText,
+    args.commentId,
+  );
+  const adapter = deps.makeAdapter(platform, args) as unknown as {
     replaceComment(input: {
       parentPostUrl: string;
       commentId: string;
@@ -239,10 +327,11 @@ async function runReplaceComment(
     parentPostUrl: args.parentUrl,
     commentId: args.commentId,
     expectedAuthorProfileUrl: args.expectedAuthorProfileUrl,
-    oldText: readExactMutationText(args.expectedContentFile),
-    text: readExactMutationText(args.textFile),
+    oldText,
+    text: replacement,
     profile,
   });
+  deps.campaignGuard.recordResult?.(authorization, `${args.parentUrl}#comment:${res.commentId}`);
   return { code: ErrorCode.SUCCESS, message: `comment replaced: ${res.commentId}` };
 }
 
@@ -297,6 +386,7 @@ async function runPublish(
   platform: Platform,
   profile: string,
   args: ParsedArgs,
+  deps: ResolvedRunDeps,
 ): Promise<RunResult> {
   if (platform === "facebook" && !args.dryRun && !args.expectedAuthorProfileUrl) {
     return {
@@ -305,10 +395,19 @@ async function runPublish(
     };
   }
   const body = applyPolicy(readText(args), platform, loadPolicy(args.policyConfig));
+  const authorization = await authorizeMutation(
+    deps,
+    platform,
+    profile,
+    args,
+    "publish",
+    body,
+    args.images,
+  );
   // Platform-specific fields (subreddit/title for reddit, ownerId for vk) ride
   // alongside the shared shape; adapters that don't use them ignore the extras.
   // They are required for the reddit/vk dry-run path to reach success.
-  const res = await makeAdapter(platform, args).publish({
+  const res = await deps.makeAdapter(platform, args).publish({
     text: body,
     imagePaths: args.images,
     profile,
@@ -322,7 +421,116 @@ async function runPublish(
       ? { expectedAuthorProfileUrl: args.expectedAuthorProfileUrl }
       : {}),
   } as Parameters<ReturnType<typeof makeAdapter>["publish"]>[0]);
+  if (!args.dryRun) deps.campaignGuard.recordResult?.(authorization, res.postUrl);
   return { code: ErrorCode.SUCCESS, message: `published: ${res.postUrl}` };
+}
+
+async function runCampaignPreflight(
+  platform: Platform,
+  profile: string,
+  args: ParsedArgs,
+  deps: ResolvedRunDeps,
+): Promise<RunResult> {
+  if (!args.campaignManifest || !args.campaignAction || !args.campaignTarget) {
+    return {
+      code: ErrorCode.MISSING_INPUT,
+      message:
+        "campaign-preflight requires --campaign-manifest, --campaign-action, and --campaign-target",
+    };
+  }
+  const text = campaignText(args, args.campaignAction);
+  const existingText = campaignExistingText(args, args.campaignAction);
+  const receipt = await deps.campaignGuard.preflight({
+    platform,
+    profile,
+    ...campaignDestination(platform, args),
+    action: args.campaignAction,
+    ...(args.campaignTarget ? { campaignTargetId: args.campaignTarget } : {}),
+    ...campaignSubject(args.campaignAction, args),
+    manifestPath: args.campaignManifest,
+    ...(text !== undefined ? { text } : {}),
+    ...(existingText !== undefined ? { existingText } : {}),
+    ...(args.campaignAction === "edit" && args.commentId
+      ? { subjectIdentity: args.commentId }
+      : {}),
+    mediaPaths: args.images,
+  });
+  return { code: ErrorCode.SUCCESS, message: receipt };
+}
+
+async function authorizeMutation(
+  deps: ResolvedRunDeps,
+  platform: Platform,
+  profile: string,
+  args: ParsedArgs,
+  action: CampaignPublicAction,
+  text: string | undefined,
+  mediaPaths: readonly string[],
+  existingText?: string,
+  subjectIdentity?: string,
+): Promise<Awaited<ReturnType<CampaignGuardPort["authorize"]>>> {
+  const input: CampaignMutationInput = {
+    platform,
+    profile,
+    ...campaignDestination(platform, args),
+    action,
+    ...(args.campaignTarget ? { campaignTargetId: args.campaignTarget } : {}),
+    ...campaignSubject(action, args),
+    ...(args.campaignManifest ? { manifestPath: args.campaignManifest } : {}),
+    ...(args.campaignReceipt ? { receipt: args.campaignReceipt } : {}),
+    ...(text !== undefined ? { text } : {}),
+    ...(existingText !== undefined ? { existingText } : {}),
+    ...(subjectIdentity !== undefined ? { subjectIdentity } : {}),
+    mediaPaths,
+    dryRun: args.dryRun,
+  };
+  return deps.campaignGuard.authorize(input);
+}
+
+function campaignSubject(
+  action: CampaignPublicAction,
+  args: ParsedArgs,
+): Pick<CampaignMutationInput, "subjectUrl"> {
+  if (action === "comment" && args.parentUrl) return { subjectUrl: args.parentUrl };
+  if (action === "edit" && args.parentUrl) return { subjectUrl: args.parentUrl };
+  if ((action === "edit" || action === "delete") && args.targetUrl)
+    return { subjectUrl: args.targetUrl };
+  return {};
+}
+
+function campaignDestination(
+  platform: Platform,
+  args: ParsedArgs,
+): Pick<CampaignMutationInput, "destination"> {
+  if (platform === "telegram" && args.chatId) return { destination: { chatId: args.chatId } };
+  if (platform === "reddit" && args.subreddit)
+    return { destination: { subreddit: args.subreddit } };
+  if (platform === "vkontakte" && args.ownerId !== undefined)
+    return { destination: { ownerId: args.ownerId } };
+  if (args.expectedAuthorProfileUrl)
+    return { destination: { authorProfileUrl: args.expectedAuthorProfileUrl } };
+  return {};
+}
+
+function campaignText(args: ParsedArgs, action: CampaignPublicAction): string | undefined {
+  if (action === "backlink-deploy") return undefined;
+  if (action === "delete") {
+    if (args.expectedContentFile) return readDeleteOracle(args.expectedContentFile);
+    if (args.expectedContent) return args.expectedContent;
+    throw new AdapterError(ErrorCode.MISSING_INPUT, "delete preflight requires expected content");
+  }
+  return readText(args);
+}
+
+function campaignExistingText(args: ParsedArgs, action: CampaignPublicAction): string | undefined {
+  if (action !== "edit") return undefined;
+  if (args.expectedContent !== undefined) return args.expectedContent;
+  if (args.expectedContentFile !== undefined) {
+    return args.platform === "facebook"
+      ? readFacebookEditOracle(args.expectedContentFile)
+      : readFileSync(args.expectedContentFile, "utf8").replace(/\r?\n$/, "");
+  }
+  return undefined;
 }
 
 /**
@@ -477,4 +685,12 @@ function applyPolicy(text: string, platform: Platform, policy: PolicyConfig): st
   }
   const enforced = enforce({ platform, bodyByLang: { default: text }, links: [] }, policy);
   return enforced.body;
+}
+
+function defaultCampaignPolicyPaths(): { policyDir: string; auditPath: string } {
+  const base = join(homedir(), ".arcanada-publisher");
+  return {
+    policyDir: join(base, "policy"),
+    auditPath: join(base, "audit", "campaign-policy.jsonl"),
+  };
 }

@@ -16,13 +16,20 @@ import {
   isPlatform,
   validateProfileName,
   validateText,
+  CampaignGuard,
+  type CampaignMutationInput,
+  type CampaignPublicAction,
 } from "@arcanada/publisher-core";
+
+export type CampaignGuardPort = Pick<CampaignGuard, "authorize" | "preflight"> &
+  Partial<Pick<CampaignGuard, "recordResult">>;
 
 /** Dependencies a request handler needs. Injected by the server at listen() time. */
 export interface RouteDeps {
   makeAdapter: (platform: Platform) => Adapter;
   rateLimiter: RateLimiter;
   auditBaseDir?: string;
+  campaignGuard: CampaignGuardPort;
 }
 
 /** Parsed POST body — a loose bag validated per-action below. */
@@ -33,9 +40,24 @@ export function statusForCode(code: ErrorCode): number {
   switch (code) {
     case ErrorCode.INVALID_ARGS:
     case ErrorCode.MISSING_INPUT:
+    case ErrorCode.CAMPAIGN_MANIFEST_REQUIRED:
+    case ErrorCode.CAMPAIGN_MANIFEST_INVALID:
       return 400;
     case ErrorCode.NETWORK_GUARD:
+    case ErrorCode.CAMPAIGN_TARGET_MISMATCH:
+    case ErrorCode.CAMPAIGN_POLICY_UNKNOWN:
+    case ErrorCode.CAMPAIGN_EVIDENCE_MISSING:
+    case ErrorCode.CAMPAIGN_EVIDENCE_STALE:
+    case ErrorCode.CAMPAIGN_ASSET_MISMATCH:
+    case ErrorCode.CAMPAIGN_MEDIA_POLICY:
+    case ErrorCode.CAMPAIGN_RECEIPT_REQUIRED:
+    case ErrorCode.CAMPAIGN_RECEIPT_INVALID:
+    case ErrorCode.CAMPAIGN_RECEIPT_EXPIRED:
+    case ErrorCode.CAMPAIGN_BACKLINKS_NOT_READY:
       return 403;
+    case ErrorCode.CAMPAIGN_RECEIPT_REPLAY:
+    case ErrorCode.CAMPAIGN_STATE_UNKNOWN:
+      return 409;
     case ErrorCode.RATE_LIMIT:
       return 429;
     default:
@@ -52,9 +74,10 @@ function requirePlatform(body: Body): Platform {
   return platform;
 }
 
-/** Resolve the profile name (default ""), validating its shape (tool scoping). */
+/** Resolve the profile name to the same canonical default used by the CLI and profile store. */
 function resolveProfile(body: Body): string {
-  const profile = typeof body.profile === "string" ? body.profile : "";
+  const profile =
+    typeof body.profile === "string" && body.profile !== "" ? body.profile : "default";
   validateProfileName(profile);
   return profile;
 }
@@ -66,15 +89,18 @@ async function handlePublish(body: Body, deps: RouteDeps): Promise<unknown> {
   const profile = resolveProfile(body);
   validateText(text, platform);
   const dryRun = body.dryRun === true;
+  const imagePaths = Array.isArray(body.imagePaths) ? (body.imagePaths as string[]) : [];
 
+  const authorization = await deps.campaignGuard.authorize(
+    campaignInput(body, platform, profile, "publish", text, imagePaths, dryRun),
+  );
   if (!dryRun) deps.rateLimiter.check(platform);
   const adapter = deps.makeAdapter(platform);
-  const imagePaths = Array.isArray(body.imagePaths) ? (body.imagePaths as string[]) : undefined;
   const result = await adapter.publish({
     text,
     profile,
     dryRun,
-    ...(imagePaths ? { imagePaths } : {}),
+    ...(imagePaths.length > 0 ? { imagePaths } : {}),
     ...(typeof body.subreddit === "string" ? { subreddit: body.subreddit } : {}),
     ...(typeof body.title === "string" ? { title: body.title } : {}),
     ...(typeof body.ownerId === "number" && Number.isInteger(body.ownerId)
@@ -84,6 +110,7 @@ async function handlePublish(body: Body, deps: RouteDeps): Promise<unknown> {
   });
 
   if (dryRun) return result;
+  deps.campaignGuard.recordResult?.(authorization, result.postUrl);
   deps.rateLimiter.record(platform);
   const auditRef = await appendAudit(
     { platform, account: result.account, action: "publish", postUrl: result.postUrl },
@@ -98,7 +125,15 @@ async function handleComment(body: Body, deps: RouteDeps): Promise<unknown> {
   const profile = resolveProfile(body);
   const text = typeof body.text === "string" ? body.text : "";
   const parentPostUrl = typeof body.parentUrl === "string" ? body.parentUrl : "";
-  return deps.makeAdapter(platform).comment({ parentPostUrl, text, profile });
+  const authorization = await deps.campaignGuard.authorize(
+    campaignInput(body, platform, profile, "comment", text, [], false),
+  );
+  const result = await deps.makeAdapter(platform).comment({ parentPostUrl, text, profile });
+  deps.campaignGuard.recordResult?.(
+    authorization,
+    `${result.parentPostUrl}#comment:${result.commentId}`,
+  );
+  return result;
 }
 
 /** POST /edit — validate then edit the target post. */
@@ -107,9 +142,20 @@ async function handleEdit(body: Body, deps: RouteDeps): Promise<unknown> {
   const profile = resolveProfile(body);
   const postUrl = typeof body.targetUrl === "string" ? body.targetUrl : "";
   const text = typeof body.text === "string" ? body.text : undefined;
-  return deps
-    .makeAdapter(platform)
-    .edit({ postUrl, profile, ...(text !== undefined ? { text } : {}) });
+  const expectedContent =
+    typeof body.expectedContent === "string" ? body.expectedContent : undefined;
+  const imagePaths = Array.isArray(body.imagePaths) ? (body.imagePaths as string[]) : [];
+  const authorization = await deps.campaignGuard.authorize(
+    campaignInput(body, platform, profile, "edit", text, imagePaths, false),
+  );
+  const result = await deps.makeAdapter(platform).edit({
+    postUrl,
+    profile,
+    ...(text !== undefined ? { text } : {}),
+    ...(expectedContent !== undefined ? { expectedContent } : {}),
+  });
+  deps.campaignGuard.recordResult?.(authorization, result.postUrl);
+  return result;
 }
 
 /** POST /delete — read-before-delete oracle is enforced by the adapter. */
@@ -119,7 +165,25 @@ async function handleDelete(body: Body, deps: RouteDeps): Promise<unknown> {
   const targetUrl = typeof body.targetUrl === "string" ? body.targetUrl : "";
   const expectedContent = typeof body.expectedContent === "string" ? body.expectedContent : "";
   const kind = body.kind === "comment" ? "comment" : "post";
-  return deps.makeAdapter(platform).delete({ targetUrl, kind, expectedContent, profile });
+  const authorization = await deps.campaignGuard.authorize(
+    campaignInput(body, platform, profile, "delete", expectedContent, [], false),
+  );
+  const result = await deps
+    .makeAdapter(platform)
+    .delete({ targetUrl, kind, expectedContent, profile });
+  deps.campaignGuard.recordResult?.(authorization, result.targetUrl);
+  return result;
+}
+
+async function handleCampaignPreflight(body: Body, deps: RouteDeps): Promise<unknown> {
+  const platform = requirePlatform(body);
+  const profile = resolveProfile(body);
+  const action = requireCampaignAction(body.action);
+  const text = typeof body.text === "string" ? body.text : undefined;
+  const imagePaths = Array.isArray(body.imagePaths) ? (body.imagePaths as string[]) : [];
+  const input = campaignInput(body, platform, profile, action, text, imagePaths, false);
+  const receipt = await deps.campaignGuard.preflight(input);
+  return { receipt };
 }
 
 const POST_ROUTES: Record<string, (body: Body, deps: RouteDeps) => Promise<unknown>> = {
@@ -127,7 +191,83 @@ const POST_ROUTES: Record<string, (body: Body, deps: RouteDeps) => Promise<unkno
   "/comment": handleComment,
   "/edit": handleEdit,
   "/delete": handleDelete,
+  "/campaign/preflight": handleCampaignPreflight,
 };
+
+function campaignInput(
+  body: Body,
+  platform: Platform,
+  profile: string,
+  action: CampaignPublicAction,
+  text: string | undefined,
+  mediaPaths: readonly string[],
+  dryRun: boolean,
+): CampaignMutationInput {
+  return {
+    platform,
+    profile,
+    ...campaignDestination(body, platform),
+    action,
+    ...(typeof body.campaignTargetId === "string"
+      ? { campaignTargetId: body.campaignTargetId }
+      : {}),
+    ...campaignSubject(body, action),
+    ...(typeof body.campaignManifestPath === "string"
+      ? { manifestPath: body.campaignManifestPath }
+      : {}),
+    ...(typeof body.campaignReceipt === "string" ? { receipt: body.campaignReceipt } : {}),
+    ...(text !== undefined ? { text } : {}),
+    ...(action === "edit" && typeof body.expectedContent === "string"
+      ? { existingText: body.expectedContent }
+      : {}),
+    mediaPaths,
+    dryRun,
+  };
+}
+
+function campaignSubject(
+  body: Body,
+  action: CampaignPublicAction,
+): Pick<CampaignMutationInput, "subjectUrl"> {
+  if (action === "comment" && typeof body.parentUrl === "string") {
+    return { subjectUrl: body.parentUrl };
+  }
+  if ((action === "edit" || action === "delete") && typeof body.targetUrl === "string") {
+    return { subjectUrl: body.targetUrl };
+  }
+  return {};
+}
+
+function campaignDestination(
+  body: Body,
+  platform: Platform,
+): Pick<CampaignMutationInput, "destination"> {
+  if (platform === "telegram" && typeof body.chatId === "string")
+    return { destination: { chatId: body.chatId } };
+  if (platform === "reddit" && typeof body.subreddit === "string")
+    return { destination: { subreddit: body.subreddit } };
+  if (
+    platform === "vkontakte" &&
+    typeof body.ownerId === "number" &&
+    Number.isInteger(body.ownerId)
+  )
+    return { destination: { ownerId: body.ownerId } };
+  if (typeof body.expectedAuthorProfileUrl === "string")
+    return { destination: { authorProfileUrl: body.expectedAuthorProfileUrl } };
+  return {};
+}
+
+function requireCampaignAction(value: unknown): CampaignPublicAction {
+  if (
+    value === "publish" ||
+    value === "comment" ||
+    value === "edit" ||
+    value === "delete" ||
+    value === "backlink-deploy"
+  )
+    return value;
+  throw new AdapterError(ErrorCode.INVALID_ARGS, "invalid campaign action");
+}
 
 /** True when `path` is a known POST route. */
 export function isPostRoute(path: string): boolean {

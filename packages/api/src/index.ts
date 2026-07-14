@@ -15,10 +15,17 @@ import {
   ErrorCode,
   PLATFORMS,
   RateLimiter,
+  CampaignGuard,
   assertLoopback,
   isLoopback,
 } from "@arcanada/publisher-core";
-import { dispatchPost, isPostRoute, statusForCode, type RouteDeps } from "./routes.js";
+import {
+  dispatchPost,
+  isPostRoute,
+  statusForCode,
+  type CampaignGuardPort,
+  type RouteDeps,
+} from "./routes.js";
 import { defaultMakeAdapter } from "./default-adapter.js";
 import { VERSION } from "./version.js";
 
@@ -32,6 +39,8 @@ export interface ApiServerOptions {
   auditBaseDir?: string;
   /** Shared rate limiter. Defaults to a fresh per-process limiter. */
   rateLimiter?: RateLimiter;
+  /** Shared campaign guard. Tests inject a fail-closed fake before adapter construction. */
+  campaignGuard?: CampaignGuardPort;
 }
 
 const DEFAULT_BIND = "127.0.0.1";
@@ -42,6 +51,7 @@ function resolveDeps(options: ApiServerOptions): RouteDeps {
   return {
     makeAdapter: options.makeAdapter ?? defaultMakeAdapter,
     rateLimiter: options.rateLimiter ?? new RateLimiter(),
+    campaignGuard: options.campaignGuard ?? new CampaignGuard(),
     ...(options.auditBaseDir ? { auditBaseDir: options.auditBaseDir } : {}),
   };
 }

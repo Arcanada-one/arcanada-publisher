@@ -4,11 +4,19 @@ This document describes the layered design of `arcanada-publisher`. The full req
 
 ## Layers
 
-1. **Core (`@arcanada/publisher-core`)** — pure TypeScript, no Playwright, no I/O beyond filesystem profile management. Defines the `Adapter` interface, result schemas, error taxonomy, profile manager, and network guard. Every adapter and every consumer (CLI, HTTP API) depends on these contracts and nothing else from this workspace.
+1. **Core (`@arcanada/publisher-core`)** — pure TypeScript with no Playwright. Defines the `Adapter` interface, result schemas, error taxonomy, profile manager, network guard, and the optional managed-campaign policy boundary. Its filesystem I/O is limited to owner-only local profiles, policy files, campaign evidence, and audit ledgers. Every adapter and every consumer (CLI, HTTP API) depends on these contracts and nothing else from this workspace.
 
 2. **Adapters (`@arcanada/publisher-{facebook,linkedin,x,reddit,vkontakte}`)** — one package per platform. Each implements the `Adapter` interface, owns its DOM selectors, and is independently versionable. An adapter cannot be required to share state with another adapter.
 
 3. **Consumer surfaces (`@arcanada/publisher`, `@arcanada/publisher-server`)** — the unified CLI and the loopback HTTP server. They dispatch to adapters by `platform` and return adapter results as-is to the caller. The CLI is operator-facing; the HTTP server is the agent-callable surface and is bound to loopback by default through the network guard exported by core.
+
+## Managed campaign boundary
+
+Generic OSS publishing is unchanged when the installation has no managed enrollment. An enrolled installation loads a strict local target registry and dispatches requirements by the explicit content-kind/policy pair.
+
+For every managed public mutation, both consumer surfaces invoke the same `CampaignGuard` after input validation and before rate-limit consumption, adapter construction, browser-profile access, or network mutation. Preflight validates a content-addressed manifest and live/local evidence, then issues one 15-minute target/action receipt. Campaign targets are explicit action records layered over a stable managed destination, so a main post, parent-bound comment, and retained existing post cannot be confused. Staged manifest revisions materialize permalink-dependent copy without weakening immutable receipt binding. The mutation path verifies the exact subject URL, content, and media and atomically consumes that receipt in a shared ledger. Adapters remain policy-free executors and cannot become a second enforcement implementation.
+
+See [Managed campaign manifests](../reference/campaign-manifest.md) for enrollment, schema, media policy, receipt, and API contracts.
 
 ## Authentication model
 

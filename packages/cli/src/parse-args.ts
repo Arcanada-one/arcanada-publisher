@@ -19,7 +19,10 @@ export type Command =
   | "inspect"
   | "login"
   | "server"
-  | "video";
+  | "video"
+  | "campaign-setup"
+  | "campaign-preflight"
+  | "campaign-deenroll";
 
 const COMMANDS = new Set<Command>([
   "publish",
@@ -32,6 +35,9 @@ const COMMANDS = new Set<Command>([
   "login",
   "server",
   "video",
+  "campaign-setup",
+  "campaign-preflight",
+  "campaign-deenroll",
 ]);
 
 export interface ParsedArgs {
@@ -113,6 +119,11 @@ export interface ParsedArgs {
    * (e.g. "0xFFD24C,0xE03B5A"). Default undefined → gold→crimson house style.
    */
   waveformColors: string | undefined;
+  campaignManifest: string | undefined;
+  campaignReceipt: string | undefined;
+  campaignTarget: string | undefined;
+  campaignAction: "publish" | "comment" | "edit" | "delete" | "backlink-deploy" | undefined;
+  confirmManagedDeenroll: boolean;
 }
 
 /** Flags that take a value; everything else is a boolean switch. */
@@ -152,6 +163,10 @@ const VALUE_FLAGS = new Set([
   "--max-bitrate",
   "--waveform-height",
   "--waveform-colors",
+  "--campaign-manifest",
+  "--campaign-receipt",
+  "--campaign-target",
+  "--campaign-action",
 ]);
 
 const BOOL_FLAGS = new Set([
@@ -160,6 +175,7 @@ const BOOL_FLAGS = new Set([
   "--premium",
   "--headed",
   "--no-waveform",
+  "--confirm-managed-deenroll",
 ]);
 
 export class CliParseError extends Error {}
@@ -213,6 +229,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
     noWaveform: false,
     waveformHeight: undefined,
     waveformColors: undefined,
+    campaignManifest: undefined,
+    campaignReceipt: undefined,
+    campaignTarget: undefined,
+    campaignAction: undefined,
+    confirmManagedDeenroll: false,
   };
 
   for (let i = 0; i < rest.length; i++) {
@@ -235,6 +256,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
     if (flag === "--no-waveform") {
       out.noWaveform = true;
+      continue;
+    }
+    if (flag === "--confirm-managed-deenroll") {
+      out.confirmManagedDeenroll = true;
       continue;
     }
     if (!VALUE_FLAGS.has(flag) && !BOOL_FLAGS.has(flag)) {
@@ -343,6 +368,27 @@ export function parseArgs(argv: string[]): ParsedArgs {
       }
       case "--chat-id":
         out.chatId = value;
+        break;
+      case "--campaign-manifest":
+        out.campaignManifest = value;
+        break;
+      case "--campaign-receipt":
+        out.campaignReceipt = value;
+        break;
+      case "--campaign-target":
+        out.campaignTarget = value;
+        break;
+      case "--campaign-action":
+        if (
+          value !== "publish" &&
+          value !== "comment" &&
+          value !== "edit" &&
+          value !== "delete" &&
+          value !== "backlink-deploy"
+        ) {
+          throw new CliParseError(`--campaign-action has unsupported value '${value}'`);
+        }
+        out.campaignAction = value;
         break;
       // video subcommand flags
       case "--cover":
