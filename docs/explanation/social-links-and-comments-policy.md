@@ -267,16 +267,20 @@ tracking params (`?__cft__[0]=…&__tn__=…`) to get the canonical `…/posts/<
 
 ### 6.9 Media immutability and post-publish defect freeze (CONTENT-0377)
 
-Treat media on X and LinkedIn as immutable after the publish click. The platforms
-do not provide a reliable operation to replace the video on an existing post; a
-bad narration therefore becomes a public post defect that cannot be repaired by a
-normal edit.
+Treat every attached media asset as immutable after the publish click unless the
+platform adapter documents and tests an exact replacement operation. In this
+workflow, X and LinkedIn do not provide a reliable operation to replace an image
+or video on an existing post, and Facebook cannot add or replace the intended feed
+media through the text-edit path. A wrong image or bad narration therefore becomes
+a public post defect that cannot be repaired by a normal edit.
 
 - Before publishing any narration-backed video, require a content-verification
   receipt bound to the exact MP3 SHA-256, MP4 SHA-256, frozen narration SHA-256,
   language, and voice. The receipt must include independent ASR comparison of the
   final MP3 and final MP4 plus a completed proof-listening record. File existence,
   duration, codec, dimensions, non-silence, and a visible player are insufficient.
+  The manual evidence format and current non-automated enforcement boundary are
+  defined in [`blog-audio-narration.md`](../how-to/blog-audio-narration.md).
 - After detecting a live media defect, perform **no automatic delete, edit,
   re-publication, comment, or site-link change**. Capture read-only evidence, list
   every affected platform and URL, explain which repairs are technically possible,
