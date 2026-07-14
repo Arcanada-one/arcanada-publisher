@@ -110,7 +110,8 @@ async function handlePublish(body: Body, deps: RouteDeps): Promise<unknown> {
   });
 
   if (dryRun) return result;
-  deps.campaignGuard.recordResult?.(authorization, result.postUrl);
+  const verification = authorization.managed ? await adapter.verify(result.postUrl) : undefined;
+  deps.campaignGuard.recordResult?.(authorization, result.postUrl, verification);
   deps.rateLimiter.record(platform);
   const auditRef = await appendAudit(
     { platform, account: result.account, action: "publish", postUrl: result.postUrl },
@@ -128,10 +129,15 @@ async function handleComment(body: Body, deps: RouteDeps): Promise<unknown> {
   const authorization = await deps.campaignGuard.authorize(
     campaignInput(body, platform, profile, "comment", text, [], false),
   );
-  const result = await deps.makeAdapter(platform).comment({ parentPostUrl, text, profile });
+  const adapter = deps.makeAdapter(platform);
+  const result = await adapter.comment({ parentPostUrl, text, profile });
+  const verification = authorization.managed
+    ? await adapter.verify(result.parentPostUrl)
+    : undefined;
   deps.campaignGuard.recordResult?.(
     authorization,
     `${result.parentPostUrl}#comment:${result.commentId}`,
+    verification,
   );
   return result;
 }
@@ -148,13 +154,19 @@ async function handleEdit(body: Body, deps: RouteDeps): Promise<unknown> {
   const authorization = await deps.campaignGuard.authorize(
     campaignInput(body, platform, profile, "edit", text, imagePaths, false),
   );
-  const result = await deps.makeAdapter(platform).edit({
+  const adapter = deps.makeAdapter(platform);
+  const result = await adapter.edit({
     postUrl,
     profile,
     ...(text !== undefined ? { text } : {}),
+    ...(imagePaths[0] ? { imagePath: imagePaths[0] } : {}),
     ...(expectedContent !== undefined ? { expectedContent } : {}),
+    ...(typeof body.videoWidth === "number" ? { videoWidth: body.videoWidth } : {}),
+    ...(typeof body.videoHeight === "number" ? { videoHeight: body.videoHeight } : {}),
+    ...(typeof body.videoDuration === "number" ? { videoDuration: body.videoDuration } : {}),
   });
-  deps.campaignGuard.recordResult?.(authorization, result.postUrl);
+  const verification = authorization.managed ? await adapter.verify(result.postUrl) : undefined;
+  deps.campaignGuard.recordResult?.(authorization, result.postUrl, verification);
   return result;
 }
 
@@ -168,10 +180,10 @@ async function handleDelete(body: Body, deps: RouteDeps): Promise<unknown> {
   const authorization = await deps.campaignGuard.authorize(
     campaignInput(body, platform, profile, "delete", expectedContent, [], false),
   );
-  const result = await deps
-    .makeAdapter(platform)
-    .delete({ targetUrl, kind, expectedContent, profile });
-  deps.campaignGuard.recordResult?.(authorization, result.targetUrl);
+  const adapter = deps.makeAdapter(platform);
+  const result = await adapter.delete({ targetUrl, kind, expectedContent, profile });
+  const verification = authorization.managed ? await adapter.verify(result.targetUrl) : undefined;
+  deps.campaignGuard.recordResult?.(authorization, result.targetUrl, verification);
   return result;
 }
 

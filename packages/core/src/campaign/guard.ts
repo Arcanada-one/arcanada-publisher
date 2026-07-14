@@ -1,12 +1,15 @@
 import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { lstatSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { AdapterError, ErrorCode } from "../errors.js";
 import type { Platform } from "../platform.js";
+import type { VerifyResult } from "../result.js";
 import {
   validateBacklinkPreflight,
   validateArticleCampaign,
   type CampaignFinding,
+  type ArtifactEvidence,
   type UrlEvidence,
 } from "./article-policy.js";
 import { ManagedTargetRegistry } from "./registry.js";
@@ -69,6 +72,7 @@ export interface CampaignGuardOptions {
   fetch?: typeof globalThis.fetch;
   evidenceTimeoutMs?: number;
   maxEvidenceBytes?: number;
+  probeMedia?: (path: string) => ArtifactEvidence["media"] | undefined;
 }
 
 interface ManagedContext {
@@ -89,6 +93,7 @@ export class CampaignGuard {
   private readonly fetchImpl: typeof globalThis.fetch;
   private readonly evidenceTimeoutMs: number;
   private readonly maxEvidenceBytes: number;
+  private readonly probeMedia: NonNullable<CampaignGuardOptions["probeMedia"]>;
 
   constructor(options: CampaignGuardOptions = {}) {
     const base = join(homedir(), ".arcanada-publisher");
@@ -103,6 +108,7 @@ export class CampaignGuard {
     this.fetchImpl = options.fetch ?? globalThis.fetch;
     this.evidenceTimeoutMs = options.evidenceTimeoutMs ?? 10_000;
     this.maxEvidenceBytes = options.maxEvidenceBytes ?? 16 * 1024 * 1024;
+    this.probeMedia = options.probeMedia ?? probeMediaFile;
   }
 
   async preflight(input: Omit<CampaignMutationInput, "receipt" | "dryRun">): Promise<string> {
@@ -221,7 +227,11 @@ export class CampaignGuard {
     };
   }
 
-  recordResult(authorization: CampaignAuthorization, resultReference: string): void {
+  recordResult(
+    authorization: CampaignAuthorization,
+    resultReference: string,
+    verification?: VerifyResult,
+  ): void {
     if (!authorization.managed) return;
     if (
       !authorization.targetId ||
@@ -238,6 +248,29 @@ export class CampaignGuard {
         { unknown: true, reconcileRequired: true },
       );
     }
+    const resultUrl = resultReference.split("#", 1)[0]!;
+    const deleteVerified =
+      authorization.action === "delete" &&
+      verification?.postUrl === resultUrl &&
+      verification.reachable === false;
+    const liveVerified =
+      authorization.action !== "delete" &&
+      verification?.postUrl === resultUrl &&
+      verification.reachable === true &&
+      verification.ok === true &&
+      verification.status >= 200 &&
+      verification.status < 400;
+    if (
+      !verification ||
+      verification.platform !== authorization.platform ||
+      (!deleteVerified && !liveVerified)
+    ) {
+      throw new AdapterError(
+        ErrorCode.CAMPAIGN_STATE_UNKNOWN,
+        "public mutation completed but verified result read-back is missing or mismatched",
+        { unknown: true, reconcileRequired: true },
+      );
+    }
     try {
       new ReceiptLedger(this.ledgerPath).recordAdapterResult(
         {
@@ -248,6 +281,9 @@ export class CampaignGuard {
           platform: authorization.platform,
           action: authorization.action,
           resultReferenceSha256: sha256(resultReference),
+          readBackUrlSha256: sha256(verification.postUrl),
+          readBackStatus: verification.status,
+          readBackReachable: verification.reachable,
         },
         this.now(),
       );
@@ -475,6 +511,14 @@ export class CampaignGuard {
 
   private async buildEvidence(loaded: LoadedCampaignManifest) {
     const manifest = loaded.manifest;
+    const mediaPaths = new Set(
+      [
+        manifest.audio?.ru?.path,
+        manifest.audio?.en?.path,
+        manifest.videos?.telegramRu?.path,
+        manifest.videos?.xLinkedinEn?.path,
+      ].filter((path): path is string => typeof path === "string"),
+    );
     const urls = [
       manifest.website.ru.url,
       manifest.website.en.url,
@@ -516,6 +560,7 @@ export class CampaignGuard {
           if (!info.isFile() || info.isSymbolicLink()) return undefined;
           const actual = assertWithinRoots(candidate, this.campaignRoots, "/artifact");
           const bytes = readFileSync(actual);
+          const media = mediaPaths.has(path) ? this.probeMedia(actual) : undefined;
           return {
             sha256: sha256(bytes),
             size: bytes.length,
@@ -523,6 +568,7 @@ export class CampaignGuard {
               ? { mime: "image/jpeg" }
               : {}),
             text: bytes.toString("utf8"),
+            ...(media ? { media } : {}),
           };
         } catch {
           return undefined;
@@ -561,6 +607,105 @@ function validateManifestRegistryBindings(context: ManagedContext): CampaignFind
     }
   }
   return findings;
+}
+
+function probeMediaFile(path: string): ArtifactEvidence["media"] | undefined {
+  try {
+    const raw = JSON.parse(
+      execFileSync(
+        "ffprobe",
+        [
+          "-v",
+          "error",
+          "-show_entries",
+          "format=format_name,duration:stream=codec_type,codec_name,width,height,duration",
+          "-of",
+          "json",
+          path,
+        ],
+        { encoding: "utf8", timeout: 15_000, maxBuffer: 1024 * 1024 },
+      ),
+    ) as {
+      format?: { format_name?: string; duration?: string };
+      streams?: Array<{
+        codec_type?: string;
+        codec_name?: string;
+        width?: number;
+        height?: number;
+        duration?: string;
+      }>;
+    };
+    const streams = raw.streams ?? [];
+    const audio = streams.find((stream) => stream.codec_type === "audio");
+    const video = streams.find((stream) => stream.codec_type === "video");
+    const durationSec = Number(raw.format?.duration);
+    const audioDurationSec = Number(audio?.duration ?? raw.format?.duration);
+    if (
+      !audio ||
+      !Number.isFinite(durationSec) ||
+      durationSec <= 0 ||
+      !Number.isFinite(audioDurationSec) ||
+      audioDurationSec <= 0
+    ) {
+      return undefined;
+    }
+    const formatNames = new Set((raw.format?.format_name ?? "").split(","));
+    const container = video
+      ? formatNames.has("mp4")
+        ? "mp4"
+        : undefined
+      : formatNames.has("mp3")
+        ? "mp3"
+        : undefined;
+    const audioCodec =
+      audio.codec_name === "mp3" || audio.codec_name === "aac" ? audio.codec_name : undefined;
+    const videoCodec = video?.codec_name === "h264" ? "h264" : undefined;
+    if (!container || !audioCodec || (video && !videoCodec)) return undefined;
+    const pcm = execFileSync(
+      "ffmpeg",
+      ["-v", "error", "-i", path, "-map", "0:a:0", "-ac", "1", "-ar", "1000", "-f", "s16le", "-"],
+      { timeout: 60_000, maxBuffer: 128 * 1024 * 1024 },
+    );
+    const audioFingerprint = coarseAudioFingerprint(pcm);
+    if (audioFingerprint.length < 10) return undefined;
+    const audioContentSha256 = sha256(canonicalJson(audioFingerprint));
+    return {
+      container,
+      audioCodec,
+      ...(videoCodec ? { videoCodec } : {}),
+      durationSec,
+      audioDurationSec,
+      ...(video?.width ? { width: video.width } : {}),
+      ...(video?.height ? { height: video.height } : {}),
+      audioContentSha256,
+      audioFingerprint,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function coarseAudioFingerprint(pcm: Buffer): number[] {
+  const samplesPerFrame = 100;
+  const frameCount = Math.floor(pcm.length / 2 / samplesPerFrame);
+  const rms: number[] = [];
+  let peak = 0;
+  for (let frame = 0; frame < frameCount; frame++) {
+    let squares = 0;
+    for (let sample = 0; sample < samplesPerFrame; sample++) {
+      const offset = (frame * samplesPerFrame + sample) * 2;
+      const value = pcm.readInt16LE(offset);
+      squares += value * value;
+    }
+    const value = Math.sqrt(squares / samplesPerFrame);
+    rms.push(value);
+    peak = Math.max(peak, value);
+  }
+  if (peak === 0) return [];
+  return rms.map((value) => {
+    const db = value === 0 ? -60 : Math.max(-60, 20 * Math.log10(value / peak));
+    return Math.round((db + 60) / 3);
+  });
 }
 
 async function readLimitedResponse(response: Response, maxBytes: number): Promise<Buffer> {

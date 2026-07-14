@@ -148,6 +148,7 @@ describe("api routes — publish/comment/edit/delete over loopback", () => {
     expect(campaignRecordResult).toHaveBeenCalledWith(
       expect.objectContaining({ managed: false }),
       "https://example.com/fake/posts/1",
+      undefined,
     );
 
     const files = readdirSync(auditDir);
@@ -221,6 +222,31 @@ describe("api routes — publish/comment/edit/delete over loopback", () => {
     const body = (await res.json()) as { ok: boolean; data: { edited: boolean } };
     expect(body.ok).toBe(true);
     expect(body.data.edited).toBe(true);
+  });
+
+  it("POST /edit forwards the exact guarded media and video metadata", async () => {
+    await start();
+    const res = await fetch(`${base()}/edit`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        platform: "linkedin",
+        targetUrl: "https://example.com/p/9",
+        text: "fixed",
+        profile: "default",
+        imagePaths: ["/secure/video.mp4"],
+        videoWidth: 1920,
+        videoHeight: 1080,
+        videoDuration: 120,
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(lastAdapter?.calls.edit[0]).toMatchObject({
+      imagePath: "/secure/video.mp4",
+      videoWidth: 1920,
+      videoHeight: 1080,
+      videoDuration: 120,
+    });
   });
 
   it("POST /delete returns 200 with a DeleteResult", async () => {

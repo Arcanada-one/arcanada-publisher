@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ErrorCode } from "../../src/errors.js";
 import { validateArticleCampaign } from "../../src/campaign/article-policy.js";
-import type { ArticleCampaignManifest } from "../../src/campaign/types.js";
+import { canonicalJson, sha256, type ArticleCampaignManifest } from "../../src/campaign/types.js";
 
 const HASH_RU = "a".repeat(64);
 const HASH_EN = "b".repeat(64);
@@ -9,6 +9,7 @@ const HASH_HERO = "c".repeat(64);
 const HASH_COPY = "d".repeat(64);
 const NOW = new Date("2026-07-13T20:00:00.000Z");
 const FRESH = NOW.toISOString();
+const FINGERPRINT = Array.from({ length: 20 }, (_, index) => index % 8);
 
 function manifest(): ArticleCampaignManifest {
   const copy = (path: string, locale: "ru" | "en", sha256: string) => ({
@@ -28,6 +29,7 @@ function manifest(): ArticleCampaignManifest {
     policy: "arcanada-blog-canonical",
     createdAt: FRESH,
     updatedAt: FRESH,
+    stage: "launch",
     website: {
       deploymentCommit: "e".repeat(40),
       deploymentRun: "run-1",
@@ -39,6 +41,7 @@ function manifest(): ArticleCampaignManifest {
         path: "/campaign/ru.mp3",
         url: "https://cdn.example.com/ru.mp3",
         sha256: HASH_RU,
+        contentSha256: HASH_RU,
         durationSec: 120,
         locale: "ru",
         voice: "pavel",
@@ -51,6 +54,7 @@ function manifest(): ArticleCampaignManifest {
         path: "/campaign/en.mp3",
         url: "https://cdn.example.com/en.mp3",
         sha256: HASH_EN,
+        contentSha256: HASH_EN,
         durationSec: 122,
         locale: "en",
         voice: "pavel",
@@ -74,6 +78,8 @@ function manifest(): ArticleCampaignManifest {
         path: "/campaign/tg.mp4",
         sha256: HASH_RU,
         durationSec: 121,
+        width: 1920,
+        height: 1080,
         locale: "ru",
         narrationAudioSha256: HASH_RU,
         preset: "cycle",
@@ -85,6 +91,8 @@ function manifest(): ArticleCampaignManifest {
         path: "/campaign/en.mp4",
         sha256: HASH_EN,
         durationSec: 123,
+        width: 1920,
+        height: 1080,
         locale: "en",
         narrationAudioSha256: HASH_EN,
         preset: "cycle",
@@ -147,9 +155,51 @@ function target(
     copySha256: HASH_COPY,
     copyKey,
     idempotencyKey: `${targetId}-v1`,
-    baseline: { state: "absent" as const, verifiedAt: FRESH },
+    baseline: {
+      state: "absent" as const,
+      verifiedAt: FRESH,
+      evidence: {
+        path: `/campaign/${targetId}-baseline.json`,
+        sha256: HASH_COPY,
+        verifiedAt: FRESH,
+      },
+    },
   };
 }
+
+const canonicalManifest = manifest();
+const authorizationEvidence = JSON.stringify({
+  schemaVersion: 1,
+  resolver: "publisher-adapter",
+  kind: "authorization",
+  campaignId: canonicalManifest.campaignId,
+  taskId: canonicalManifest.taskId,
+  decision: canonicalManifest.authorization.decision,
+  scope: canonicalManifest.authorization.scope,
+  evidenceRef: canonicalManifest.authorization.evidenceRef,
+  decidedAt: canonicalManifest.authorization.decidedAt,
+  targetsSha256: sha256(canonicalJson(canonicalManifest.targets)),
+});
+const baselineEvidence = new Map(
+  canonicalManifest.targets.map((item) => [
+    item.baseline.evidence.path,
+    JSON.stringify({
+      schemaVersion: 1,
+      resolver: "publisher-adapter",
+      kind: "baseline",
+      campaignId: canonicalManifest.campaignId,
+      targetId: item.targetId,
+      managedTargetId: item.managedTargetId,
+      platform: item.platform,
+      profile: item.profile,
+      ...(item.destination ? { destination: item.destination } : {}),
+      action: item.action,
+      idempotencyKey: item.idempotencyKey,
+      state: item.baseline.state,
+      checkedAt: item.baseline.verifiedAt,
+    }),
+  ]),
+);
 
 const evidence = {
   now: NOW,
@@ -165,6 +215,7 @@ const evidence = {
       "/campaign/li.txt": HASH_COPY,
       "/campaign/fb.txt": HASH_COPY,
       "/campaign/auth.json": HASH_COPY,
+      ...Object.fromEntries([...baselineEvidence.keys()].map((path) => [path, HASH_COPY])),
     };
     const texts: Record<string, string> = {
       "/campaign/tg.txt": "Title\nhttps://example.com/ru/article",
@@ -177,6 +228,62 @@ const evidence = {
           sha256: hashes[path],
           ...(path === "/campaign/hero.jpg" ? { size: 171_059, mime: "image/jpeg" } : {}),
           ...(texts[path] ? { text: texts[path] } : {}),
+          ...(path === "/campaign/auth.json" ? { text: authorizationEvidence } : {}),
+          ...(baselineEvidence.has(path) ? { text: baselineEvidence.get(path)! } : {}),
+          ...(path === "/campaign/ru.mp3"
+            ? {
+                media: {
+                  container: "mp3" as const,
+                  audioCodec: "mp3" as const,
+                  durationSec: 120,
+                  audioDurationSec: 120,
+                  audioContentSha256: HASH_RU,
+                  audioFingerprint: FINGERPRINT,
+                },
+              }
+            : {}),
+          ...(path === "/campaign/en.mp3"
+            ? {
+                media: {
+                  container: "mp3" as const,
+                  audioCodec: "mp3" as const,
+                  durationSec: 122,
+                  audioDurationSec: 122,
+                  audioContentSha256: HASH_EN,
+                  audioFingerprint: FINGERPRINT,
+                },
+              }
+            : {}),
+          ...(path === "/campaign/tg.mp4"
+            ? {
+                media: {
+                  container: "mp4" as const,
+                  audioCodec: "aac" as const,
+                  videoCodec: "h264" as const,
+                  durationSec: 121,
+                  audioDurationSec: 120,
+                  width: 1920,
+                  height: 1080,
+                  audioContentSha256: HASH_RU,
+                  audioFingerprint: FINGERPRINT,
+                },
+              }
+            : {}),
+          ...(path === "/campaign/en.mp4"
+            ? {
+                media: {
+                  container: "mp4" as const,
+                  audioCodec: "aac" as const,
+                  videoCodec: "h264" as const,
+                  durationSec: 123,
+                  audioDurationSec: 122,
+                  width: 1920,
+                  height: 1080,
+                  audioContentSha256: HASH_EN,
+                  audioFingerprint: FINGERPRINT,
+                },
+              }
+            : {}),
         }
       : undefined;
   },
@@ -190,6 +297,101 @@ const evidence = {
 describe("validateArticleCampaign", () => {
   it("accepts the complete canonical media matrix", () => {
     expect(validateArticleCampaign(manifest(), evidence)).toEqual([]);
+  });
+
+  it("rejects a partial X-only canonical stage", () => {
+    const value = manifest();
+    value.targets = value.targets.filter((target) => target.platform === "x");
+    expect(validateArticleCampaign(value, evidence)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: ErrorCode.CAMPAIGN_TARGET_MISMATCH,
+          message: expect.stringContaining("root telegram target"),
+        }),
+      ]),
+    );
+  });
+
+  it("rejects self-asserted video metadata when probed bytes use the wrong codec", () => {
+    const value = manifest();
+    const wrongProbe = {
+      ...evidence,
+      statFile: (path: string) => {
+        const found = evidence.statFile(path);
+        return path === value.videos.telegramRu.path && found
+          ? { ...found, media: { ...found.media!, videoCodec: undefined } }
+          : found;
+      },
+    };
+    expect(validateArticleCampaign(value, wrongProbe)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: ErrorCode.CAMPAIGN_MEDIA_POLICY })]),
+    );
+  });
+
+  it("rejects a video whose probed audio fingerprint is not the declared narration", () => {
+    const value = manifest();
+    const wrongNarration = {
+      ...evidence,
+      statFile: (path: string) => {
+        const found = evidence.statFile(path);
+        return path === value.videos.xLinkedinEn.path && found
+          ? {
+              ...found,
+              media: {
+                ...found.media!,
+                audioFingerprint: Array.from({ length: 20 }, () => 20),
+              },
+            }
+          : found;
+      },
+    };
+    expect(validateArticleCampaign(value, wrongNarration)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: ErrorCode.CAMPAIGN_ASSET_MISMATCH }),
+      ]),
+    );
+  });
+
+  it("rejects authorization evidence not bound to the exact target topology", () => {
+    const value = manifest();
+    const wrongAuthorization = {
+      ...evidence,
+      statFile: (path: string) => {
+        const found = evidence.statFile(path);
+        const parsed = JSON.parse(authorizationEvidence) as Record<string, unknown>;
+        parsed.targetsSha256 = HASH_RU;
+        return path === value.authorization.evidence.path && found
+          ? { ...found, text: JSON.stringify(parsed) }
+          : found;
+      },
+    };
+    expect(validateArticleCampaign(value, wrongAuthorization)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: ErrorCode.CAMPAIGN_TARGET_MISMATCH }),
+      ]),
+    );
+  });
+
+  it("rejects a comment parent on a different managed destination", () => {
+    const value = manifest();
+    value.stage = "follow-up";
+    value.targets.push({
+      ...value.targets[2]!,
+      targetId: "linkedin-comment",
+      action: "comment",
+      requiredMediaRole: "none",
+      assetSha256: undefined,
+      parentTargetId: value.targets[1]!.targetId,
+      idempotencyKey: "linkedin-comment-v1",
+    });
+    expect(validateArticleCampaign(value, evidence)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: ErrorCode.CAMPAIGN_TARGET_MISMATCH,
+          message: expect.stringContaining("same managed destination"),
+        }),
+      ]),
+    );
   });
 
   it.each([

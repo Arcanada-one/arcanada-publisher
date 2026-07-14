@@ -207,11 +207,14 @@ export class ReceiptLedger {
       platform: string;
       action: string;
       resultReferenceSha256: string;
+      readBackUrlSha256: string;
+      readBackStatus: number;
+      readBackReachable: boolean;
     },
     now = new Date(),
   ): void {
     this.withLock(() => {
-      this.append({ event: "adapter-result", ...context, recordedAt: now.toISOString() });
+      this.append({ event: "verified-result", ...context, recordedAt: now.toISOString() });
     });
   }
 
@@ -326,7 +329,7 @@ function parseLedgerLine(line: string): { event: string; receiptSha256?: string 
       value.event === "issued" ||
       value.event === "consumed" ||
       value.event === "rejected" ||
-      value.event === "adapter-result";
+      value.event === "verified-result";
     if (
       (!receiptEvent && value.event !== "preflight-denied") ||
       (receiptEvent &&

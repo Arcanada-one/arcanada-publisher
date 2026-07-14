@@ -25,6 +25,7 @@ function minimalManifest() {
     policy: "arcanada-blog-canonical",
     createdAt: NOW,
     updatedAt: NOW,
+    stage: "launch",
     website: {
       deploymentCommit: HASH.slice(0, 40),
       deploymentRun: "run-1",
@@ -36,6 +37,7 @@ function minimalManifest() {
         path: "ru.mp3",
         url: "https://cdn.example.com/ru.mp3",
         sha256: HASH,
+        contentSha256: HASH,
         durationSec: 120,
         locale: "ru",
         voice: "pavel",
@@ -48,6 +50,7 @@ function minimalManifest() {
         path: "en.mp3",
         url: "https://cdn.example.com/en.mp3",
         sha256: HASH,
+        contentSha256: HASH,
         durationSec: 120,
         locale: "en",
         voice: "pavel",
@@ -71,6 +74,8 @@ function minimalManifest() {
         path: "telegram-ru.mp4",
         sha256: HASH,
         durationSec: 120,
+        width: 1920,
+        height: 1080,
         locale: "ru",
         narrationAudioSha256: HASH,
         preset: "cycle",
@@ -82,6 +87,8 @@ function minimalManifest() {
         path: "x-linkedin-en.mp4",
         sha256: HASH,
         durationSec: 120,
+        width: 1920,
+        height: 1080,
         locale: "en",
         narrationAudioSha256: HASH,
         preset: "cycle",
@@ -115,7 +122,11 @@ function minimalManifest() {
         copySha256: HASH,
         copyKey: "xBody",
         idempotencyKey: "content-0377-x-v1",
-        baseline: { state: "absent", verifiedAt: NOW },
+        baseline: {
+          state: "absent",
+          verifiedAt: NOW,
+          evidence: { path: "x-baseline.json", sha256: HASH, verifiedAt: NOW },
+        },
       },
     ],
     authorization: {
@@ -185,7 +196,11 @@ describe("ArticleCampaignManifest", () => {
     value.targets[0] = {
       ...value.targets[0]!,
       action: "retain",
-      baseline: { state: "existing", verifiedAt: NOW },
+      baseline: {
+        state: "existing",
+        verifiedAt: NOW,
+        evidence: { path: "x-baseline.json", sha256: HASH, verifiedAt: NOW },
+      },
       existingState: {
         canonicalUrl: "https://example.com/post/1",
         expectedContentSha256: HASH,
@@ -199,6 +214,16 @@ describe("ArticleCampaignManifest", () => {
     expect(ArticleCampaignManifestSchema.safeParse(value).success).toBe(true);
     delete value.targets[0]!.existingState;
     expect(ArticleCampaignManifestSchema.safeParse(value).success).toBe(false);
+  });
+
+  it("requires content-addressed absent evidence before publish or comment", () => {
+    const existing = minimalManifest();
+    existing.targets[0]!.baseline.state = "existing";
+    expect(ArticleCampaignManifestSchema.safeParse(existing).success).toBe(false);
+
+    const missingEvidence = minimalManifest();
+    delete (missingEvidence.targets[0]!.baseline as { evidence?: unknown }).evidence;
+    expect(ArticleCampaignManifestSchema.safeParse(missingEvidence).success).toBe(false);
   });
 
   it("rejects path escapes and permissive manifest files", () => {

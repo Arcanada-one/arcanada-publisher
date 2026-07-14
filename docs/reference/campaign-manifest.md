@@ -59,16 +59,19 @@ Match keys are the exact platform, profile, and optional typed destination (`cha
 
 - identity: schema version, campaign/task IDs, content kind, policy, and timestamps;
 - website: RU/EN HTTPS URLs, title hashes, deployment commit/run, and live verification timestamps;
-- Pavel audio: RU/EN local MP3 paths, CDN URLs, hashes, durations, engine/normalization provenance, technical verification, and listening timestamps;
+- Pavel audio: RU/EN local MP3 paths, CDN URLs, raw hashes, decoded-audio fingerprint hashes, durations, engine/normalization provenance, technical verification, and listening timestamps;
 - media: an optimized JPEG static hero (exact byte size, maximum 500,000 bytes) plus Telegram RU and X/LinkedIn EN full-narration MP4 records;
 - immutable copy records: local path, hash, locale, title-first rule, canonical links, and policy-check timestamp;
-- targets: a unique campaign `targetId`, its `managedTargetId`, action, copy/asset hashes, language, media role, idempotency key, and current baseline;
+- stage: explicit `launch`, `follow-up`, or `complete` topology; every revision keeps exactly one root Telegram, X, LinkedIn, and Facebook target;
+- targets: a unique campaign `targetId`, its `managedTargetId`, action, copy/asset hashes, language, media role, idempotency key, and a content-addressed typed baseline;
 - content-addressed write-ahead authorization and current body/media read-back evidence for existing posts;
 - optional content-addressed canonical result records for comments, staged actions, and the separate backlink-deploy preflight.
 
 One managed registry destination can own several campaign targets, such as a main post and a parent-bound first comment. The caller must select exactly one with `--campaign-target` or `campaignTargetId`; omitting it cannot downgrade a managed destination to generic mode. A comment target declares `parentTargetId` and is blocked until that parent has a current verified canonical result. A `retain` target represents a verified existing post that must remain unchanged and can never authorize a public mutation.
 
-Campaigns whose comment bytes depend on newly created permalinks use staged manifests. The first owner-only manifest contains only actions whose immutable bytes are known. After each result is read back, a new canonical manifest revision adds its content-addressed result and the now-materialized dependent targets. Every revision changes the manifest digest and invalidates older receipts.
+Campaigns whose comment bytes depend on newly created permalinks use staged manifests. `launch` contains no parent-bound targets. `follow-up` keeps the four root destinations and adds at least one parent-bound target on the same managed destination. `complete` requires verified result evidence for every target. Every revision changes the manifest digest and invalidates older receipts.
+
+Authorization, absent/existing baselines, current state, and result read-backs are strict `publisher-adapter` evidence records. Their JSON bodies are parsed and compared with the exact campaign, target, destination, action, idempotency key, state, and timestamps; a matching filename/hash alone is insufficient.
 
 The manifest itself and every local artifact must be regular, non-symlink files under a root configured in `ARCANADA_PUBLISHER_CAMPAIGN_ROOTS`. The variable is a platform path-delimiter-separated allowlist. Manifest and policy files must be owner-only.
 
@@ -95,7 +98,7 @@ The policy requires:
 | -------------------------------------------------------------- | ------------------------------------------------ |
 | RU and EN site HTTP/title verification                         | 30 minutes                                       |
 | RU and EN Pavel audio technical/listening verification         | 24 hours                                         |
-| Telegram RU and X/LinkedIn EN video probe/viewing verification | 24 hours                                         |
+| Telegram RU and X/LinkedIn EN video probe/viewing verification | 24 hours; ffprobe + ffmpeg fingerprint required  |
 | Video duration                                                 | within two seconds of its bound narration        |
 | Write-ahead authorization                                      | 30 minutes                                       |
 | Idempotency baseline and existing-state read-back              | 30 minutes                                       |
@@ -123,7 +126,7 @@ arcanada-publisher publish \
   --image /secure/campaigns/example/x-en.mp4
 ```
 
-Receipts use HMAC-SHA-256, expire after 15 minutes, and bind the canonical manifest digest, campaign target, platform, profile, destination, action, mutation subject/parent URL and identity hashes, existing-content oracle, exact replacement text/media hashes, and policy version. The shared ledger atomically consumes a receipt once, so a receipt used through the CLI cannot be replayed through the localhost API. After a live adapter returns, the same ledger records a hash of its result reference; failure to persist that event is reported as reconciliation-required unknown state rather than a safe retry.
+Receipts use HMAC-SHA-256, expire after 15 minutes, and bind the canonical manifest digest, campaign target, platform, profile, destination, action, mutation subject/parent URL and identity hashes, existing-content oracle, exact replacement text/media hashes, and policy version. The shared ledger atomically consumes a receipt once, so a receipt used through the CLI cannot be replayed through the localhost API. After a live adapter returns, Publisher calls the adapter's read-only verifier. The same ledger records the result-reference hash plus verified URL, reachability, and HTTP status. Missing, mismatched, or unpersisted read-back is reported as reconciliation-required unknown state rather than a safe retry.
 
 The API accepts `campaignManifestPath`, `campaignTargetId`, and `campaignReceipt` on mutation bodies. `POST /campaign/preflight` accepts the same platform/profile/destination, target ID, `action`, `text`, and `imagePaths`, and returns `{ "receipt": "..." }`. Setup and de-enrollment are CLI-only.
 

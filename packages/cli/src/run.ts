@@ -163,13 +163,15 @@ async function runDelete(
     expectedContent,
     [],
   );
-  const res = await deps.makeAdapter(platform, args).delete({
+  const adapter = deps.makeAdapter(platform, args);
+  const res = await adapter.delete({
     targetUrl: args.targetUrl,
     kind: "post",
     expectedContent,
     profile,
   });
-  deps.campaignGuard.recordResult?.(authorization, res.targetUrl);
+  const verification = authorization.managed ? await adapter.verify(res.targetUrl) : undefined;
+  deps.campaignGuard.recordResult?.(authorization, res.targetUrl, verification);
   return { code: ErrorCode.SUCCESS, message: `deleted ${res.targetUrl}` };
 }
 
@@ -212,7 +214,8 @@ async function runEdit(
     args.images,
     expectedContent,
   );
-  const res = await deps.makeAdapter(platform, args).edit({
+  const adapter = deps.makeAdapter(platform, args);
+  const res = await adapter.edit({
     postUrl: args.targetUrl,
     text,
     ...(args.images[0] ? { imagePath: args.images[0] } : {}),
@@ -227,7 +230,8 @@ async function runEdit(
     ...(args.videoDuration ? { videoDuration: args.videoDuration } : {}),
     profile,
   });
-  deps.campaignGuard.recordResult?.(authorization, res.postUrl);
+  const verification = authorization.managed ? await adapter.verify(res.postUrl) : undefined;
+  deps.campaignGuard.recordResult?.(authorization, res.postUrl, verification);
   return { code: ErrorCode.SUCCESS, message: `edited ${res.postUrl}` };
 }
 
@@ -266,12 +270,18 @@ async function runComment(
   }
   const body = applyPolicy(readText(args), platform, loadPolicy(args.policyConfig));
   const authorization = await authorizeMutation(deps, platform, profile, args, "comment", body, []);
-  const res = await deps.makeAdapter(platform, args).comment({
+  const adapter = deps.makeAdapter(platform, args);
+  const res = await adapter.comment({
     parentPostUrl: args.parentUrl,
     text: body,
     profile,
   });
-  deps.campaignGuard.recordResult?.(authorization, `${res.parentPostUrl}#comment:${res.commentId}`);
+  const verification = authorization.managed ? await adapter.verify(res.parentPostUrl) : undefined;
+  deps.campaignGuard.recordResult?.(
+    authorization,
+    `${res.parentPostUrl}#comment:${res.commentId}`,
+    verification,
+  );
   return { code: ErrorCode.SUCCESS, message: `comment posted: ${res.commentId}` };
 }
 
@@ -322,6 +332,7 @@ async function runReplaceComment(
       text: string;
       profile: string;
     }): Promise<{ commentId: string }>;
+    verify(postUrl: string): ReturnType<ReturnType<typeof makeAdapter>["verify"]>;
   };
   const res = await adapter.replaceComment({
     parentPostUrl: args.parentUrl,
@@ -331,7 +342,12 @@ async function runReplaceComment(
     text: replacement,
     profile,
   });
-  deps.campaignGuard.recordResult?.(authorization, `${args.parentUrl}#comment:${res.commentId}`);
+  const verification = authorization.managed ? await adapter.verify(args.parentUrl) : undefined;
+  deps.campaignGuard.recordResult?.(
+    authorization,
+    `${args.parentUrl}#comment:${res.commentId}`,
+    verification,
+  );
   return { code: ErrorCode.SUCCESS, message: `comment replaced: ${res.commentId}` };
 }
 
@@ -407,7 +423,8 @@ async function runPublish(
   // Platform-specific fields (subreddit/title for reddit, ownerId for vk) ride
   // alongside the shared shape; adapters that don't use them ignore the extras.
   // They are required for the reddit/vk dry-run path to reach success.
-  const res = await deps.makeAdapter(platform, args).publish({
+  const adapter = deps.makeAdapter(platform, args);
+  const res = await adapter.publish({
     text: body,
     imagePaths: args.images,
     profile,
@@ -421,7 +438,10 @@ async function runPublish(
       ? { expectedAuthorProfileUrl: args.expectedAuthorProfileUrl }
       : {}),
   } as Parameters<ReturnType<typeof makeAdapter>["publish"]>[0]);
-  if (!args.dryRun) deps.campaignGuard.recordResult?.(authorization, res.postUrl);
+  if (!args.dryRun) {
+    const verification = authorization.managed ? await adapter.verify(res.postUrl) : undefined;
+    deps.campaignGuard.recordResult?.(authorization, res.postUrl, verification);
+  }
   return { code: ErrorCode.SUCCESS, message: `published: ${res.postUrl}` };
 }
 

@@ -1,6 +1,7 @@
 import { ErrorCode } from "../errors.js";
 import { PLATFORM_TEXT_LIMITS } from "../tool-scoping.js";
-import type { ArticleCampaignManifest } from "./types.js";
+import { z } from "zod";
+import { DestinationSchema, canonicalJson, sha256, type ArticleCampaignManifest } from "./types.js";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -16,7 +17,65 @@ export interface ArtifactEvidence {
   size?: number;
   mime?: string;
   text?: string;
+  media?: {
+    container: "mp3" | "mp4";
+    audioCodec: "mp3" | "aac";
+    videoCodec?: "h264";
+    durationSec: number;
+    audioDurationSec: number;
+    width?: number;
+    height?: number;
+    audioContentSha256: string;
+    audioFingerprint: readonly number[];
+  };
 }
+
+const EvidenceBaseSchema = z
+  .object({ schemaVersion: z.literal(1), resolver: z.literal("publisher-adapter") })
+  .strict();
+const AuthorizationEvidenceSchema = EvidenceBaseSchema.extend({
+  kind: z.literal("authorization"),
+  campaignId: z.string(),
+  taskId: z.string(),
+  decision: z.enum(["auto", "approved"]),
+  scope: z.literal("publish_public"),
+  evidenceRef: z.string(),
+  decidedAt: z.string(),
+  targetsSha256: z.string(),
+}).strict();
+const BaselineEvidenceSchema = EvidenceBaseSchema.extend({
+  kind: z.literal("baseline"),
+  campaignId: z.string(),
+  targetId: z.string(),
+  managedTargetId: z.string(),
+  platform: z.string(),
+  profile: z.string(),
+  destination: DestinationSchema.optional(),
+  action: z.string(),
+  idempotencyKey: z.string(),
+  state: z.enum(["absent", "existing", "unknown"]),
+  checkedAt: z.string(),
+}).strict();
+const CurrentStateEvidenceSchema = EvidenceBaseSchema.extend({
+  kind: z.literal("current-state"),
+  campaignId: z.string(),
+  targetId: z.string(),
+  canonicalUrl: z.string(),
+  expectedContentSha256: z.string(),
+  mediaType: z.enum(["image", "video", "none"]),
+  mediaSha256: z.string().optional(),
+  identity: z.string(),
+  readBackAt: z.string(),
+}).strict();
+const ResultReadbackEvidenceSchema = EvidenceBaseSchema.extend({
+  kind: z.literal("result-readback"),
+  campaignId: z.string(),
+  targetId: z.string(),
+  canonicalUrl: z.string(),
+  readBackSha256: z.string(),
+  duplicateState: z.literal("resolved"),
+  verifiedAt: z.string(),
+}).strict();
 
 export interface UrlEvidence {
   status: number;
@@ -66,7 +125,40 @@ export function validateArticleCampaign(
       add,
     );
     fresh(audio.listenedAt, 24 * HOUR, evidence.now, `/audio/${locale}/listenedAt`, add);
-    fileHash(audio.path, audio.sha256, `/audio/${locale}/path`, evidence, add);
+    const audioArtifact = fileHash(
+      audio.path,
+      audio.sha256,
+      `/audio/${locale}/path`,
+      evidence,
+      add,
+    );
+    if (
+      !audioArtifact?.media ||
+      audioArtifact.media.container !== "mp3" ||
+      audioArtifact.media.audioCodec !== "mp3" ||
+      audioArtifact.media.videoCodec !== undefined
+    ) {
+      add(
+        ErrorCode.CAMPAIGN_MEDIA_POLICY,
+        `/audio/${locale}/path`,
+        "audio bytes are not a probed MP3 audio-only asset",
+      );
+    } else {
+      if (Math.abs(audioArtifact.media.durationSec - audio.durationSec) > 0.25) {
+        add(
+          ErrorCode.CAMPAIGN_MEDIA_POLICY,
+          `/audio/${locale}/durationSec`,
+          "declared audio duration differs from the probed bytes",
+        );
+      }
+      if (audioArtifact.media.audioContentSha256 !== audio.contentSha256) {
+        add(
+          ErrorCode.CAMPAIGN_ASSET_MISMATCH,
+          `/audio/${locale}/contentSha256`,
+          "decoded audio content hash differs",
+        );
+      }
+    }
     const remoteAudio = evidence.probeUrl(audio.url);
     if (!remoteAudio || remoteAudio.status !== 200) {
       add(
@@ -105,7 +197,8 @@ export function validateArticleCampaign(
   }
   checkVideo(
     manifest.videos.telegramRu,
-    manifest.audio.ru.sha256,
+    manifest.audio.ru.path,
+    manifest.audio.ru.contentSha256,
     manifest.audio.ru.durationSec,
     "/videos/telegramRu",
     evidence,
@@ -113,7 +206,8 @@ export function validateArticleCampaign(
   );
   checkVideo(
     manifest.videos.xLinkedinEn,
-    manifest.audio.en.sha256,
+    manifest.audio.en.path,
+    manifest.audio.en.contentSha256,
     manifest.audio.en.durationSec,
     "/videos/xLinkedinEn",
     evidence,
@@ -170,11 +264,29 @@ export function validateArticleCampaign(
     "/authorization/decidedAt",
     add,
   );
-  fileHash(
+  const authorizationArtifact = fileHash(
     manifest.authorization.evidence.path,
     manifest.authorization.evidence.sha256,
     "/authorization/evidence/path",
     evidence,
+    add,
+  );
+  typedEvidence(
+    authorizationArtifact,
+    AuthorizationEvidenceSchema,
+    {
+      schemaVersion: 1,
+      resolver: "publisher-adapter",
+      kind: "authorization",
+      campaignId: manifest.campaignId,
+      taskId: manifest.taskId,
+      decision: manifest.authorization.decision,
+      scope: manifest.authorization.scope,
+      evidenceRef: manifest.authorization.evidenceRef,
+      decidedAt: manifest.authorization.decidedAt,
+      targetsSha256: sha256(canonicalJson(manifest.targets)),
+    },
+    "/authorization/evidence/path",
     add,
   );
   fresh(
@@ -184,6 +296,40 @@ export function validateArticleCampaign(
     "/authorization/evidence/verifiedAt",
     add,
   );
+
+  const rootTargets = manifest.targets.filter((target) => !target.parentTargetId);
+  for (const platform of ["telegram", "x", "linkedin", "facebook"] as const) {
+    const rootsForPlatform = rootTargets.filter((target) => target.platform === platform);
+    if (rootsForPlatform.length !== 1) {
+      add(
+        ErrorCode.CAMPAIGN_TARGET_MISMATCH,
+        "/targets",
+        `canonical article stage requires exactly one root ${platform} target`,
+      );
+    }
+    if (rootsForPlatform.some((target) => !["publish", "edit", "retain"].includes(target.action))) {
+      add(
+        ErrorCode.CAMPAIGN_TARGET_MISMATCH,
+        "/targets",
+        `canonical root ${platform} target must publish, edit, or retain the article post`,
+      );
+    }
+  }
+  const dependentTargets = manifest.targets.filter((target) => target.parentTargetId);
+  if (manifest.stage === "launch" && dependentTargets.length > 0) {
+    add(
+      ErrorCode.CAMPAIGN_TARGET_MISMATCH,
+      "/stage",
+      "launch stage cannot contain permalink-dependent targets",
+    );
+  }
+  if (manifest.stage === "follow-up" && dependentTargets.length === 0) {
+    add(
+      ErrorCode.CAMPAIGN_TARGET_MISMATCH,
+      "/stage",
+      "follow-up stage requires at least one parent-bound target",
+    );
+  }
 
   const targetIds = new Set<string>();
   const idempotencyKeys = new Set<string>();
@@ -302,6 +448,21 @@ export function validateArticleCampaign(
           "comment parent target is not present in this staged manifest",
         );
       }
+      if (
+        parent &&
+        (parent.parentTargetId !== undefined ||
+          !["publish", "edit", "retain"].includes(parent.action) ||
+          parent.managedTargetId !== target.managedTargetId ||
+          parent.platform !== target.platform ||
+          parent.profile !== target.profile ||
+          canonicalJson(parent.destination ?? null) !== canonicalJson(target.destination ?? null))
+      ) {
+        add(
+          ErrorCode.CAMPAIGN_TARGET_MISMATCH,
+          `${pointer}/parentTargetId`,
+          "comment parent must be a root post on the same managed destination",
+        );
+      }
       if (!parentResult) {
         add(
           ErrorCode.CAMPAIGN_BACKLINKS_NOT_READY,
@@ -334,6 +495,41 @@ export function validateArticleCampaign(
       `${pointer}/baseline/verifiedAt`,
       add,
     );
+    const baselineArtifact = fileHash(
+      target.baseline.evidence.path,
+      target.baseline.evidence.sha256,
+      `${pointer}/baseline/evidence/path`,
+      evidence,
+      add,
+    );
+    typedEvidence(
+      baselineArtifact,
+      BaselineEvidenceSchema,
+      {
+        schemaVersion: 1,
+        resolver: "publisher-adapter",
+        kind: "baseline",
+        campaignId: manifest.campaignId,
+        targetId: target.targetId,
+        managedTargetId: target.managedTargetId,
+        platform: target.platform,
+        profile: target.profile,
+        ...(target.destination ? { destination: target.destination } : {}),
+        action: target.action,
+        idempotencyKey: target.idempotencyKey,
+        state: target.baseline.state,
+        checkedAt: target.baseline.verifiedAt,
+      },
+      `${pointer}/baseline/evidence/path`,
+      add,
+    );
+    fresh(
+      target.baseline.evidence.verifiedAt,
+      30 * MINUTE,
+      evidence.now,
+      `${pointer}/baseline/evidence/verifiedAt`,
+      add,
+    );
     if (target.baseline.state === "existing") {
       if (!target.existingState) {
         add(
@@ -349,11 +545,32 @@ export function validateArticleCampaign(
           `${pointer}/existingState/readBackAt`,
           add,
         );
-        fileHash(
+        const currentStateArtifact = fileHash(
           target.existingState.evidence.path,
           target.existingState.evidence.sha256,
           `${pointer}/existingState/evidence/path`,
           evidence,
+          add,
+        );
+        typedEvidence(
+          currentStateArtifact,
+          CurrentStateEvidenceSchema,
+          {
+            schemaVersion: 1,
+            resolver: "publisher-adapter",
+            kind: "current-state",
+            campaignId: manifest.campaignId,
+            targetId: target.targetId,
+            canonicalUrl: target.existingState.canonicalUrl,
+            expectedContentSha256: target.existingState.expectedContentSha256,
+            mediaType: target.existingState.mediaType,
+            ...(target.existingState.mediaSha256
+              ? { mediaSha256: target.existingState.mediaSha256 }
+              : {}),
+            identity: target.existingState.identity,
+            readBackAt: target.existingState.readBackAt,
+          },
+          `${pointer}/existingState/evidence/path`,
           add,
         );
         fresh(
@@ -376,11 +593,28 @@ export function validateArticleCampaign(
 
   for (let index = 0; index < (manifest.backlinks?.length ?? 0); index++) {
     const backlink = manifest.backlinks![index]!;
-    fileHash(
+    const backlinkArtifact = fileHash(
       backlink.evidence.path,
       backlink.evidence.sha256,
       `/backlinks/${index}/evidence/path`,
       evidence,
+      add,
+    );
+    typedEvidence(
+      backlinkArtifact,
+      ResultReadbackEvidenceSchema,
+      {
+        schemaVersion: 1,
+        resolver: "publisher-adapter",
+        kind: "result-readback",
+        campaignId: manifest.campaignId,
+        targetId: backlink.targetId,
+        canonicalUrl: backlink.canonicalUrl,
+        readBackSha256: backlink.readBackSha256,
+        duplicateState: backlink.duplicateState,
+        verifiedAt: backlink.verifiedAt,
+      },
+      `/backlinks/${index}/evidence/path`,
       add,
     );
     fresh(
@@ -389,6 +623,19 @@ export function validateArticleCampaign(
       evidence.now,
       `/backlinks/${index}/evidence/verifiedAt`,
       add,
+    );
+  }
+
+  if (
+    manifest.stage === "complete" &&
+    manifest.targets.some(
+      (target) => !manifest.backlinks?.some((backlink) => backlink.targetId === target.targetId),
+    )
+  ) {
+    add(
+      ErrorCode.CAMPAIGN_BACKLINKS_NOT_READY,
+      "/stage",
+      "complete stage requires verified result read-back for every target",
     );
   }
 
@@ -470,13 +717,15 @@ function expectedTargetMedia(manifest: ArticleCampaignManifest, platform: string
 
 function checkVideo(
   video: ArticleCampaignManifest["videos"]["telegramRu" | "xLinkedinEn"],
+  audioPath: string,
   audioSha256: string,
   audioDurationSec: number,
   pointer: string,
   evidence: ArticleValidationEvidence,
   add: AddFinding,
 ): void {
-  fileHash(video.path, video.sha256, `${pointer}/path`, evidence, add);
+  const videoArtifact = fileHash(video.path, video.sha256, `${pointer}/path`, evidence, add);
+  const audioArtifact = evidence.statFile(audioPath);
   fresh(video.probeVerifiedAt, 24 * HOUR, evidence.now, `${pointer}/probeVerifiedAt`, add);
   fresh(video.viewedAt, 24 * HOUR, evidence.now, `${pointer}/viewedAt`, add);
   if (video.narrationAudioSha256 !== audioSha256) {
@@ -486,12 +735,106 @@ function checkVideo(
       "video narration hash differs",
     );
   }
+  if (
+    !videoArtifact?.media ||
+    videoArtifact.media.container !== "mp4" ||
+    videoArtifact.media.videoCodec !== "h264" ||
+    videoArtifact.media.audioCodec !== "aac" ||
+    !videoArtifact.media.width ||
+    !videoArtifact.media.height ||
+    videoArtifact.media.width !== video.width ||
+    videoArtifact.media.height !== video.height
+  ) {
+    add(
+      ErrorCode.CAMPAIGN_MEDIA_POLICY,
+      `${pointer}/path`,
+      "video bytes are not a probed H.264/AAC MP4 with positive dimensions",
+    );
+  } else {
+    if (Math.abs(videoArtifact.media.durationSec - video.durationSec) > 0.25) {
+      add(
+        ErrorCode.CAMPAIGN_MEDIA_POLICY,
+        `${pointer}/durationSec`,
+        "declared video duration differs from the probed bytes",
+      );
+    }
+    if (Math.abs(videoArtifact.media.audioDurationSec - audioDurationSec) > 2) {
+      add(
+        ErrorCode.CAMPAIGN_MEDIA_POLICY,
+        `${pointer}/durationSec`,
+        "probed video audio track differs from narration by more than two seconds",
+      );
+    }
+    if (
+      !audioArtifact?.media?.audioFingerprint ||
+      !audioFingerprintsMatch(
+        audioArtifact.media.audioFingerprint,
+        videoArtifact.media.audioFingerprint,
+      )
+    ) {
+      add(
+        ErrorCode.CAMPAIGN_ASSET_MISMATCH,
+        `${pointer}/narrationAudioSha256`,
+        "probed video audio track does not match the narration fingerprint",
+      );
+    }
+  }
   if (Math.abs(video.durationSec - audioDurationSec) > 2) {
     add(
       ErrorCode.CAMPAIGN_MEDIA_POLICY,
       `${pointer}/durationSec`,
       "video duration differs from narration by more than two seconds",
     );
+  }
+}
+
+function audioFingerprintsMatch(expected: readonly number[], actual: readonly number[]): boolean {
+  if (
+    expected.length < 10 ||
+    actual.length < 10 ||
+    Math.abs(expected.length - actual.length) > 20
+  ) {
+    return false;
+  }
+  let best = Number.POSITIVE_INFINITY;
+  for (let shift = -5; shift <= 5; shift++) {
+    let total = 0;
+    let compared = 0;
+    for (let index = 0; index < expected.length; index++) {
+      const candidate = index + shift;
+      if (candidate < 0 || candidate >= actual.length) continue;
+      total += Math.abs(expected[index]! - actual[candidate]!);
+      compared++;
+    }
+    if (compared >= Math.min(expected.length, actual.length) * 0.9) {
+      best = Math.min(best, total / compared);
+    }
+  }
+  return best <= 1;
+}
+
+function typedEvidence<T extends z.ZodTypeAny>(
+  artifact: ArtifactEvidence | undefined,
+  schema: T,
+  expected: z.infer<T>,
+  pointer: string,
+  add: AddFinding,
+): void {
+  if (artifact?.text === undefined) {
+    add(ErrorCode.CAMPAIGN_EVIDENCE_MISSING, pointer, "typed evidence body is missing");
+    return;
+  }
+  try {
+    const parsed = schema.parse(JSON.parse(artifact.text));
+    if (canonicalJson(parsed) !== canonicalJson(expected)) {
+      add(
+        ErrorCode.CAMPAIGN_TARGET_MISMATCH,
+        pointer,
+        "typed evidence is not bound to the canonical campaign state",
+      );
+    }
+  } catch {
+    add(ErrorCode.CAMPAIGN_EVIDENCE_MISSING, pointer, "typed evidence is malformed");
   }
 }
 

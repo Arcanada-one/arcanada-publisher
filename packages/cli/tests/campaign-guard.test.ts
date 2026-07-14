@@ -97,6 +97,7 @@ describe("CLI CampaignGuard chokepoint", () => {
     expect(recordResult).toHaveBeenCalledWith(
       expect.objectContaining({ managed: true }),
       "https://example.com/post/1",
+      expect.objectContaining({ ok: true, reachable: true, status: 200 }),
     );
   });
 

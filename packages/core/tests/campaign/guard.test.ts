@@ -1,6 +1,6 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ErrorCode } from "../../src/errors.js";
 import { CampaignGuard } from "../../src/campaign/guard.js";
@@ -138,7 +138,13 @@ describe("CampaignGuard", () => {
       managed: true,
       targetId: "content-0377-x-main",
     });
-    guard.recordResult(authorization, "https://example.com/post/1");
+    guard.recordResult(authorization, "https://example.com/post/1", {
+      ok: true,
+      platform: "x",
+      postUrl: "https://example.com/post/1",
+      reachable: true,
+      status: 200,
+    });
     await expect(guard.authorize({ ...common, receipt, dryRun: false })).rejects.toMatchObject({
       code: ErrorCode.CAMPAIGN_RECEIPT_REPLAY,
     });
@@ -147,8 +153,26 @@ describe("CampaignGuard", () => {
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line).event),
-    ).toEqual(["issued", "consumed", "adapter-result", "rejected"]);
+    ).toEqual(["issued", "consumed", "verified-result", "rejected"]);
     expect(validate).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails reconciliation closed when a managed result lacks verified read-back", () => {
+    const guard = new CampaignGuard();
+    expect(() =>
+      guard.recordResult(
+        {
+          managed: true,
+          targetId: "x-main",
+          manifestSha256: HASH,
+          campaignId: "content-0377",
+          platform: "x",
+          action: "publish",
+          receiptSha256: HASH,
+        },
+        "https://example.com/post/1",
+      ),
+    ).toThrowError(expect.objectContaining({ code: ErrorCode.CAMPAIGN_STATE_UNKNOWN }));
   });
 
   it("rejects unknown policy pairs for managed targets", async () => {
@@ -239,6 +263,55 @@ describe("CampaignGuard", () => {
     ).buildEvidence(loaded);
 
     expect(evidence.probeUrl(url)).toEqual({ status: 0 });
+  });
+
+  it("derives MP3 codec, duration, and narration fingerprint from actual bytes", async () => {
+    const dir = secureDir();
+    copyFileSync(
+      resolve(import.meta.dirname, "../../../video-generator/tests/fixtures/audio.mp3"),
+      join(dir, "audio.mp3"),
+    );
+    const loaded = {
+      manifest: {
+        website: {
+          ru: { url: "https://example.com/ru", titleSha256: HASH },
+          en: { url: "https://example.com/en", titleSha256: HASH },
+        },
+        audio: {
+          ru: { path: "audio.mp3", url: "https://example.com/ru.mp3" },
+          en: { path: "audio.mp3", url: "https://example.com/en.mp3" },
+        },
+      },
+      path: join(dir, "campaign.json"),
+      sha256: HASH,
+    } as unknown as LoadedCampaignManifest;
+    const guard = new CampaignGuard({
+      campaignRoots: [dir],
+      fetch: vi.fn(async () => new Response("ok", { status: 200 })),
+    });
+    const built = await (
+      guard as unknown as {
+        buildEvidence(manifest: LoadedCampaignManifest): Promise<{
+          statFile(path: string):
+            | {
+                media?: {
+                  container: string;
+                  audioCodec: string;
+                  durationSec: number;
+                  audioFingerprint: readonly number[];
+                };
+              }
+            | undefined;
+        }>;
+      }
+    ).buildEvidence(loaded);
+
+    expect(built.statFile("audio.mp3")?.media).toMatchObject({
+      container: "mp3",
+      audioCodec: "mp3",
+      durationSec: expect.any(Number),
+      audioFingerprint: expect.arrayContaining([expect.any(Number)]),
+    });
   });
 
   it("blocks backlink deployment until every target has a verified canonical permalink", async () => {

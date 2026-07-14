@@ -57,9 +57,10 @@ const SiteLocaleSchema = z
 
 const AudioSchema = z
   .object({
-    path: z.string().min(1),
+    path: z.string().regex(/\.mp3$/i),
     url: HttpsUrlSchema,
     sha256: Sha256Schema,
+    contentSha256: Sha256Schema,
     durationSec: z.number().positive(),
     locale: z.enum(["ru", "en"]),
     voice: z.literal("pavel"),
@@ -72,13 +73,15 @@ const AudioSchema = z
 
 const VideoSchema = z
   .object({
-    path: z.string().min(1),
+    path: z.string().regex(/\.mp4$/i),
     sha256: Sha256Schema,
     durationSec: z.number().positive(),
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
     locale: z.enum(["ru", "en"]),
     narrationAudioSha256: Sha256Schema,
     preset: z.string().min(1).max(128),
-    codec: z.string().min(1).max(128),
+    codec: z.literal("h264+aac"),
     probeVerifiedAt: ISO_DATE,
     viewedAt: ISO_DATE,
   })
@@ -159,7 +162,11 @@ const TargetSchema = z
       .optional(),
     idempotencyKey: z.string().regex(SAFE_ID_RE),
     baseline: z
-      .object({ state: z.enum(["absent", "existing", "unknown"]), verifiedAt: ISO_DATE })
+      .object({
+        state: z.enum(["absent", "existing", "unknown"]),
+        verifiedAt: ISO_DATE,
+        evidence: EvidenceFileSchema,
+      })
       .strict(),
     existingState: ExistingStateSchema.optional(),
   })
@@ -217,6 +224,16 @@ const TargetSchema = z
         message: `${value.action} target requires an existing baseline`,
       });
     }
+    if (
+      (value.action === "publish" || value.action === "comment") &&
+      value.baseline.state !== "absent"
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["baseline", "state"],
+        message: `${value.action} target requires an evidenced absent baseline`,
+      });
+    }
   });
 
 const BacklinkSchema = z
@@ -239,6 +256,7 @@ export const ArticleCampaignManifestSchema = z
     policy: z.literal("arcanada-blog-canonical"),
     createdAt: ISO_DATE,
     updatedAt: ISO_DATE,
+    stage: z.enum(["launch", "follow-up", "complete"]),
     website: z
       .object({
         deploymentCommit: z.string().regex(/^[a-f0-9]{40}$/),
