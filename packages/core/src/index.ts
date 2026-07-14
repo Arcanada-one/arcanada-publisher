@@ -50,3 +50,5 @@ export type { AuditInput, AuditOptions, AuditAction } from "./audit.js";
 
 export { RateLimiter, DEFAULT_RATE_PER_HOUR, WINDOW_MS } from "./rate-limit.js";
 export type { RateLimiterOptions } from "./rate-limit.js";
+
+export * from "./campaign/index.js";

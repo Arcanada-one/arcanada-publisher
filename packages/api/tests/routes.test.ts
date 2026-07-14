@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -89,6 +89,9 @@ describe("api routes — publish/comment/edit/delete over loopback", () => {
   let auditDir: string;
   let lastAdapter: FakeAdapter | undefined;
   let factoryError: AdapterError | undefined;
+  let campaignAuthorize: ReturnType<typeof vi.fn>;
+  let campaignPreflight: ReturnType<typeof vi.fn>;
+  let campaignRecordResult: ReturnType<typeof vi.fn>;
 
   const base = (): string => `http://127.0.0.1:${port}`;
 
@@ -104,6 +107,11 @@ describe("api routes — publish/comment/edit/delete over loopback", () => {
       },
       auditBaseDir: auditDir,
       ...(rateLimiter ? { rateLimiter } : {}),
+      campaignGuard: {
+        authorize: campaignAuthorize,
+        preflight: campaignPreflight,
+        recordResult: campaignRecordResult,
+      },
     });
     server = started.server;
     port = started.port;
@@ -112,6 +120,9 @@ describe("api routes — publish/comment/edit/delete over loopback", () => {
   beforeEach(() => {
     lastAdapter = undefined;
     factoryError = undefined;
+    campaignAuthorize = vi.fn(async () => ({ managed: false }));
+    campaignPreflight = vi.fn(async () => "signed-receipt");
+    campaignRecordResult = vi.fn();
   });
 
   afterEach(() => {
@@ -134,6 +145,11 @@ describe("api routes — publish/comment/edit/delete over loopback", () => {
     expect(body.ok).toBe(true);
     expect(body.data.postUrl).toBe("https://example.com/fake/posts/1");
     expect(body.data.auditRef).toMatch(/^PUB-audit-/);
+    expect(campaignRecordResult).toHaveBeenCalledWith(
+      expect.objectContaining({ managed: false }),
+      "https://example.com/fake/posts/1",
+      undefined,
+    );
 
     const files = readdirSync(auditDir);
     expect(files).toHaveLength(1);
@@ -208,6 +224,31 @@ describe("api routes — publish/comment/edit/delete over loopback", () => {
     expect(body.data.edited).toBe(true);
   });
 
+  it("POST /edit forwards the exact guarded media and video metadata", async () => {
+    await start();
+    const res = await fetch(`${base()}/edit`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        platform: "linkedin",
+        targetUrl: "https://example.com/p/9",
+        text: "fixed",
+        profile: "default",
+        imagePaths: ["/secure/video.mp4"],
+        videoWidth: 1920,
+        videoHeight: 1080,
+        videoDuration: 120,
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(lastAdapter?.calls.edit[0]).toMatchObject({
+      imagePath: "/secure/video.mp4",
+      videoWidth: 1920,
+      videoHeight: 1080,
+      videoDuration: 120,
+    });
+  });
+
   it("POST /delete returns 200 with a DeleteResult", async () => {
     await start();
     const res = await fetch(`${base()}/delete`, {
@@ -224,6 +265,60 @@ describe("api routes — publish/comment/edit/delete over loopback", () => {
     const body = (await res.json()) as { ok: boolean; data: { deleted: boolean } };
     expect(body.ok).toBe(true);
     expect(body.data.deleted).toBe(true);
+  });
+
+  it("denies a managed mutation before rate-limit and adapter construction", async () => {
+    campaignAuthorize.mockRejectedValue(
+      new AdapterError(ErrorCode.CAMPAIGN_RECEIPT_REQUIRED, "receipt required"),
+    );
+    await start();
+    const res = await fetch(`${base()}/publish`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ platform: "x", text: "managed", profile: "default" }),
+    });
+    expect(res.status).toBe(403);
+    expect(campaignAuthorize).toHaveBeenCalledOnce();
+    expect(lastAdapter).toBeUndefined();
+  });
+
+  it("normalizes an omitted API profile to the canonical default before campaign matching", async () => {
+    await start();
+    const res = await fetch(`${base()}/publish`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ platform: "x", text: "managed" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(campaignAuthorize).toHaveBeenCalledWith(
+      expect.objectContaining({ platform: "x", profile: "default" }),
+    );
+    expect(lastAdapter?.calls.publish[0]).toMatchObject({ profile: "default" });
+  });
+
+  it("POST /campaign/preflight returns a receipt without adapter construction", async () => {
+    await start();
+    const res = await fetch(`${base()}/campaign/preflight`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        platform: "x",
+        profile: "default",
+        action: "publish",
+        campaignTargetId: "content-0377-x-main",
+        text: "managed",
+        imagePaths: ["/secure/video.mp4"],
+        campaignManifestPath: "/secure/campaign.json",
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, data: { receipt: "signed-receipt" } });
+    expect(campaignPreflight).toHaveBeenCalledOnce();
+    expect(campaignPreflight).toHaveBeenCalledWith(
+      expect.objectContaining({ campaignTargetId: "content-0377-x-main" }),
+    );
+    expect(lastAdapter).toBeUndefined();
   });
 
   it("returns 400 INVALID_ARGS for an unknown platform", async () => {
@@ -297,6 +392,7 @@ describe("api routes — publish/comment/edit/delete over loopback", () => {
     expect(res.status).toBe(200);
     const files = readdirSync(auditDir);
     expect(files).toHaveLength(0);
+    expect(campaignRecordResult).not.toHaveBeenCalled();
   });
 
   it("maps a NETWORK_GUARD adapter error to 403 and a generic AdapterError to its HTTP status", async () => {
