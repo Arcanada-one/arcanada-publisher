@@ -98,13 +98,20 @@ action MUST be wrapped in a verification gate — a probe **before** (to confirm
 target) and a probe **after** (to confirm the result). Never report an outcome you
 have not re-verified against the live account.
 
+Deletion, re-publication, edits, and corrective comments additionally require a
+fresh, explicit operator authorization for the named platform and target URL. A
+campaign-level “publish” approval does not authorize later remediation. If the
+operator has not approved the exact corrective action, stop at read-only evidence.
+
 ### 6.1 Before any irreversible action — confirm the target (read-before-write)
 
 - **Before deleting a post**, fetch the post and confirm it is the intended one by a
   stable, machine-checkable identifier — not by feed position or visual guess. Confirm
   the **author handle is ours**, the **text/permalink/`t.co` hash** match the target,
   and the post is **not someone else's content** that merely surfaced in a recommendation
-  feed. (Real incident: a session recorded a foreign influencer's tweet URL as "ours".)
+  feed. Then present that evidence and the exact URL to the operator and obtain
+  platform-specific permission to delete it. (Real incident: a session recorded a
+  foreign influencer's tweet URL as "ours".)
 - **Before publishing**, confirm **which account is logged in** (post the correct premium
   account, not a personal one), and that the body meets §4 (full EN long-form, MP4 when EN
   audio exists, starts with the article title).
@@ -131,7 +138,8 @@ have not re-verified against the live account.
   post** before retrying by another path.
 - When a duplicate is suspected, identify the keeper vs. the duplicate **deterministically**
   (e.g. the keeper has its first comment → reply count ≥ 1; the duplicate has none), then
-  delete only the confirmed duplicate via the §6.1 read-before-delete gate.
+  request explicit operator permission for the exact duplicate URL. Delete only after
+  that permission and the §6.1 read-before-delete gate both pass.
 
 ### 6.4 Composer media+text order — video first, then text, then verify (all browser composers)
 
@@ -214,8 +222,9 @@ appears («Uploading… / Ladataan… keep this page open until the upload compl
   Tearing down early publishes the post **text-only with no video** (real incident: the first
   Show-Me LinkedIn post went out video-less because the context closed mid-upload).
 - After the bar clears + grace pause, re-fetch the published post and assert `video` is present
-  (`page.locator("video").count() > 0`). If zero → delete + repost (LinkedIn cannot add media to
-  an existing post; `edit` does not change media).
+  (`page.locator("video").count() > 0`). If zero, freeze mutations and report the defect:
+  LinkedIn cannot add media to an existing post and `edit` does not change media. Delete +
+  repost only after the operator explicitly authorizes both actions for that post URL.
 - This is the mirror image of X, where the video must finish **before** Post (the Post button
   stays disabled until the upload settles). LinkedIn: wait **after** Post. X: wait **before** Post.
 
@@ -255,6 +264,30 @@ else's content**. Always pick the element whose **own id matches the target**:
 
 This guards both the read-before-delete oracle and any "did it publish?" verification. Strip FB
 tracking params (`?__cft__[0]=…&__tn__=…`) to get the canonical `…/posts/<pfbid>` permalink.
+
+### 6.9 Media immutability and post-publish defect freeze (CONTENT-0377)
+
+Treat media on X and LinkedIn as immutable after the publish click. The platforms
+do not provide a reliable operation to replace the video on an existing post; a
+bad narration therefore becomes a public post defect that cannot be repaired by a
+normal edit.
+
+- Before publishing any narration-backed video, require a content-verification
+  receipt bound to the exact MP3 SHA-256, MP4 SHA-256, frozen narration SHA-256,
+  language, and voice. The receipt must include independent ASR comparison of the
+  final MP3 and final MP4 plus a completed proof-listening record. File existence,
+  duration, codec, dimensions, non-silence, and a visible player are insufficient.
+- After detecting a live media defect, perform **no automatic delete, edit,
+  re-publication, comment, or site-link change**. Capture read-only evidence, list
+  every affected platform and URL, explain which repairs are technically possible,
+  and ask the operator to authorize each public action explicitly.
+- Do not reinterpret “finish the campaign”, an earlier publish approval, or a
+  general autonomous-mode setting as permission to delete or re-publish. Silence
+  means leave the existing posts untouched.
+
+CONTENT-0377 is the precedent: the EN MP3 and its X/LinkedIn MP4 contained a
+repeated TTS insertion even though all codec, duration, hash, waveform, upload, and
+player checks passed. Once published, those platform videos could not be replaced.
 
 ## 7. Article ↔ social back-link block (the blog page links out to the posts) — CLOSING GATE
 

@@ -113,6 +113,24 @@ the default. The bash reference engine mirrors this via env vars: `WAVEFORM=0`
    - **Facebook** feed forces any video into Reels, so on FB use the **static
      cover image** instead — keep the video for X and LinkedIn.
    - **Telegram** can take the MP4 (`sendVideo`).
+5. **Use only approved narration audio.** The source MP3 must already have passed
+   the semantic fidelity gate in
+   [`blog-audio-narration.md`](./blog-audio-narration.md), including independent
+   ASR comparison and complete proof-listening. Record the approved MP3 SHA-256 in
+   the video generation manifest. “The MP3 decodes” is not an approval receipt.
+6. **Verify the final MP4 audio, not only the source MP3.** After muxing, extract
+   and transcribe the MP4 audio in the post language. Confirm that it preserves the
+   approved narration in order, has no unexpected repeated or inserted phrase, and
+   matches the expected duration. Codec, dimensions, bitrate, waveform, and
+   non-silence checks remain necessary, but none of them prove spoken content.
+7. **A changed input invalidates the video.** Regenerating or replacing the MP3,
+   cover, or MP4 requires a new bound manifest and a new verification result before
+   any publish command can use it.
+
+CONTENT-0377 is the failure precedent: one semantically corrupted EN MP3 passed
+technical probes and propagated unchanged into both X and LinkedIn videos. The
+video gate must therefore consume the audio approval evidence, not infer approval
+from successful rendering.
 
 ## Example
 

@@ -40,6 +40,44 @@ So a narrative post needs a normalization pass before TTS:
 EN (Kokoro / F5) needs none of this — it speaks Latin and numbers in English
 natively. Normalize the RU text only.
 
+## Semantic fidelity gate: verify the audio, not the generation command
+
+A successful TTS command, a decodable MP3, a plausible duration, a non-silent
+waveform, and matching local/CDN hashes prove only that an audio file exists.
+They do **not** prove that the file says the approved narration. Treat every TTS
+output as untrusted until the final MP3 passes this gate.
+
+Before an MP3 may be uploaded, registered in the blog manifest, used as input to
+the video generator, or attached to a public post:
+
+1. Freeze the exact normalized narration and record its SHA-256 together with the
+   final MP3 SHA-256, language, voice id, and TTS engine/model.
+2. Transcribe the **final MP3** with an independent ASR model using the correct
+   language. Save the transcript and compare it with the frozen narration in
+   reading order. Hard-fail on a missing or reordered paragraph, an inserted
+   sentence, a language mismatch, or an unexpected phrase of four or more words
+   that appears at least twice. Expected ASR spelling errors in names may be
+   waived only in the recorded review; they must not hide an insertion or omission.
+3. Proof-listen the complete final MP3 at normal speed. The reviewer must check
+   voice identity, pronunciation, repetitions, insertions, omissions, truncation,
+   clicks, long silence, and chunk-boundary glitches. Record reviewer, timestamp,
+   MP3 hash, and PASS/FAIL in the campaign listening checklist. An unchecked box
+   or a generated report is not approval.
+4. Bind every derived MP4 to the approved MP3 SHA-256 in its generation manifest.
+   Extract and transcribe the MP4 audio after muxing; it must preserve the approved
+   narration and duration. A video codec probe alone is not a content check.
+
+Any regeneration or byte change invalidates the prior approval and requires the
+gate again. Voice-reference audio and biometrics remain private; only the
+narration, hashes, transcripts, and review result belong in campaign evidence.
+
+**CONTENT-0377 precedent (2026-07-14).** An EN F5-TTS asset was a valid, non-silent
+MP3 of the expected duration, but repeatedly inserted the sentence “This recording
+is part of that same process.” The unchecked asset was then reused in the website
+player and in the X/LinkedIn MP4. File-level checks all passed; independent ASR and
+the public LinkedIn transcript exposed the semantic corruption. This is why both
+ASR comparison and complete proof-listening are hard gates.
+
 ## Every block is its own sentence — headings and paragraphs
 
 Our posts write headings (and some lead lines / list items) **without a trailing
