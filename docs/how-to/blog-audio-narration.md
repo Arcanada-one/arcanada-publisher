@@ -4,8 +4,10 @@ A blog post with the audio player needs one MP3 per voice: 5 RU voices (Silero)
 plus 1 EN voice (`af_heart`, Kokoro). The generator lives in the **landing repo**
 (`Projects/Arcanada Ecosystem/code/landing/ops/gen-blog-audio.py`), not in this
 Publisher repo — but the _rules_ for preparing the narration text are a publishing
-concern and are mirrored in `skills/publishing/SKILL.md` § "Blog audio narration —
-TTS text prep". This page is the operational recipe.
+concern. This page is Publisher's operational source of truth. Datarim's
+`skills/publishing/SKILL.md` carries the separate agent-facing gate and must be
+updated in a coordinated change; do not assume cross-repository parity without
+verifying both committed versions.
 
 ## The core rule: normalize the RU text, do not strip it
 
@@ -39,6 +41,94 @@ So a narrative post needs a normalization pass before TTS:
 
 EN (Kokoro / F5) needs none of this — it speaks Latin and numbers in English
 natively. Normalize the RU text only.
+
+## Semantic fidelity gate: verify the audio, not the generation command
+
+A successful TTS command, a decodable MP3, a plausible duration, a non-silent
+waveform, and matching local/CDN hashes prove only that an audio file exists.
+They do **not** prove that the file says the approved narration. Treat every TTS
+output as untrusted until the final MP3 passes this gate.
+
+Before an MP3 may be uploaded, registered in the blog manifest, used as input to
+the video generator, or attached to a public post:
+
+1. Freeze the exact normalized narration and record its SHA-256 together with the
+   final MP3 SHA-256, language, voice id, and TTS engine/model.
+2. Transcribe the **final MP3** with an independent ASR model using the correct
+   language. Save the transcript and align it with the frozen narration at
+   paragraph, sentence, and phrase level in reading order. Hard-fail on any
+   unreviewed missing/reordered paragraph, sentence, or meaningful phrase; an
+   inserted sentence; a language mismatch; or an unexpected phrase of four or
+   more words that appears at least twice. The alignment report must surface each
+   unmatched source/transcript span rather than accepting a paragraph because
+   some of its words matched. Expected ASR spelling errors in names may be waived
+   only in the recorded review; they must not hide an insertion or omission.
+3. Proof-listen the complete final MP3 at normal speed. The reviewer must check
+   voice identity, pronunciation, repetitions, insertions, omissions, truncation,
+   clicks, long silence, and chunk-boundary glitches. Record reviewer, timestamp,
+   MP3 hash, and PASS/FAIL in the campaign listening checklist. An unchecked box
+   or a generated report is not approval.
+4. Bind every derived MP4 to the approved MP3 SHA-256 in its generation manifest.
+   Extract and transcribe the MP4 audio after muxing; it must preserve the approved
+   narration and duration. A video codec probe alone is not a content check.
+
+Any regeneration or byte change invalidates the prior approval and requires the
+gate again. Voice-reference audio and biometrics remain private; only the
+narration, hashes, transcripts, and review result belong in campaign evidence.
+
+### Evidence contract and current enforcement boundary
+
+Publisher does not yet validate this gate in the `video` or `publish` command.
+Until a code-level validator ships, this is a **manual fail-closed preflight**:
+the operator or agent must inspect the evidence and must not invoke `publish` if
+any required file or PASS verdict is absent. Do not claim that the CLI rejected an
+asset; record that the manual gate blocked it.
+
+Store the evidence under the private campaign policy root:
+
+```text
+~/.arcanada-publisher/policy/campaigns/<campaign-id>/evidence/media/<asset-id>/
+├── source.txt
+├── audio-asr.txt
+├── audio-alignment.md
+├── listening-checklist.md
+├── video-asr.txt                 # required when an MP4 is derived
+└── verification.json
+```
+
+`verification.json` is the receipt index. It must contain these fields (the video
+fields are required for a derived MP4):
+
+```json
+{
+  "schemaVersion": 1,
+  "campaignId": "CONTENT-NNNN",
+  "assetId": "en-pavel",
+  "language": "en",
+  "voice": "pavel",
+  "sourceSha256": "<64 lowercase hex>",
+  "audioSha256": "<64 lowercase hex>",
+  "videoSha256": "<64 lowercase hex or null>",
+  "audioAsrVerdict": "PASS",
+  "listeningVerdict": "PASS",
+  "videoAsrVerdict": "PASS or NOT_APPLICABLE",
+  "reviewedAt": "<ISO-8601 timestamp>",
+  "reviewer": "<human or audio-capable agent identity>"
+}
+```
+
+`audio-alignment.md` lists every unmatched source/transcript span and its explicit
+resolution. `listening-checklist.md` records the complete-listen checks from step 3.
+The receipt is valid only when its hashes match the actual files immediately before
+the publish command. Keep the directory `0700` and evidence files `0600`, matching
+the existing private Publisher evidence convention.
+
+**CONTENT-0377 precedent (2026-07-14).** An EN F5-TTS asset was a valid, non-silent
+MP3 of the expected duration, but repeatedly inserted the sentence “This recording
+is part of that same process.” The unchecked asset was then reused in the website
+player and in the X/LinkedIn MP4. File-level checks all passed; independent ASR and
+the public LinkedIn transcript exposed the semantic corruption. This is why both
+ASR comparison and complete proof-listening are hard gates.
 
 ## Every block is its own sentence — headings and paragraphs
 
