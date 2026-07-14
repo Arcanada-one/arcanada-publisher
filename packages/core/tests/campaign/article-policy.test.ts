@@ -64,6 +64,7 @@ function manifest(): ArticleCampaignManifest {
       path: "/campaign/hero.jpg",
       sha256: HASH_HERO,
       mime: "image/jpeg",
+      sizeBytes: 171_059,
       width: 1280,
       height: 640,
       role: "static-hero",
@@ -172,7 +173,11 @@ const evidence = {
       "/campaign/fb.txt": "Title\nhttps://example.com/ru/article",
     };
     return hashes[path]
-      ? { sha256: hashes[path], ...(texts[path] ? { text: texts[path] } : {}) }
+      ? {
+          sha256: hashes[path],
+          ...(path === "/campaign/hero.jpg" ? { size: 171_059 } : {}),
+          ...(texts[path] ? { text: texts[path] } : {}),
+        }
       : undefined;
   },
   probeUrl: (url: string) => ({
@@ -322,6 +327,14 @@ describe("validateArticleCampaign", () => {
       expect.arrayContaining([
         expect.objectContaining({ code: ErrorCode.CAMPAIGN_EVIDENCE_MISSING }),
       ]),
+    );
+  });
+
+  it("rejects an oversized hero even when its hash is correct", () => {
+    const value = manifest();
+    value.hero.sizeBytes = 500_001;
+    expect(validateArticleCampaign(value, evidence)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: ErrorCode.CAMPAIGN_MEDIA_POLICY })]),
     );
   });
 });

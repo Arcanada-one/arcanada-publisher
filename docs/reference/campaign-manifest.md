@@ -60,7 +60,7 @@ Match keys are the exact platform, profile, and optional typed destination (`cha
 - identity: schema version, campaign/task IDs, content kind, policy, and timestamps;
 - website: RU/EN HTTPS URLs, title hashes, deployment commit/run, and live verification timestamps;
 - Pavel audio: RU/EN local MP3 paths, CDN URLs, hashes, durations, engine/normalization provenance, technical verification, and listening timestamps;
-- media: static hero plus Telegram RU and X/LinkedIn EN full-narration MP4 records;
+- media: an optimized JPEG static hero (exact byte size, maximum 500,000 bytes) plus Telegram RU and X/LinkedIn EN full-narration MP4 records;
 - immutable copy records: local path, hash, locale, title-first rule, canonical links, and policy-check timestamp;
 - targets: a unique campaign `targetId`, its `managedTargetId`, action, copy/asset hashes, language, media role, idempotency key, and current baseline;
 - content-addressed write-ahead authorization and current body/media read-back evidence for existing posts;

@@ -61,6 +61,7 @@ function minimalManifest() {
       path: "hero.jpg",
       sha256: HASH,
       mime: "image/jpeg",
+      sizeBytes: 171_059,
       width: 1280,
       height: 640,
       role: "static-hero",
@@ -136,6 +137,12 @@ describe("ArticleCampaignManifest", () => {
     expect(ArticleCampaignManifestSchema.safeParse(minimalManifest()).success).toBe(true);
     expect(
       ArticleCampaignManifestSchema.safeParse({ ...minimalManifest(), extra: true }).success,
+    ).toBe(false);
+    expect(
+      ArticleCampaignManifestSchema.safeParse({
+        ...minimalManifest(),
+        hero: { ...minimalManifest().hero, mime: "image/png" },
+      }).success,
     ).toBe(false);
     expect(
       ArticleCampaignManifestSchema.safeParse({

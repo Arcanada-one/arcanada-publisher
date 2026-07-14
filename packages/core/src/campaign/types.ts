@@ -257,7 +257,8 @@ export const ArticleCampaignManifestSchema = z
       .object({
         path: z.string().min(1),
         sha256: Sha256Schema,
-        mime: z.enum(["image/jpeg", "image/png", "image/webp"]),
+        mime: z.literal("image/jpeg"),
+        sizeBytes: z.number().int().positive(),
         width: z.number().int().positive(),
         height: z.number().int().positive(),
         role: z.literal("static-hero"),

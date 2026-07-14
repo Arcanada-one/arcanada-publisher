@@ -13,6 +13,7 @@ export interface CampaignFinding {
 
 export interface ArtifactEvidence {
   sha256: string;
+  size?: number;
   text?: string;
 }
 
@@ -77,7 +78,27 @@ export function validateArticleCampaign(
     }
   }
 
-  fileHash(manifest.hero.path, manifest.hero.sha256, "/hero/path", evidence, add);
+  const heroEvidence = fileHash(
+    manifest.hero.path,
+    manifest.hero.sha256,
+    "/hero/path",
+    evidence,
+    add,
+  );
+  if (manifest.hero.sizeBytes > 500_000) {
+    add(
+      ErrorCode.CAMPAIGN_MEDIA_POLICY,
+      "/hero/sizeBytes",
+      "canonical JPEG hero exceeds the 500000-byte publication ceiling",
+    );
+  }
+  if (heroEvidence?.size !== manifest.hero.sizeBytes) {
+    add(
+      ErrorCode.CAMPAIGN_ASSET_MISMATCH,
+      "/hero/sizeBytes",
+      "hero byte size differs from the canonical JPEG record",
+    );
+  }
   checkVideo(
     manifest.videos.telegramRu,
     manifest.audio.ru.sha256,
