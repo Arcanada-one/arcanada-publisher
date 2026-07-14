@@ -4,8 +4,10 @@ A blog post with the audio player needs one MP3 per voice: 5 RU voices (Silero)
 plus 1 EN voice (`af_heart`, Kokoro). The generator lives in the **landing repo**
 (`Projects/Arcanada Ecosystem/code/landing/ops/gen-blog-audio.py`), not in this
 Publisher repo — but the _rules_ for preparing the narration text are a publishing
-concern and are mirrored in `skills/publishing/SKILL.md` § "Blog audio narration —
-TTS text prep". This page is the operational recipe.
+concern. This page is Publisher's operational source of truth. Datarim's
+`skills/publishing/SKILL.md` carries the separate agent-facing gate and must be
+updated in a coordinated change; do not assume cross-repository parity without
+verifying both committed versions.
 
 ## The core rule: normalize the RU text, do not strip it
 
