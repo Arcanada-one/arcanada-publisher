@@ -1,4 +1,5 @@
 import { chmodSync, copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -13,6 +14,15 @@ import {
 const roots: string[] = [];
 const HASH = "a".repeat(64);
 const NOW = new Date("2026-07-13T20:00:00.000Z");
+const MEDIA_TOOLS_AVAILABLE = ["ffmpeg", "ffprobe"].every((binary) => {
+  try {
+    execFileSync(binary, ["-version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+});
+const itWithMediaTools = MEDIA_TOOLS_AVAILABLE ? it : it.skip;
 
 function secureDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "publisher-guard-"));
@@ -265,54 +275,57 @@ describe("CampaignGuard", () => {
     expect(evidence.probeUrl(url)).toEqual({ status: 0 });
   });
 
-  it("derives MP3 codec, duration, and narration fingerprint from actual bytes", async () => {
-    const dir = secureDir();
-    copyFileSync(
-      resolve(import.meta.dirname, "../../../video-generator/tests/fixtures/audio.mp3"),
-      join(dir, "audio.mp3"),
-    );
-    const loaded = {
-      manifest: {
-        website: {
-          ru: { url: "https://example.com/ru", titleSha256: HASH },
-          en: { url: "https://example.com/en", titleSha256: HASH },
+  itWithMediaTools(
+    "derives MP3 codec, duration, and narration fingerprint from actual bytes",
+    async () => {
+      const dir = secureDir();
+      copyFileSync(
+        resolve(import.meta.dirname, "../../../video-generator/tests/fixtures/audio.mp3"),
+        join(dir, "audio.mp3"),
+      );
+      const loaded = {
+        manifest: {
+          website: {
+            ru: { url: "https://example.com/ru", titleSha256: HASH },
+            en: { url: "https://example.com/en", titleSha256: HASH },
+          },
+          audio: {
+            ru: { path: "audio.mp3", url: "https://example.com/ru.mp3" },
+            en: { path: "audio.mp3", url: "https://example.com/en.mp3" },
+          },
         },
-        audio: {
-          ru: { path: "audio.mp3", url: "https://example.com/ru.mp3" },
-          en: { path: "audio.mp3", url: "https://example.com/en.mp3" },
-        },
-      },
-      path: join(dir, "campaign.json"),
-      sha256: HASH,
-    } as unknown as LoadedCampaignManifest;
-    const guard = new CampaignGuard({
-      campaignRoots: [dir],
-      fetch: vi.fn(async () => new Response("ok", { status: 200 })),
-    });
-    const built = await (
-      guard as unknown as {
-        buildEvidence(manifest: LoadedCampaignManifest): Promise<{
-          statFile(path: string):
-            | {
-                media?: {
-                  container: string;
-                  audioCodec: string;
-                  durationSec: number;
-                  audioFingerprint: readonly number[];
-                };
-              }
-            | undefined;
-        }>;
-      }
-    ).buildEvidence(loaded);
+        path: join(dir, "campaign.json"),
+        sha256: HASH,
+      } as unknown as LoadedCampaignManifest;
+      const guard = new CampaignGuard({
+        campaignRoots: [dir],
+        fetch: vi.fn(async () => new Response("ok", { status: 200 })),
+      });
+      const built = await (
+        guard as unknown as {
+          buildEvidence(manifest: LoadedCampaignManifest): Promise<{
+            statFile(path: string):
+              | {
+                  media?: {
+                    container: string;
+                    audioCodec: string;
+                    durationSec: number;
+                    audioFingerprint: readonly number[];
+                  };
+                }
+              | undefined;
+          }>;
+        }
+      ).buildEvidence(loaded);
 
-    expect(built.statFile("audio.mp3")?.media).toMatchObject({
-      container: "mp3",
-      audioCodec: "mp3",
-      durationSec: expect.any(Number),
-      audioFingerprint: expect.arrayContaining([expect.any(Number)]),
-    });
-  });
+      expect(built.statFile("audio.mp3")?.media).toMatchObject({
+        container: "mp3",
+        audioCodec: "mp3",
+        durationSec: expect.any(Number),
+        audioFingerprint: expect.arrayContaining([expect.any(Number)]),
+      });
+    },
+  );
 
   it("blocks backlink deployment until every target has a verified canonical permalink", async () => {
     const dir = secureDir();
