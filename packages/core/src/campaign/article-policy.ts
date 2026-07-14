@@ -14,6 +14,7 @@ export interface CampaignFinding {
 export interface ArtifactEvidence {
   sha256: string;
   size?: number;
+  mime?: string;
   text?: string;
 }
 
@@ -98,6 +99,9 @@ export function validateArticleCampaign(
       "/hero/sizeBytes",
       "hero byte size differs from the canonical JPEG record",
     );
+  }
+  if (heroEvidence?.mime !== "image/jpeg") {
+    add(ErrorCode.CAMPAIGN_MEDIA_POLICY, "/hero/mime", "hero bytes are not a JPEG image");
   }
   checkVideo(
     manifest.videos.telegramRu,

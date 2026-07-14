@@ -175,7 +175,7 @@ const evidence = {
     return hashes[path]
       ? {
           sha256: hashes[path],
-          ...(path === "/campaign/hero.jpg" ? { size: 171_059 } : {}),
+          ...(path === "/campaign/hero.jpg" ? { size: 171_059, mime: "image/jpeg" } : {}),
           ...(texts[path] ? { text: texts[path] } : {}),
         }
       : undefined;
@@ -334,6 +334,20 @@ describe("validateArticleCampaign", () => {
     const value = manifest();
     value.hero.sizeBytes = 500_001;
     expect(validateArticleCampaign(value, evidence)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: ErrorCode.CAMPAIGN_MEDIA_POLICY })]),
+    );
+  });
+
+  it("rejects non-JPEG hero bytes even when the manifest labels them JPEG", () => {
+    const value = manifest();
+    const wrongMimeEvidence = {
+      ...evidence,
+      statFile: (path: string) => {
+        const found = evidence.statFile(path);
+        return path === value.hero.path && found ? { ...found, mime: "image/png" } : found;
+      },
+    };
+    expect(validateArticleCampaign(value, wrongMimeEvidence)).toEqual(
       expect.arrayContaining([expect.objectContaining({ code: ErrorCode.CAMPAIGN_MEDIA_POLICY })]),
     );
   });

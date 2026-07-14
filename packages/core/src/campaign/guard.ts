@@ -516,7 +516,14 @@ export class CampaignGuard {
           if (!info.isFile() || info.isSymbolicLink()) return undefined;
           const actual = assertWithinRoots(candidate, this.campaignRoots, "/artifact");
           const bytes = readFileSync(actual);
-          return { sha256: sha256(bytes), size: bytes.length, text: bytes.toString("utf8") };
+          return {
+            sha256: sha256(bytes),
+            size: bytes.length,
+            ...(bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+              ? { mime: "image/jpeg" }
+              : {}),
+            text: bytes.toString("utf8"),
+          };
         } catch {
           return undefined;
         }
