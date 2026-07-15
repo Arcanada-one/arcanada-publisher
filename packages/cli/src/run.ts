@@ -305,9 +305,9 @@ async function runPublish(
     };
   }
   const body = applyPolicy(readText(args), platform, loadPolicy(args.policyConfig));
-  // Platform-specific fields (subreddit/title for reddit, ownerId for vk) ride
-  // alongside the shared shape; adapters that don't use them ignore the extras.
-  // They are required for the reddit/vk dry-run path to reach success.
+  // Platform-specific fields ride alongside the shared shape. `title` is used by
+  // Reddit self-posts and by Telegram's explicit two-channel-post article bundle;
+  // adapters that do not use a field ignore it.
   const res = await makeAdapter(platform, args).publish({
     text: body,
     imagePaths: args.images,
@@ -322,7 +322,8 @@ async function runPublish(
       ? { expectedAuthorProfileUrl: args.expectedAuthorProfileUrl }
       : {}),
   } as Parameters<ReturnType<typeof makeAdapter>["publish"]>[0]);
-  return { code: ErrorCode.SUCCESS, message: `published: ${res.postUrl}` };
+  const publishedUrls = res.postUrls ?? [res.postUrl];
+  return { code: ErrorCode.SUCCESS, message: `published: ${publishedUrls.join(", ")}` };
 }
 
 /**

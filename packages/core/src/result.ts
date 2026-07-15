@@ -19,6 +19,8 @@ const baseResultShape = {
 export const PublishResultSchema = z.object({
   ...baseResultShape,
   postUrl: z.string().url(),
+  postUrls: z.array(z.string().url()).optional(),
+  postIds: z.array(z.string().min(1)).optional(),
   attachments: z.array(attachmentSchema).default([]),
   commentIds: z.array(z.string()).default([]),
 });

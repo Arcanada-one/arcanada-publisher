@@ -17,7 +17,7 @@ export interface PublishInput {
   dryRun?: boolean;
   /** Reddit-specific target subreddit (without the `r/` prefix). */
   subreddit?: string;
-  /** Reddit-specific self-post title. */
+  /** Reddit self-post title; Telegram article-bundle media title. */
   title?: string;
   /** VK-specific wall owner id. */
   ownerId?: number;

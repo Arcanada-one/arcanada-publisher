@@ -76,25 +76,45 @@ export class TelegramAdapter extends BaseAdapter {
     if (!text.trim()) throw new AdapterError(ErrorCode.MISSING_INPUT, "publish: text is required");
     const media = input.imagePaths?.[0] ?? input.imagePath;
     const kind = media ? mediaKind(media) : undefined;
-    if (media && kind === "image" && text.length > TELEGRAM_PATTERN_A_LIMIT)
+    const title = input.title?.trim();
+    if (title && !media)
+      throw new AdapterError(
+        ErrorCode.INVALID_ARGS,
+        "telegram: article-bundle --title requires --image",
+      );
+    const articleBundle = Boolean(media && title);
+    const bundleCaption = title ? `<b>${escapeTelegramHtml(title)}</b>` : undefined;
+    if (articleBundle && telegramUnits(bundleCaption!) > TELEGRAM_CAPTION_LIMIT)
+      throw new AdapterError(ErrorCode.INVALID_ARGS, "telegram: media title exceeds 1024 units");
+    if (articleBundle && telegramUnits(text) > TELEGRAM_MESSAGE_LIMIT)
+      throw new AdapterError(ErrorCode.INVALID_ARGS, "telegram: article text exceeds 4096 units");
+    if (!articleBundle && media && kind === "image" && text.length > TELEGRAM_PATTERN_A_LIMIT)
       throw new AdapterError(
         ErrorCode.INVALID_ARGS,
         `telegram: Pattern A text exceeds ${TELEGRAM_PATTERN_A_LIMIT} UTF-16 units`,
       );
-    if (media && kind === "video" && text.length > 900)
+    if (!articleBundle && media && kind === "video" && text.length > 900)
       throw new AdapterError(
         ErrorCode.INVALID_ARGS,
         "telegram: media caption must leave room for the idempotency marker (maximum 900 characters)",
       );
-    if (input.dryRun)
+    if (input.dryRun) {
+      const postUrl = dryRunUrl(chatId);
       return PublishResultSchema.parse({
         ok: true,
         platform: "telegram",
         account: chatId,
-        postUrl: dryRunUrl(chatId),
+        postUrl,
+        ...(articleBundle
+          ? {
+              postUrls: [`${postUrl}?part=1`, `${postUrl}?part=2`],
+              postIds: ["dry-run-1", "dry-run-2"],
+            }
+          : {}),
         attachments: media ? [{ kind: mediaKind(media), src: media }] : [],
         commentIds: [],
       });
+    }
 
     if (!this.allowedLiveChatIds.has(chatId))
       throw new AdapterError(
@@ -103,6 +123,64 @@ export class TelegramAdapter extends BaseAdapter {
       );
     const bot = requireResult<{ id: number }>(await this.transport("getMe", undefined), "getMe");
     const baseline = await this.baseline(chatId);
+
+    if (articleBundle) {
+      const bytes = await readFile(media!);
+      const mediaMethod = kind === "video" ? "sendVideo" : "sendPhoto";
+      const mediaBody = new FormData();
+      mediaBody.set("chat_id", chatId);
+      mediaBody.set(kind === "image" ? "photo" : "video", new Blob([bytes]), basename(media!));
+      mediaBody.set("caption", bundleCaption!);
+      mediaBody.set("parse_mode", "HTML");
+      const first = requireMessage(await this.transport(mediaMethod, mediaBody), mediaMethod);
+      await this.assertReadBack(
+        first,
+        chatId,
+        baseline,
+        bot.id,
+        telegramVisibleText(bundleCaption!),
+        media,
+        true,
+      );
+
+      const textBody = jsonBody({ chat_id: chatId, text, parse_mode: "HTML" });
+      let second: TelegramMessage;
+      try {
+        second = requireMessage(await this.transport("sendMessage", textBody), "sendMessage");
+      } catch (error) {
+        throw new AdapterError(
+          ErrorCode.VERIFY_FAILED,
+          "telegram: second channel post failed after post 1; state UNKNOWN; do not retry blindly",
+          {
+            unknown: true,
+            reconcileRequired: true,
+            firstMessageId: first.message_id,
+            reason: error instanceof Error ? error.message : String(error),
+          },
+        );
+      }
+      await this.assertReadBack(
+        second,
+        chatId,
+        first.message_id,
+        bot.id,
+        telegramVisibleText(text),
+        undefined,
+        true,
+      );
+      const postUrls = [messageUrl(first), messageUrl(second)];
+      return PublishResultSchema.parse({
+        ok: true,
+        platform: "telegram",
+        account: chatId,
+        postUrl: postUrls[0],
+        postUrls,
+        postIds: [String(first.message_id), String(second.message_id)],
+        attachments: [{ kind: kind!, src: media! }],
+        commentIds: [],
+      });
+    }
+
     const markerNonce =
       this.nonce()
         .replace(/[^A-Za-z0-9]/g, "")
@@ -522,12 +600,15 @@ export class TelegramAdapter extends BaseAdapter {
     botId: number,
     expectedText: string,
     media?: string,
+    ordinaryOnly = false,
   ): Promise<void> {
     const actual = message.caption ?? message.text ?? "";
     if (
       !publisherSourceIdentityMatches(message, chatId, botId) ||
       message.message_id <= baseline ||
       message.forward_origin ||
+      (ordinaryOnly &&
+        (message.reply_to_message !== undefined || message.message_thread_id !== undefined)) ||
       actual !== expectedText
     )
       throw new AdapterError(
@@ -559,6 +640,21 @@ function normalizeTerminalLineEnding(text: string): string {
 }
 function mediaKind(path: string): "image" | "video" {
   return /\.(mp4|mov|webm)$/i.test(path) ? "video" : "image";
+}
+function telegramVisibleText(value: string): string {
+  return value
+    .replace(/<[^>]*>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+function escapeTelegramHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function telegramUnits(value: string): number {
+  return Buffer.byteLength(value, "utf16le") / 2;
 }
 function patternAText(text: string, heroLimit: number): { hero: string; reply?: string } {
   if (text.length <= heroLimit) return { hero: text };

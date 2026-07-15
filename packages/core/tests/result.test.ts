@@ -126,3 +126,21 @@ describe("VerifyResultSchema", () => {
     expect(r.status).toBe(404);
   });
 });
+
+describe("PublishResultSchema multi-post bundle", () => {
+  it("preserves ordered post IDs and URLs without treating post 2 as a comment", () => {
+    const parsed = PublishResultSchema.parse({
+      ok: true,
+      platform: "telegram",
+      account: "-1003855619081",
+      postUrl: "https://t.me/c/3855619081/8",
+      postUrls: ["https://t.me/c/3855619081/8", "https://t.me/c/3855619081/9"],
+      postIds: ["8", "9"],
+      commentIds: [],
+    });
+
+    expect(parsed.postIds).toEqual(["8", "9"]);
+    expect(parsed.postUrls).toHaveLength(2);
+    expect(parsed.commentIds).toEqual([]);
+  });
+});

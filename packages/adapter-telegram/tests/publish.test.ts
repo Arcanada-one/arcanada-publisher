@@ -802,3 +802,66 @@ function corruptMiddle(text: string): string {
 function removeOneTerminalLineEnding(text: string): string {
   return text.replace(/\r?\n$/, "");
 }
+
+describe("TelegramAdapter two-post channel contract", () => {
+  it("publishes and reads back two ordered ordinary channel posts without reply fields", async () => {
+    const media = makeMedia("hero.mp4");
+    const text =
+      '<b>Global Addresser</b>\n\nFull RU text\n\n<a href="https://arcanada.ai/ru/blog/cubrim-global-addresser">Читать статью полностью на arcanada.ai</a>';
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, result: { id: 42 } })
+      .mockResolvedValueOnce({ ok: true, result: [] })
+      .mockImplementationOnce(async (method: string, body: FormData) => {
+        expect(method).toBe("sendVideo");
+        expect(body.has("video")).toBe(true);
+        expect(body.get("caption")).toBe("<b>Global Addresser</b>");
+        expect(body.get("parse_mode")).toBe("HTML");
+        for (const key of ["reply_to_message_id", "reply_parameters", "message_thread_id"])
+          expect(body.has(key)).toBe(false);
+        return {
+          ok: true,
+          result: {
+            message_id: 8,
+            chat: { id: Number(TELEGRAM_TEST_CHAT_ID), username: "test" },
+            sender_chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
+            caption: "Global Addresser",
+            video: {
+              file_id: "video",
+              width: 1280,
+              height: 720,
+              duration: 1,
+              file_name: "hero.mp4",
+            },
+          },
+        };
+      })
+      .mockImplementationOnce(async (method: string, body: URLSearchParams) => {
+        expect(method).toBe("sendMessage");
+        expect(body.get("text")).toBe(text);
+        expect(body.get("parse_mode")).toBe("HTML");
+        for (const key of ["reply_to_message_id", "reply_parameters", "message_thread_id"])
+          expect(body.has(key)).toBe(false);
+        return {
+          ok: true,
+          result: {
+            message_id: 9,
+            chat: { id: Number(TELEGRAM_TEST_CHAT_ID), username: "test" },
+            sender_chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
+            text: "Global Addresser\n\nFull RU text\n\nЧитать статью полностью на arcanada.ai",
+          },
+        };
+      });
+    const adapter = new TelegramAdapter({ transport, nonce: () => "unused" });
+    const result = await adapter.publish({
+      text,
+      title: "Global Addresser",
+      profile: "",
+      chatId: TELEGRAM_TEST_CHAT_ID,
+      imagePaths: [media],
+    });
+    expect(result.postIds).toEqual(["8", "9"]);
+    expect(result.postUrls).toEqual(["https://t.me/test/8", "https://t.me/test/9"]);
+    expect(transport).toHaveBeenCalledTimes(4);
+  });
+});

@@ -125,3 +125,27 @@ describe("cli run — X dry-run publish (V-AC-11)", () => {
     }
   });
 });
+
+describe("cli run — Telegram two-post article dry-run", () => {
+  it("reports both planned channel posts without credentials or network", async () => {
+    const img = join(HERE, "fixtures", "hero.png");
+    const res = await run([
+      "publish",
+      "--platform",
+      "telegram",
+      "--chat-id",
+      "-1003855619081",
+      "--text-file",
+      TEXT_279,
+      "--image",
+      img,
+      "--title",
+      "Global Addresser",
+      "--dry-run",
+    ]);
+
+    expect(res.code).toBe(0);
+    expect(res.message).toContain("part=1");
+    expect(res.message).toContain("part=2");
+  });
+});

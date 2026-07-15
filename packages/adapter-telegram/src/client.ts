@@ -22,6 +22,7 @@ export interface TelegramMessage {
     file_name?: string;
   };
   reply_to_message?: { message_id: number; chat: { id: number } };
+  message_thread_id?: number;
 }
 
 interface TelegramEnvelope<T> {

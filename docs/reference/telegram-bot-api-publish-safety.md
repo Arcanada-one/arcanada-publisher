@@ -40,26 +40,16 @@
 3. After every `send*` call, require `ok==true` **and** a present
    `result.message_id`. An empty / non-JSON / `ok!=true` body is **UNKNOWN**,
    never success and never a retryable failure.
-4. On UNKNOWN, do **not** re-send blindly (duplicate risk). Reconcile: compare
-   the channel's current bot-authored messages against the **baseline max
-   `message_id` captured BEFORE publishing**, and identify by a unique
-   idempotency marker embedded in the caption — then decide retry vs. abort.
-5. Capture and thread the real `message_id`: the longread's
-   `reply_to_message_id` MUST be the captured id of post 1. If post 1's id is
-   UNKNOWN, do **not** send post 2 (no orphaned/mis-linked longread).
+4. On UNKNOWN, do **not** re-send blindly. Generic single-post flows reconcile against the pre-publish baseline and idempotency marker. Article bundles reconcile against the baseline and any ordered IDs already returned, then stop for inspection; never invent the missing half of the pair.
+5. For a Telegram article bundle, capture both ordered `message_id` values from exactly two sequential ordinary posts in the same `chat_id`. Post 1 is media plus bold title; post 2 is title plus complete RU text plus the final linked RU CTA. Neither request may contain `reply_to_message_id`, `message_thread_id`, discussion-group, or comment fields. If either state is UNKNOWN, stop without blind retry.
 
 ### C. Message identity (own vs. foreign)
 
 6. Snapshot a **baseline** before publishing: record the channel's current
    `max(message_id)`. Any message with id ≤ baseline is **foreign** and cannot
    be a result of this session.
-7. Identify a message as "mine" **only** by captured `message_id` + bot
-   authorship (`from.id == bot_id`, no `forward_origin`). **Never** attribute a
-   message to yourself because its caption text matches — that is exactly how
-   the foreign forwarded video was misclaimed.
-8. Embed a unique idempotency marker (task-id + nonce) in each post's caption;
-   it is both the dedup key on retry and the "mine vs. foreign" signal on
-   inspection.
+7. Identify a message as "mine" only by its captured `message_id` plus either bot authorship (`from.id == bot_id`) or real channel authorship (`sender_chat.id == chat_id`), with no `forward_origin`. Never attribute a message by matching caption text.
+8. Generic single-post flows may embed a unique idempotency marker (task-id plus nonce). The operator-approved article bundle must preserve the exact title and article text instead: rely on the pre-publish baseline, both ordered returned IDs, target identity, and exact read-back boundaries.
 
 ### D. Verify-after-publish (read back the ARTIFACT, not the source)
 
@@ -74,14 +64,8 @@
 11. Prove the video is **our freshly generated file**: `file_size`, `duration`,
     `width`×`height`, `file_name` read from the platform MUST match the file
     actually sent this cycle. A mismatch = "possibly foreign/old video" = FAIL.
-12. Verify the hidden link's actual `url` (from `entities.text_link` or
-    `reply_markup.*.url`) and the reply linkage (`reply_to_message.message_id`
-    of post 2 points at post 1, same `chat.id`), and that `chat.id` is the
-    intended target (test channel `-1003855619081` on smoke; prod only on go).
-13. Inspect the **whole** channel state before declaring smoke, not just "my"
-    messages: count messages, flag any foreign video / foreign author /
-    `forward_origin` / leftover from prior sessions. Any stray artifact = smoke
-    NOT passed → stop and clean.
+12. For an article bundle, verify the final CTA hidden-link `url` in post 2, verify both posts use the intended `chat.id` (test channel `-1003855619081` on smoke; prod only on go), and verify both responses have no reply/thread linkage.
+13. Compare the channel state with the captured baseline and both returned IDs. Pre-existing messages remain foreign to this run and are not deleted by guessed IDs. Any unexpected new message after the baseline is an ambiguity: stop and inspect.
 
 ### E. Reporting & gates (source ≠ result)
 
@@ -102,30 +86,13 @@
 
 ### F. Body links vs. first-comment CTA (clarified 2026-07-01)
 
-18. Contextual links inside the post body (sources, the prior article, standards
-    bodies, inline product mentions) are **allowed** - they are part of the prose.
-    Only a standalone CTA "links block" (a `Links / Resources` header + URL list)
-    is forbidden in the body; it moves to the first comment.
-19. Per-platform first comment (canonical set in `skills/publishing/SKILL.md`
-    section "Universal rule"): Telegram = one link, the article in the post's
-    language; **X (EN) = the EN article + the canonical Telegram (RU) post**,
-    each language-labelled; FB/LI/VK = blog (platform language) + Telegram (RU)
-    - X (EN), all in one comment.
+18. Contextual links inside prose are allowed. On FB, LinkedIn, VK, and X, a standalone CTA links block moves to the first comment or reply for that platform. Telegram article publication is the explicit exception: no comment or reply is created, and its only article URL is the final CTA in ordinary channel post 2.
+19. Per-platform comment/reply policy is canonical in `skills/publishing/SKILL.md`: X (EN) carries the EN article plus canonical Telegram (RU) post; FB/LI/VK carry blog plus Telegram (RU) plus X (EN), all in one comment. Telegram uses no first comment.
 
 ### G. Post title + comment parent (added 2026-07-01, X/FB/LI/VK)
 
-20. **Title first line.** The article title (or a title-equivalent headline in
-    the post's language) MUST be the first line of the post body on EVERY
-    platform (X, FB, LinkedIn, VK, Telegram), then a blank line, then the lead.
-    A post opening straight into the lead loses the hook. Telegram: bold first
-    line of the video caption. X/FB/LI/VK: plain first line (no `<b>` - those
-    flatten HTML). Verify the title is present in the read-back, not just the
-    source file.
-21. **Comment parent verify.** Before attaching the first comment, confirm the
-    target post is the one JUST published this cycle - read its body/media back
-    and match it to THIS article. A publisher tool's returned URL can point at
-    the feed's top / an older post; commenting on it blindly lands the comment
-    on a stale post (silent defect the operator finds by hand).
+20. **Title first line.** The article title must be the first line on every platform. For Telegram, post 1 contains only media plus the bold title; post 2 starts with the title, continues with the complete RU text, and ends with the linked RU CTA. X/FB/LI/VK use a plain title first line. Verify both Telegram titles in returned content, not only the source file.
+21. **Comment parent verify (X/FB/LI/VK only).** Before attaching a first comment/reply, read the target post back and confirm it is the post just published. Telegram article publication has no comment, reply, discussion group, or thread.
 
 ### H. Browser-adapter session conflict (LinkedIn/FB, added 2026-07-01)
 
