@@ -76,12 +76,15 @@ describe("consent login (real loopback listener)", () => {
       consentUrl = u;
     };
     const loginDone = auth.login();
+    // Attach the rejection expectation BEFORE triggering the redirect so the
+    // promise is never momentarily unhandled.
+    const expectation = expect(loginDone).rejects.toThrow(/state mismatch/);
     await new Promise((r) => setTimeout(r, 50));
     const redirect = new URL(new URL(consentUrl).searchParams.get("redirect_uri") ?? "");
     redirect.searchParams.set("code", "4/0Axcode");
     redirect.searchParams.set("state", "WRONG");
     await fetch(redirect);
-    await expect(loginDone).rejects.toThrow(/state mismatch/);
+    await expectation;
   });
 });
 

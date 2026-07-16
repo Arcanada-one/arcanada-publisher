@@ -101,14 +101,14 @@ export class AuthManager {
       const server = createServer((req, res) => {
         const url = new URL(req.url ?? "/", this.redirectUri);
         res.setHeader("content-type", "text/plain; charset=utf-8");
-        // Single-shot: forbid keep-alive reuse, then drop every open socket —
-        // server.close() alone keeps serving pooled connections.
+        // Single-shot: `connection: close` retires this socket after the
+        // response flushes (no RST mid-read), and server.close() refuses any
+        // new connection — together the listener serves exactly one redirect.
         res.setHeader("connection", "close");
         const gotState = url.searchParams.get("state");
         const code = url.searchParams.get("code");
         res.end("Arcanada Publisher: you may close this tab.");
         server.close();
-        server.closeAllConnections();
         if (gotState !== state) {
           reject(
             new AdapterError(ErrorCode.INVALID_ARGS, "OAuth state mismatch — consent aborted"),

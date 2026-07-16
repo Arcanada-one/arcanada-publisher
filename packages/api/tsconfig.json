@@ -4,15 +4,37 @@
     "outDir": "dist",
     "rootDir": "src"
   },
-  "include": ["src/**/*"],
-  "exclude": ["tests/**/*", "dist/**/*"],
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "tests/**/*",
+    "dist/**/*"
+  ],
   "references": [
-    { "path": "../core" },
-    { "path": "../adapter-facebook" },
-    { "path": "../adapter-linkedin" },
-    { "path": "../adapter-x-twitter" },
-    { "path": "../adapter-reddit" },
-    { "path": "../adapter-vkontakte" },
-    { "path": "../adapter-telegram" }
+    {
+      "path": "../core"
+    },
+    {
+      "path": "../adapter-facebook"
+    },
+    {
+      "path": "../adapter-linkedin"
+    },
+    {
+      "path": "../adapter-x-twitter"
+    },
+    {
+      "path": "../adapter-reddit"
+    },
+    {
+      "path": "../adapter-vkontakte"
+    },
+    {
+      "path": "../adapter-telegram"
+    },
+    {
+      "path": "../adapter-youtube"
+    }
   ]
 }

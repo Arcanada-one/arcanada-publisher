@@ -29,7 +29,8 @@
     "@arcanada/publisher-reddit": "workspace:*",
     "@arcanada/publisher-telegram": "workspace:*",
     "@arcanada/publisher-vkontakte": "workspace:*",
-    "@arcanada/publisher-x": "workspace:*"
+    "@arcanada/publisher-x": "workspace:*",
+    "@arcanada/publisher-youtube": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

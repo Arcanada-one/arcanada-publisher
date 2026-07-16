@@ -9,6 +9,7 @@ import { XAdapter } from "@arcanada/publisher-x";
 import { RedditAdapter } from "@arcanada/publisher-reddit";
 import { VKontakteAdapter } from "@arcanada/publisher-vkontakte";
 import { TelegramAdapter } from "@arcanada/publisher-telegram";
+import { YouTubeAdapter } from "@arcanada/publisher-youtube";
 import { type ParsedArgs } from "./parse-args.js";
 
 export function makeAdapter(platform: Platform, args: ParsedArgs): Adapter {
@@ -38,6 +39,10 @@ export function makeAdapter(platform: Platform, args: ParsedArgs): Adapter {
       return new VKontakteAdapter({ accessToken: requireToken("VK_ACCESS_TOKEN", args) });
     case "telegram":
       return makeTelegramAdapter(requireToken("TELEGRAM_BOT_TOKEN", args));
+    case "youtube":
+      // OAuth env credentials are read inside the adapter; dry-run still needs
+      // them (credentialed read-only preflight — documented divergence, PUB-0035).
+      return new YouTubeAdapter();
     default:
       throw new AdapterError(
         ErrorCode.INVALID_ARGS,

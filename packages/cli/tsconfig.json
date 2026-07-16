@@ -4,17 +4,43 @@
     "outDir": "dist",
     "rootDir": "src"
   },
-  "include": ["src/**/*"],
-  "exclude": ["tests/**/*", "dist/**/*"],
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "tests/**/*",
+    "dist/**/*"
+  ],
   "references": [
-    { "path": "../core" },
-    { "path": "../api" },
-    { "path": "../adapter-facebook" },
-    { "path": "../adapter-linkedin" },
-    { "path": "../adapter-x-twitter" },
-    { "path": "../adapter-reddit" },
-    { "path": "../adapter-vkontakte" },
-    { "path": "../adapter-telegram" },
-    { "path": "../video-generator" }
+    {
+      "path": "../core"
+    },
+    {
+      "path": "../api"
+    },
+    {
+      "path": "../adapter-facebook"
+    },
+    {
+      "path": "../adapter-linkedin"
+    },
+    {
+      "path": "../adapter-x-twitter"
+    },
+    {
+      "path": "../adapter-reddit"
+    },
+    {
+      "path": "../adapter-vkontakte"
+    },
+    {
+      "path": "../adapter-telegram"
+    },
+    {
+      "path": "../video-generator"
+    },
+    {
+      "path": "../adapter-youtube"
+    }
   ]
 }

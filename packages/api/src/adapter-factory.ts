@@ -10,6 +10,7 @@ import { XAdapter } from "@arcanada/publisher-x";
 import { RedditAdapter } from "@arcanada/publisher-reddit";
 import { VKontakteAdapter } from "@arcanada/publisher-vkontakte";
 import { TelegramAdapter } from "@arcanada/publisher-telegram";
+import { YouTubeAdapter } from "@arcanada/publisher-youtube";
 
 /** Construct the live adapter for a platform. `dryRun` lets token adapters skip env. */
 export function makeAdapter(platform: Platform, dryRun = false): Adapter {
@@ -26,6 +27,10 @@ export function makeAdapter(platform: Platform, dryRun = false): Adapter {
       return new VKontakteAdapter({ accessToken: requireToken("VK_ACCESS_TOKEN", dryRun) });
     case "telegram":
       return makeTelegramAdapter(requireToken("TELEGRAM_BOT_TOKEN", dryRun));
+    case "youtube":
+      // OAuth env credentials are read inside the adapter (never the request
+      // body); dry-run performs credentialed read-only preflight (PUB-0035).
+      return new YouTubeAdapter();
     default:
       throw new AdapterError(
         ErrorCode.INVALID_ARGS,

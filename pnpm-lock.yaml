@@ -162,6 +162,9 @@ importers:
       '@arcanada/publisher-x':
         specifier: workspace:*
         version: link:../adapter-x-twitter
+      '@arcanada/publisher-youtube':
+        specifier: workspace:*
+        version: link:../adapter-youtube
     devDependencies:
       typescript:
         specifier: ^5.7.2
@@ -199,6 +202,9 @@ importers:
       '@arcanada/publisher-x':
         specifier: workspace:*
         version: link:../adapter-x-twitter
+      '@arcanada/publisher-youtube':
+        specifier: workspace:*
+        version: link:../adapter-youtube
     devDependencies:
       typescript:
         specifier: ^5.7.2

@@ -119,8 +119,11 @@ async function runDelete(
 }
 
 async function runEdit(platform: Platform, profile: string, args: ParsedArgs): Promise<RunResult> {
-  if (!args.targetUrl || !args.textFile) {
-    return { code: ErrorCode.MISSING_INPUT, message: "edit requires --target-url and --text-file" };
+  if (!args.targetUrl || (!args.textFile && args.title === undefined)) {
+    return {
+      code: ErrorCode.MISSING_INPUT,
+      message: "edit requires --target-url and --text-file (or --title for a metadata-only edit)",
+    };
   }
   if (
     platform === "facebook" &&
@@ -136,7 +139,8 @@ async function runEdit(platform: Platform, profile: string, args: ParsedArgs): P
   }
   const res = await makeAdapter(platform, args).edit({
     postUrl: args.targetUrl,
-    text: readText(args),
+    ...(args.textFile ? { text: readText(args) } : {}),
+    ...(args.title !== undefined ? { title: args.title } : {}),
     ...(args.images[0] ? { imagePath: args.images[0] } : {}),
     ...(args.expectedContent || args.expectedContentFile
       ? {
@@ -318,6 +322,11 @@ async function runPublish(
     ...(args.title !== undefined ? { title: args.title } : {}),
     ...(args.ownerId !== undefined ? { ownerId: args.ownerId } : {}),
     ...(args.chatId !== undefined ? { chatId: args.chatId } : {}),
+    ...(args.videoPath !== undefined ? { videoPath: args.videoPath } : {}),
+    ...(args.language !== undefined ? { language: args.language } : {}),
+    ...(args.privacy !== undefined
+      ? { privacyStatus: args.privacy as "private" | "unlisted" | "public" }
+      : {}),
     ...(args.expectedAuthorProfileUrl !== undefined
       ? { expectedAuthorProfileUrl: args.expectedAuthorProfileUrl }
       : {}),

@@ -35,9 +35,18 @@ export function statusForCode(code: ErrorCode): number {
     case ErrorCode.MISSING_INPUT:
       return 400;
     case ErrorCode.NETWORK_GUARD:
+    case ErrorCode.NOT_ARMED:
       return 403;
+    case ErrorCode.AUTH_EXPIRED:
+      return 401;
     case ErrorCode.RATE_LIMIT:
+    case ErrorCode.QUOTA_EXCEEDED:
       return 429;
+    case ErrorCode.CHANNEL_MISMATCH:
+    case ErrorCode.LANGUAGE_UNRESOLVED:
+    case ErrorCode.PLAYLIST_BINDING_BROKEN:
+    case ErrorCode.UNSUPPORTED_OPERATION:
+      return 400;
     default:
       return 500;
   }
@@ -81,6 +90,11 @@ async function handlePublish(body: Body, deps: RouteDeps): Promise<unknown> {
       ? { ownerId: body.ownerId }
       : {}),
     ...(typeof body.chatId === "string" ? { chatId: body.chatId } : {}),
+    ...(typeof body.videoPath === "string" ? { videoPath: body.videoPath } : {}),
+    ...(typeof body.language === "string" ? { language: body.language } : {}),
+    ...(body.privacyStatus === "private" || body.privacyStatus === "unlisted" || body.privacyStatus === "public"
+      ? { privacyStatus: body.privacyStatus }
+      : {}),
   });
 
   if (dryRun) return result;
@@ -107,9 +121,15 @@ async function handleEdit(body: Body, deps: RouteDeps): Promise<unknown> {
   const profile = resolveProfile(body);
   const postUrl = typeof body.targetUrl === "string" ? body.targetUrl : "";
   const text = typeof body.text === "string" ? body.text : undefined;
+  const title = typeof body.title === "string" ? body.title : undefined;
   return deps
     .makeAdapter(platform)
-    .edit({ postUrl, profile, ...(text !== undefined ? { text } : {}) });
+    .edit({
+      postUrl,
+      profile,
+      ...(text !== undefined ? { text } : {}),
+      ...(title !== undefined ? { title } : {}),
+    });
 }
 
 /** POST /delete — read-before-delete oracle is enforced by the adapter. */
