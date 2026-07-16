@@ -9,6 +9,9 @@ import { chromium, type BrowserContext, type Page } from "playwright";
 import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
 
 const PACKAGE_ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
+export const VK_FEED_URL = "https://vk.com/feed";
+export const VK_AUTHED_SELECTOR =
+  '[data-testid="header-profile-menu-button"], [data-testid="rc_menu_button"], .TopNavBtn__profile, a[href^="/id"]';
 
 export interface LaunchOptions {
   profileDir: string;
@@ -20,6 +23,20 @@ export interface BrowserSession {
   context: BrowserContext;
   page: Page;
   close(): Promise<void>;
+}
+
+/**
+ * A persistent Chromium profile does not restore the last VK tab reliably.
+ * Always navigate to a known authorised surface before reading identity or
+ * attempting a wall mutation.
+ */
+export async function openVkFeed(page: Page): Promise<void> {
+  await page.goto(VK_FEED_URL, { waitUntil: "domcontentloaded" });
+  await page
+    .locator(VK_AUTHED_SELECTOR)
+    .first()
+    .waitFor({ state: "visible", timeout: 15_000 })
+    .catch(() => {});
 }
 
 /** Resolve the screenshot-artefacts directory, ensuring it exists. */

@@ -9,7 +9,7 @@ import {
   ProfileManager,
   type LoginOptions,
 } from "@arcanada/publisher-core";
-import { launchSession } from "./context.js";
+import { launchSession, VK_AUTHED_SELECTOR } from "./context.js";
 
 const LOGIN_POLL_INTERVAL_MS = 5_000;
 const LOGIN_POLL_ITERATIONS = 60;
@@ -35,9 +35,7 @@ export async function login(options: LoginOptions, ctx: LoginContext = {}): Prom
   try {
     await session.page.goto(VK_FEED);
     // The user-menu / avatar button becomes visible once sign-in completes.
-    const authed = session.page
-      .locator('[data-testid="rc_menu_button"], .TopNavBtn__profile, a[href^="/id"]')
-      .first();
+    const authed = session.page.locator(VK_AUTHED_SELECTOR).first();
     for (let i = 0; i < LOGIN_POLL_ITERATIONS; i++) {
       try {
         if (await authed.isVisible()) return;

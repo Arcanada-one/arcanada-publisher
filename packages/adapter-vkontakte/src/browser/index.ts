@@ -23,7 +23,7 @@ import {
   type PublishResult,
 } from "@arcanada/publisher-core";
 import { preflightPostText } from "./sanitize.js";
-import { launchSession, withScreenshotOnFail } from "./context.js";
+import { launchSession, openVkFeed, withScreenshotOnFail } from "./context.js";
 import { login as headedLogin } from "./login.js";
 import { selectors, isCaptchaBlob, isLinksForbiddenBlob } from "./selectors.js";
 import { extractWallPermalink } from "./url-extraction.js";
@@ -59,21 +59,39 @@ export interface VkBrowserOptions {
 }
 
 /** Read the logged-in identity + current URL off the live page. */
-async function readSessionState(page: Page): Promise<SessionState> {
+export async function readSessionState(page: Page): Promise<SessionState> {
   const url = page.url();
-  const idHref = await page
-    .locator('a[href^="/id"]')
-    .first()
-    .getAttribute("href")
-    .catch(() => null);
+  const idLink = page.locator('a[href^="/id"]').first();
+  const idHref =
+    (await idLink.count().catch(() => 0)) > 0
+      ? await idLink.getAttribute("href").catch(() => null)
+      : null;
   const accountId = idHref ? idHref.replace(/^\/id/, "") : undefined;
-  const accountName =
-    (await page
-      .locator('[data-testid="profile_name"], .top_profile_name')
-      .first()
-      .innerText()
-      .catch(() => "")) || undefined;
-  const loggedIn = Boolean(accountId) || Boolean(accountName);
+  const legacyName = page.locator('[data-testid="profile_name"], .top_profile_name').first();
+  let accountName =
+    (await legacyName.count().catch(() => 0)) > 0
+      ? (await legacyName.innerText().catch(() => "")) || undefined
+      : undefined;
+
+  // VK's current desktop UI exposes only a profile-menu button in the top bar.
+  // Open that read-only menu to obtain the display name used by the positive
+  // identity assertion, then close it before any composer interaction.
+  const profileMenuButton = page.locator('[data-testid="header-profile-menu-button"]').first();
+  const hasProfileMenu = await profileMenuButton.isVisible().catch(() => false);
+  if (!accountName && hasProfileMenu) {
+    await profileMenuButton.click();
+    const profileMenu = page.locator('[data-testid="header-profile-menu"]').first();
+    await profileMenu.waitFor({ state: "visible", timeout: 5_000 });
+    accountName =
+      (await profileMenu
+        .locator('[class*="UserPlaceholder-module_header"]')
+        .first()
+        .innerText()
+        .catch(() => "")) || undefined;
+    await page.keyboard.press("Escape").catch(() => {});
+  }
+
+  const loggedIn = Boolean(accountId) || Boolean(accountName) || hasProfileMenu;
   const state: SessionState = { loggedIn, url };
   if (accountId !== undefined) state.accountId = accountId;
   if (accountName !== undefined) state.accountName = accountName;
@@ -336,6 +354,7 @@ export class VKontakteBrowserAdapter extends BaseAdapter {
       ...(this.options.headed !== undefined ? { headed: this.options.headed } : {}),
     });
     try {
+      await openVkFeed(session.page);
       return await op(session.page);
     } finally {
       await session.close();
