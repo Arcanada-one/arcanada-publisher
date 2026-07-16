@@ -231,3 +231,11 @@ function parseWallUrl(url: string): { ownerId: number; postId: number } {
 }
 
 export type { VkTransport, VkRequest, VkResponse } from "./client.js";
+
+// PUB-0034: browser-mode adapter (additive; the HTTP-API adapter above is unchanged).
+export {
+  VKontakteBrowserAdapter,
+  type VkBrowserOptions,
+  type VkBrowserPublishInput as VkBrowserPublishExtra,
+  type VkBrowserCommentInput as VkBrowserCommentExtra,
+} from "./browser/index.js";

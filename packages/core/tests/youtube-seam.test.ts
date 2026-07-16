@@ -77,13 +77,13 @@ describe("PublishResultSchema warnings", () => {
 
 describe("ErrorCode namespace 9-15", () => {
   it("declares the seven new codes with the planned values", () => {
-    expect(ErrorCode.CHANNEL_MISMATCH).toBe(9);
-    expect(ErrorCode.LANGUAGE_UNRESOLVED).toBe(10);
-    expect(ErrorCode.PLAYLIST_BINDING_BROKEN).toBe(11);
-    expect(ErrorCode.AUTH_EXPIRED).toBe(12);
-    expect(ErrorCode.QUOTA_EXCEEDED).toBe(13);
-    expect(ErrorCode.UNSUPPORTED_OPERATION).toBe(14);
-    expect(ErrorCode.NOT_ARMED).toBe(15);
+    expect(ErrorCode.CHANNEL_MISMATCH).toBe(10);
+    expect(ErrorCode.LANGUAGE_UNRESOLVED).toBe(11);
+    expect(ErrorCode.PLAYLIST_BINDING_BROKEN).toBe(12);
+    expect(ErrorCode.AUTH_EXPIRED).toBe(13);
+    expect(ErrorCode.QUOTA_EXCEEDED).toBe(14);
+    expect(ErrorCode.UNSUPPORTED_OPERATION).toBe(15);
+    expect(ErrorCode.NOT_ARMED).toBe(16);
   });
 
   it("keeps every numeric value unique", () => {

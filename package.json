@@ -23,7 +23,7 @@
     "test": "pnpm -r --workspace-concurrency=1 test",
     "lint": "pnpm -r lint && prettier --check \"**/*.{ts,md,json,yml,yaml}\"",
     "typecheck": "tsc --build",
-    "audit": "pnpm audit --prod --audit-level=high",
+    "audit": "npx --yes pnpm@11.13.1 with 11.13.1 audit --prod --audit-level=high",
     "format": "prettier --write \"**/*.{ts,md,json,yml,yaml}\""
   },
   "devDependencies": {

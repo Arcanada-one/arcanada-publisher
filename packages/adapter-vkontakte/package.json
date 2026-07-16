@@ -23,7 +23,8 @@
     "lint": "eslint --no-error-on-unmatched-pattern src tests"
   },
   "dependencies": {
-    "@arcanada/publisher-core": "workspace:*"
+    "@arcanada/publisher-core": "workspace:*",
+    "playwright": "^1.60.0"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

@@ -88,6 +88,8 @@ export interface ParsedArgs {
    * uploads settle far more reliably in a headed context; default stays headless.
    */
   headed: boolean;
+  /** PUB-0034: select the VK browser-mode adapter instead of the token API. */
+  browser: boolean;
   // ---- video subcommand flags (PUB-0027) ----
   /** `video` subcommand: cover image path. */
   cover: string | undefined;
@@ -170,6 +172,7 @@ const BOOL_FLAGS = new Set([
   "--list-presets",
   "--premium",
   "--headed",
+  "--browser",
   "--no-waveform",
 ]);
 
@@ -216,6 +219,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     privacy: undefined,
     premium: false,
     headed: false,
+    browser: false,
     cover: undefined,
     audio: undefined,
     videoOut: undefined,
@@ -245,6 +249,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
     if (flag === "--headed") {
       out.headed = true;
+      continue;
+    }
+    if (flag === "--browser") {
+      out.browser = true;
       continue;
     }
     if (flag === "--no-waveform") {
