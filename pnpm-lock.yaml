@@ -126,6 +126,19 @@ importers:
         specifier: ^3.2.7
         version: 3.2.7(@types/node@22.19.19)
 
+  packages/adapter-youtube:
+    dependencies:
+      '@arcanada/publisher-core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.7
+        version: 3.2.7(@types/node@22.19.19)
+
   packages/api:
     dependencies:
       '@arcanada/publisher-core':

@@ -1,0 +1,32 @@
+{
+  "name": "@arcanada/publisher-youtube",
+  "version": "0.1.0-pre.0",
+  "description": "YouTube Data API v3 adapter for arcanada-publisher (API-first, no browser automation)",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --build --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "lint": "eslint --no-error-on-unmatched-pattern src tests"
+  },
+  "dependencies": {
+    "@arcanada/publisher-core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.7"
+  }
+}
