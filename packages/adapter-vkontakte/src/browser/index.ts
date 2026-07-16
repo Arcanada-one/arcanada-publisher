@@ -174,6 +174,45 @@ export async function guardPlatformRefusals(page: Page): Promise<void> {
   }
 }
 
+export async function resolveSavedDraft(page: Page, allowReset: boolean): Promise<void> {
+  const savedDraft = page.getByRole("button", { name: "Открыть черновик", exact: true });
+  if (!(await savedDraft.isVisible().catch(() => false))) return;
+
+  if (!allowReset) {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "vk publish: saved draft detected — STOP; operator must resolve it explicitly",
+    );
+  }
+
+  const restart = page.getByRole("button", { name: "Начать заново", exact: true });
+  if (!(await restart.isVisible().catch(() => false))) {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "vk publish: saved draft reset was armed but the explicit reset control is missing — STOP",
+    );
+  }
+
+  await restart.click();
+  const composerTitle = page.locator(COMPOSER_TITLE_SELECTOR).filter({ hasText: "Новый пост" });
+  await composerTitle.waitFor({ state: "visible", timeout: 15_000 });
+
+  const attachmentCount = await page
+    .locator('[data-testid="posting_attachment_item"]')
+    .count()
+    .catch(() => -1);
+  const composerText = await page
+    .locator('[data-testid="posting_base_screen_input_message"]')
+    .innerText()
+    .catch(() => "__unreadable__");
+  if (attachmentCount !== 0 || composerText.trim() !== "") {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "vk publish: saved draft reset did not produce a clean composer — STOP",
+    );
+  }
+}
+
 /** Build the concrete publish steps over a live page. */
 function publishSteps(page: Page): VkPublishSteps {
   let composerBody = "";
@@ -210,20 +249,15 @@ function publishSteps(page: Page): VkPublishSteps {
       const create = page.locator(PROFILE_READY_SELECTOR).first();
       await create.click();
 
-      // Never overwrite an unrelated operator draft. The current campaign's
-      // own diagnostic draft is cleared explicitly outside this generic path.
+      // Never overwrite a draft unless the caller explicitly arms a one-shot
+      // reset. The reset path verifies that VK produced a clean composer.
       const savedDraft = page.getByRole("button", { name: "Открыть черновик", exact: true });
       const composerTitle = page.locator(COMPOSER_TITLE_SELECTOR).filter({ hasText: "Новый пост" });
       await Promise.race([
         savedDraft.waitFor({ state: "visible", timeout: 15_000 }),
         composerTitle.waitFor({ state: "visible", timeout: 15_000 }),
       ]).catch(() => {});
-      if (await savedDraft.isVisible().catch(() => false)) {
-        throw new AdapterError(
-          ErrorCode.VERIFY_FAILED,
-          "vk publish: saved draft detected — STOP; operator must resolve it explicitly",
-        );
-      }
+      await resolveSavedDraft(page, process.env.VK_DISCARD_SAVED_DRAFT === "1");
       await composerTitle.waitFor({ state: "visible", timeout: 15_000 });
 
       const fileInput = page.locator('[data-testid="posting_base_screen_download_from_device"]');
