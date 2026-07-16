@@ -34,7 +34,7 @@ import { createFetchTransport, apiJson, type Transport } from "./transport.js";
 export { ARCANADA_CHANNEL_ID } from "./channel-oracle.js";
 export { CANONICAL_PLAYLIST_TITLES, bootstrapPlaylists } from "./playlist-binding.js";
 export { isArmed, requireArmed } from "./gate.js";
-export { youtubeRateLimiter, youtubeDryRunLimiter } from "./publish.js";
+export { youtubeRateLimiter, youtubePreflightLimiter } from "./publish.js";
 export { AuthManager } from "./auth.js";
 export type { Transport, TransportRequest, TransportResponse } from "./transport.js";
 

@@ -26,13 +26,15 @@ import {
   resolveLanguage,
   verifyBinding,
 } from "./playlist-binding.js";
-import { probeSession, startSession, uploadFromOffset, type ByteSource, type UploadDeps } from "./resumable-upload.js";
-import { apiJson, type Transport } from "./transport.js";
 import {
-  validateDescriptionBytes,
-  validateLanguagePurity,
-  validateTitle,
-} from "./templates.js";
+  probeSession,
+  startSession,
+  uploadFromOffset,
+  type ByteSource,
+  type UploadDeps,
+} from "./resumable-upload.js";
+import { apiJson, type Transport } from "./transport.js";
+import { validateDescriptionBytes, validateLanguagePurity, validateTitle } from "./templates.js";
 
 export const VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos";
 
@@ -47,11 +49,13 @@ export const youtubeRateLimiter = new RateLimiter();
 export { auditOrAbort, isArmed, requireArmed } from "./gate.js";
 
 /**
- * Dry-run preflights are metered on their OWN module-scoped limiter (check +
- * record) — the live limiter counts only recorded live publishes, so without
- * this an unattended loop could drive unlimited credentialed dry-run reads.
+ * EVERY publish invocation (dry-run, unarmed, failed, or live) is metered on
+ * this module-scoped preflight limiter (check + record on entry) — the live
+ * limiter counts only recorded successful publishes, so without this an
+ * unattended loop could drive unlimited credentialed preflight reads via
+ * dry-runs OR via never-armed live attempts.
  */
-export const youtubeDryRunLimiter = new RateLimiter();
+export const youtubePreflightLimiter = new RateLimiter();
 
 export interface PublishDeps {
   transport: Transport;
@@ -59,14 +63,16 @@ export interface PublishDeps {
   env: NodeJS.ProcessEnv;
   ledger: UploadLedger;
   /** Byte source loader for the video file (injectable for tests). */
-  loadSource: (videoPath: string) => Promise<{ source: ByteSource; bytes: Uint8Array | undefined; mime: string }>;
+  loadSource: (
+    videoPath: string,
+  ) => Promise<{ source: ByteSource; bytes: Uint8Array | undefined; mime: string }>;
   auditOptions: AuditOptions;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   pollIntervalMs?: number;
   pollTimeoutMs?: number;
   limiter?: RateLimiter;
-  dryRunLimiter?: RateLimiter;
+  preflightLimiter?: RateLimiter;
 }
 
 interface VideoStatus {
@@ -87,7 +93,10 @@ interface VideosListItem {
 const DEFAULT_POLL_INTERVAL_MS = 12_000;
 const DEFAULT_POLL_TIMEOUT_MS = 3_600_000;
 
-export async function publishYouTube(input: PublishInput, deps: PublishDeps): Promise<PublishResult> {
+export async function publishYouTube(
+  input: PublishInput,
+  deps: PublishDeps,
+): Promise<PublishResult> {
   const limiter = deps.limiter ?? youtubeRateLimiter;
   const title = input.title ?? "";
   const description = input.text;
@@ -100,13 +109,14 @@ export async function publishYouTube(input: PublishInput, deps: PublishDeps): Pr
   validateDescriptionBytes(description);
   validateLanguagePurity(language, title, description);
 
-  // Metered preflight. Dry-runs are metered on their own limiter (check AND
-  // record — credentialed reads have real cost); live publishes on the live one.
-  if (input.dryRun) {
-    const dryLimiter = deps.dryRunLimiter ?? youtubeDryRunLimiter;
-    dryLimiter.check("youtube");
-    dryLimiter.record("youtube");
-  } else {
+  // Metered preflight: EVERY invocation (dry-run, unarmed, failed, live) is
+  // check+RECORDED on the preflight limiter — credentialed reads have real
+  // cost even when the attempt never mutates. The live limiter additionally
+  // gates real publishes (recorded only on success).
+  const preflight = deps.preflightLimiter ?? youtubePreflightLimiter;
+  preflight.check("youtube");
+  preflight.record("youtube");
+  if (!input.dryRun) {
     limiter.check("youtube");
   }
   const accessToken = await deps.auth.getAccessToken();
@@ -226,7 +236,11 @@ interface UploadPlan {
   mime: string;
 }
 
-async function runUpload(uploadDeps: UploadDeps, deps: PublishDeps, plan: UploadPlan): Promise<string> {
+async function runUpload(
+  uploadDeps: UploadDeps,
+  deps: PublishDeps,
+  plan: UploadPlan,
+): Promise<string> {
   const metadata = {
     snippet: {
       title: plan.title,
@@ -254,7 +268,12 @@ async function runUpload(uploadDeps: UploadDeps, deps: PublishDeps, plan: Upload
     const probe = await probeSession(uploadDeps, plan.pending.sessionUri, plan.source.size);
     if (probe.kind === "done") return probe.videoId;
     if (probe.kind === "incomplete") {
-      return uploadFromOffset(uploadDeps, plan.pending.sessionUri, plan.source, probe.receivedBytes);
+      return uploadFromOffset(
+        uploadDeps,
+        plan.pending.sessionUri,
+        plan.source,
+        probe.receivedBytes,
+      );
     }
     // expired → fall through to a fresh session (ledger gate already passed).
     return uploadFromOffset(uploadDeps, await freshSession(), plan.source, 0);
@@ -347,7 +366,10 @@ function collectDivergences(
   if (item.snippet?.title !== undefined && item.snippet.title !== requested.title) {
     warnings.push("read-back divergence: title differs from the requested metadata");
   }
-  if (item.snippet?.description !== undefined && item.snippet.description !== requested.description) {
+  if (
+    item.snippet?.description !== undefined &&
+    item.snippet.description !== requested.description
+  ) {
     warnings.push("read-back divergence: description differs from the requested metadata");
   }
   if (item.snippet?.channelId !== undefined && item.snippet.channelId !== ARCANADA_CHANNEL_ID) {

@@ -57,19 +57,25 @@ describe("tags total limit (500 chars incl separators)", () => {
 describe("language purity (no mixing)", () => {
   it("EN content must contain no Cyrillic", () => {
     expect(() =>
-      validateLanguagePurity("en", "Arcanada release", "Watch the article: https://arcanada.ai/en/blog/x"),
+      validateLanguagePurity(
+        "en",
+        "Arcanada release",
+        "Watch the article: https://arcanada.ai/en/blog/x",
+      ),
     ).not.toThrow();
     expect(() => validateLanguagePurity("en", "Arcanada релиз", "clean")).toThrow(/mixing/i);
-    expect(() => validateLanguagePurity("en", "clean", "статья: https://arcanada.ai/ru/blog/x")).toThrow(
-      /mixing/i,
-    );
+    expect(() =>
+      validateLanguagePurity("en", "clean", "статья: https://arcanada.ai/ru/blog/x"),
+    ).toThrow(/mixing/i);
   });
 
   it("RU title must actually be Russian (contains Cyrillic)", () => {
     expect(() =>
       validateLanguagePurity("ru", "Релиз Арканады", "Статья: https://arcanada.ai/ru/blog/x"),
     ).not.toThrow();
-    expect(() => validateLanguagePurity("ru", "Pure English title", "чистое описание")).toThrow(/mixing/i);
+    expect(() => validateLanguagePurity("ru", "Pure English title", "чистое описание")).toThrow(
+      /mixing/i,
+    );
   });
 
   it("EN links must not point at /ru/ paths", () => {

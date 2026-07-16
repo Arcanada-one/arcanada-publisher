@@ -50,11 +50,16 @@ describe("parse-args youtube flags", () => {
   it("parses --video/--language/--privacy", () => {
     const args = parseArgs([
       "publish",
-      "--platform", "youtube",
-      "--text-file", "t.md",
-      "--video", "/videos/a.mp4",
-      "--language", "ru",
-      "--privacy", "private",
+      "--platform",
+      "youtube",
+      "--text-file",
+      "t.md",
+      "--video",
+      "/videos/a.mp4",
+      "--language",
+      "ru",
+      "--privacy",
+      "private",
     ]);
     expect(args.videoPath).toBe("/videos/a.mp4");
     expect(args.language).toBe("ru");
@@ -73,14 +78,21 @@ describe("runPublish forwards the full field set", () => {
     captured.publish.length = 0;
     const result = await run([
       "publish",
-      "--platform", "youtube",
-      "--text-file", textFile("Описание"),
-      "--title", "Заголовок",
-      "--video", "/videos/a.mp4",
-      "--language", "ru",
-      "--privacy", "private",
+      "--platform",
+      "youtube",
+      "--text-file",
+      textFile("Описание"),
+      "--title",
+      "Заголовок",
+      "--video",
+      "/videos/a.mp4",
+      "--language",
+      "ru",
+      "--privacy",
+      "private",
       "--dry-run",
-      "--profile", "origin",
+      "--profile",
+      "origin",
     ]);
     expect(result.code).toBe(0);
     expect(captured.publish).toHaveLength(1);
@@ -100,10 +112,14 @@ describe("runEdit metadata-only path", () => {
     captured.edit.length = 0;
     const result = await run([
       "edit",
-      "--platform", "youtube",
-      "--target-url", "https://www.youtube.com/watch?v=vid001",
-      "--title", "Новый заголовок",
-      "--profile", "origin",
+      "--platform",
+      "youtube",
+      "--target-url",
+      "https://www.youtube.com/watch?v=vid001",
+      "--title",
+      "Новый заголовок",
+      "--profile",
+      "origin",
     ]);
     expect(result.code).toBe(0);
     expect(captured.edit[0]?.title).toBe("Новый заголовок");

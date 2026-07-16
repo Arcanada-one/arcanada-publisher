@@ -15,9 +15,10 @@ const ENV = {
   YOUTUBE_OAUTH_CLIENT_SECRET: "client-secret-fixture",
 } as NodeJS.ProcessEnv;
 
-function recordingTransport(
-  respond: (req: TransportRequest) => TransportResponse,
-): { transport: Transport; requests: TransportRequest[] } {
+function recordingTransport(respond: (req: TransportRequest) => TransportResponse): {
+  transport: Transport;
+  requests: TransportRequest[];
+} {
   const requests: TransportRequest[] = [];
   return {
     requests,
@@ -31,7 +32,11 @@ function recordingTransport(
 const tokenOk: TransportResponse = {
   status: 200,
   headers: {},
-  text: JSON.stringify({ access_token: "at-fixture-access", expires_in: 3600, refresh_token: "1//0refresh" }),
+  text: JSON.stringify({
+    access_token: "at-fixture-access",
+    expires_in: 3600,
+    refresh_token: "1//0refresh",
+  }),
 };
 
 async function waitFor(cond: () => boolean, timeoutMs = 3_000): Promise<void> {
@@ -141,7 +146,9 @@ describe("access-token refresh", () => {
     const { writeFile, mkdir } = await import("node:fs/promises");
     const tokenPath = join(profilesRoot, "youtube", "origin", "token.json");
     await mkdir(dirname(tokenPath), { recursive: true, mode: 0o700 });
-    await writeFile(tokenPath, JSON.stringify({ refresh_token: "1//0secret-refresh" }), { mode: 0o600 });
+    await writeFile(tokenPath, JSON.stringify({ refresh_token: "1//0secret-refresh" }), {
+      mode: 0o600,
+    });
     try {
       await auth.getAccessToken();
       expect.unreachable();

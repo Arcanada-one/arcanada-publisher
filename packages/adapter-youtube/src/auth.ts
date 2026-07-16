@@ -118,7 +118,10 @@ export class AuthManager {
         res.setHeader("content-type", "text/plain; charset=utf-8");
         // A stray local request (favicon probe, port scanner) must NOT consume
         // the single shot — only the real callback path with an OAuth outcome.
-        if (url.pathname !== "/oauth2/callback" || (!url.searchParams.has("code") && !url.searchParams.has("error"))) {
+        if (
+          url.pathname !== "/oauth2/callback" ||
+          (!url.searchParams.has("code") && !url.searchParams.has("error"))
+        ) {
           res.statusCode = 404;
           res.end("not the OAuth callback");
           return;
@@ -161,7 +164,8 @@ export class AuthManager {
         consent.searchParams.set("code_challenge", challenge);
         consent.searchParams.set("code_challenge_method", "S256");
         consent.searchParams.set("state", state);
-        const present = this.deps.openUrl ?? ((u: string) => console.error(`Open to consent: ${u}`));
+        const present =
+          this.deps.openUrl ?? ((u: string) => console.error(`Open to consent: ${u}`));
         void present(consent.toString());
       });
     });
@@ -233,9 +237,13 @@ export class AuthManager {
       );
     }
     if (response.status < 200 || response.status >= 300) {
-      throw new AdapterError(ErrorCode.INVALID_ARGS, `OAuth token endpoint error (${response.status})`, {
-        status: response.status,
-      });
+      throw new AdapterError(
+        ErrorCode.INVALID_ARGS,
+        `OAuth token endpoint error (${response.status})`,
+        {
+          status: response.status,
+        },
+      );
     }
     return parseJson(response, "oauth token exchange");
   }

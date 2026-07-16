@@ -54,6 +54,7 @@ async function harness(responders: Responder[], envOver: Record<string, string |
     sleep: () => Promise.resolve(),
     pollIntervalMs: 1,
     limiter: new RateLimiter(),
+    preflightLimiter: new RateLimiter(),
   };
   return { deps, recorder, auth, ledger };
 }

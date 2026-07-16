@@ -2,7 +2,12 @@
 // set, /edit title forwarding, and the statusForCode mapping for the new
 // ErrorCode range 9-15 (plan Phase 5.1, VC-14).
 
-import { ErrorCode, type Adapter, type PublishInput, type EditInput } from "@arcanada/publisher-core";
+import {
+  ErrorCode,
+  type Adapter,
+  type PublishInput,
+  type EditInput,
+} from "@arcanada/publisher-core";
 import { describe, expect, it } from "vitest";
 import { dispatchPost, statusForCode } from "../src/routes.js";
 import { RateLimiter } from "@arcanada/publisher-core";

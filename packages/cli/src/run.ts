@@ -301,7 +301,10 @@ async function runInspectProfilePost(
 
 async function runBootstrapPlaylists(platform: Platform, profile: string): Promise<RunResult> {
   if (platform !== "youtube") {
-    return { code: ErrorCode.INVALID_ARGS, message: "bootstrap-playlists is a YouTube-only command" };
+    return {
+      code: ErrorCode.INVALID_ARGS,
+      message: "bootstrap-playlists is a YouTube-only command",
+    };
   }
   // Armed state + fail-closed audit are enforced INSIDE the adapter (D-REQ-12).
   const { YouTubeAdapter } = await import("@arcanada/publisher-youtube");

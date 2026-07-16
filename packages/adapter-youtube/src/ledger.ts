@@ -34,7 +34,10 @@ export class UploadLedger {
   async withLock<T>(fn: () => Promise<T>): Promise<T> {
     const previous = UploadLedger.locks.get(this.path) ?? Promise.resolve();
     const next = previous.then(fn, fn);
-    UploadLedger.locks.set(this.path, next.catch(() => undefined));
+    UploadLedger.locks.set(
+      this.path,
+      next.catch(() => undefined),
+    );
     return next;
   }
 

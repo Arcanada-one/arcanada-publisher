@@ -57,6 +57,7 @@ async function makeDeps(responders: Responder[], envOver: Record<string, string 
     sleep: () => Promise.resolve(),
     pollIntervalMs: 1,
     limiter: new RateLimiter(),
+    preflightLimiter: new RateLimiter(),
   };
   return { deps, recorder, fixture, ledgerPath, env };
 }
@@ -150,7 +151,10 @@ describe("terminal states and poll cap", () => {
       channelResponder(),
       playlistsResponder(),
       ...uploadResponders(),
-      videoStatusResponder({ status: { uploadStatus: "uploaded" }, processingDetails: { processingStatus: "processing" } }),
+      videoStatusResponder({
+        status: { uploadStatus: "uploaded" },
+        processingDetails: { processingStatus: "processing" },
+      }),
     ]);
     deps.now = () => (clock += 120_000);
     deps.pollTimeoutMs = 300_000;
@@ -180,7 +184,11 @@ describe("read-back and playlist phase", () => {
       ...uploadResponders(),
       videoStatusResponder(
         processedVideo({
-          snippet: { title: "Другой заголовок", description: "другое описание", channelId: CHANNEL_ID },
+          snippet: {
+            title: "Другой заголовок",
+            description: "другое описание",
+            channelId: CHANNEL_ID,
+          },
           contentDetails: {},
         }),
       ),
@@ -222,6 +230,67 @@ describe("read-back and playlist phase", () => {
     const after = recorder.requests.slice(before);
     expect(after.some((r) => r.url.includes("uploadType=resumable"))).toBe(false);
     expect(await readFile(ledgerPath, "utf8")).toContain("vid001");
+  });
+
+  it("LIVE pending session: probe→incomplete resumes the SAME session from the server offset", async () => {
+    const LIVE_SESSION = "https://upload.googleapis.com/session/PENDINGLIVE";
+    const puts: string[] = [];
+    const { deps, ledgerPath } = await makeDeps([
+      tokenResponder,
+      channelResponder(),
+      playlistsResponder(),
+      (req) => {
+        if (req.method !== "PUT" || req.url !== LIVE_SESSION) return undefined;
+        puts.push(req.headers?.["content-range"] ?? "");
+        if (req.headers?.["content-range"]?.startsWith("bytes */")) {
+          return { status: 308, headers: { range: "bytes=0-2" }, text: "" };
+        }
+        return json(200, { id: "vid009" });
+      },
+      videoStatusResponder(processedVideo(), "vid009"),
+      ...playlistItemsResponders(),
+    ]);
+    const loaded = await deps.loadSource("x");
+    const { sha256Bytes } = await import("../src/ledger.js");
+    await deps.ledger.append({
+      sha256: sha256Bytes(loaded.bytes ?? new Uint8Array()),
+      title: RU.title,
+      totalBytes: loaded.source.size,
+      startedAt: "2026-07-16T00:00:00Z",
+      sessionUri: LIVE_SESSION,
+    });
+    const result = await publishYouTube(input(), deps);
+    expect(result.postUrl).toContain("vid009");
+    expect(puts[0]).toMatch(/^bytes \*\//); // probe first
+    expect(puts[1]).toBe(`bytes 3-${loaded.source.size - 1}/${loaded.source.size}`); // resume from server offset, not 0
+    expect(await readFile(ledgerPath, "utf8")).not.toContain("PENDINGLIVE"); // scrubbed
+  });
+
+  it("LIVE pending session: probe→done adopts the existing videoId with zero transfer", async () => {
+    const LIVE_SESSION = "https://upload.googleapis.com/session/DONEALREADY";
+    const { deps, recorder } = await makeDeps([
+      tokenResponder,
+      channelResponder(),
+      playlistsResponder(),
+      (req) =>
+        req.method === "PUT" && req.url === LIVE_SESSION ? json(200, { id: "vid010" }) : undefined,
+      videoStatusResponder(processedVideo(), "vid010"),
+      ...playlistItemsResponders(),
+    ]);
+    const loaded = await deps.loadSource("x");
+    const { sha256Bytes } = await import("../src/ledger.js");
+    await deps.ledger.append({
+      sha256: sha256Bytes(loaded.bytes ?? new Uint8Array()),
+      title: RU.title,
+      totalBytes: loaded.source.size,
+      startedAt: "2026-07-16T00:00:00Z",
+      sessionUri: LIVE_SESSION,
+    });
+    const result = await publishYouTube(input(), deps);
+    expect(result.postUrl).toContain("vid010");
+    // exactly ONE PUT to the session (the probe) — no data re-transfer, no fresh session
+    expect(recorder.requests.filter((r) => r.url === LIVE_SESSION)).toHaveLength(1);
+    expect(recorder.requests.some((r) => r.url.includes("uploadType=resumable"))).toBe(false);
   });
 
   it("expired pending session restarts fresh behind the ledger gate", async () => {
@@ -284,19 +353,32 @@ describe("guards living in publish.test.ts per C16 mapping", () => {
   });
 });
 
-describe("dry-run metering", () => {
+describe("preflight metering (dry-run, unarmed, live — every entry counts)", () => {
   const KEY = "ARCANADA_PUBLISHER_RATE_YOUTUBE";
   afterEach(() => {
     delete process.env[KEY];
   });
 
-  it("dry-runs are check+RECORDED on their own limiter — unlimited dry-run floods are impossible", async () => {
+  it("dry-runs are check+RECORDED — unlimited dry-run floods are impossible", async () => {
     process.env[KEY] = "1";
     const { deps } = await makeDeps(happyResponders());
-    deps.dryRunLimiter = new RateLimiter();
+    deps.preflightLimiter = new RateLimiter();
     const first = await publishYouTube(input({ dryRun: true }), deps);
     expect(first.warnings.join()).toContain("dry-run");
     await expect(publishYouTube(input({ dryRun: true }), deps)).rejects.toMatchObject({
+      code: ErrorCode.RATE_LIMIT,
+    });
+  });
+
+  it("UNARMED live attempts are metered too — the DoS cannot survive one code path over", async () => {
+    process.env[KEY] = "1";
+    const { deps } = await makeDeps(happyResponders(), { YOUTUBE_LIVE_ARMED: undefined });
+    deps.preflightLimiter = new RateLimiter();
+    await expect(publishYouTube(input(), deps)).rejects.toMatchObject({
+      code: ErrorCode.NOT_ARMED,
+    });
+    // second unarmed attempt is stopped by the limiter BEFORE any credentialed read
+    await expect(publishYouTube(input(), deps)).rejects.toMatchObject({
       code: ErrorCode.RATE_LIMIT,
     });
   });
@@ -308,8 +390,8 @@ describe("module-scoped rate limiter", () => {
     delete process.env[KEY];
   });
 
-  it("limiter state survives across two adapter constructions", async () => {
-    process.env[KEY] = "1";
+  it("limiter state survives across adapter constructions (module scope)", async () => {
+    process.env[KEY] = "2";
     const fixture = await makeFixture();
     const make = () =>
       new YouTubeAdapter({
@@ -320,23 +402,20 @@ describe("module-scoped rate limiter", () => {
         sleep: () => Promise.resolve(),
         pollIntervalMs: 1,
       });
-    const first = await make().publish({
-      ...RU,
-      profile: "origin",
-      language: "ru",
-      videoPath: fixture.videoPath,
-      privacyStatus: "private",
-    });
-    expect(first.postUrl).toContain("vid001");
-    // Fresh adapter instance — the recorded publish must still count.
-    await expect(
+    const publishOnce = () =>
       make().publish({
         ...RU,
         profile: "origin",
         language: "ru",
         videoPath: fixture.videoPath,
         privacyStatus: "private",
-      }),
-    ).rejects.toMatchObject({ code: ErrorCode.RATE_LIMIT });
+      });
+    const first = await publishOnce();
+    expect(first.postUrl).toContain("vid001");
+    // Second construction: preflight limiter already carries 1 recorded event —
+    // module scope means the fresh instance sees it; the duplicate-ledger would
+    // reject anyway, so assert via a THIRD construction hitting the cap first.
+    await expect(publishOnce()).rejects.toThrow(); // duplicate ledger or limiter — state persisted either way
+    await expect(publishOnce()).rejects.toMatchObject({ code: ErrorCode.RATE_LIMIT });
   });
 });

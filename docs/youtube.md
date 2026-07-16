@@ -11,7 +11,7 @@ oracle only — never store passwords/cookies/tokens in git or task artefacts).
 
 1. Create a Google Cloud project; enable **YouTube Data API v3**.
 2. OAuth consent screen: External → add the operator account → **publish to
-   Production**. While the screen stays in *Testing*, refresh tokens die after
+   Production**. While the screen stays in _Testing_, refresh tokens die after
    7 days — unattended publishing will break weekly.
 3. Create an **OAuth Desktop app** client. Put the client id/secret into
    `config/credentials/` (gitignored) and export as env:

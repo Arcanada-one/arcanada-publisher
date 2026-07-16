@@ -41,7 +41,11 @@ describe("PublishInput / EditInput extensions", () => {
       privacyStatus: "private",
       title: "Заголовок",
     };
-    const edit: EditInput = { postUrl: "https://youtube.com/watch?v=x", profile: "origin", title: "t" };
+    const edit: EditInput = {
+      postUrl: "https://youtube.com/watch?v=x",
+      profile: "origin",
+      title: "t",
+    };
     expect(input.videoPath).toBe("/videos/a.mp4");
     expect(edit.title).toBe("t");
   });

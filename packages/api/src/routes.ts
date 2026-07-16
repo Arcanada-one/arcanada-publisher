@@ -92,7 +92,9 @@ async function handlePublish(body: Body, deps: RouteDeps): Promise<unknown> {
     ...(typeof body.chatId === "string" ? { chatId: body.chatId } : {}),
     ...(typeof body.videoPath === "string" ? { videoPath: body.videoPath } : {}),
     ...(typeof body.language === "string" ? { language: body.language } : {}),
-    ...(body.privacyStatus === "private" || body.privacyStatus === "unlisted" || body.privacyStatus === "public"
+    ...(body.privacyStatus === "private" ||
+    body.privacyStatus === "unlisted" ||
+    body.privacyStatus === "public"
       ? { privacyStatus: body.privacyStatus }
       : {}),
   });
@@ -125,14 +127,12 @@ async function handleEdit(body: Body, deps: RouteDeps): Promise<unknown> {
   const postUrl = typeof body.targetUrl === "string" ? body.targetUrl : "";
   const text = typeof body.text === "string" ? body.text : undefined;
   const title = typeof body.title === "string" ? body.title : undefined;
-  return deps
-    .makeAdapter(platform)
-    .edit({
-      postUrl,
-      profile,
-      ...(text !== undefined ? { text } : {}),
-      ...(title !== undefined ? { title } : {}),
-    });
+  return deps.makeAdapter(platform).edit({
+    postUrl,
+    profile,
+    ...(text !== undefined ? { text } : {}),
+    ...(title !== undefined ? { title } : {}),
+  });
 }
 
 /** POST /delete — read-before-delete oracle is enforced by the adapter. */

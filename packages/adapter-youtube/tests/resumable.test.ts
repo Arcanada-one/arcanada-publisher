@@ -2,7 +2,12 @@
 // 5xx backoff, 401 mid-upload token refresh into the SAME session, 404 expiry.
 
 import { describe, expect, it } from "vitest";
-import { probeSession, startSession, uploadFromOffset, type ByteSource } from "../src/resumable-upload.js";
+import {
+  probeSession,
+  startSession,
+  uploadFromOffset,
+  type ByteSource,
+} from "../src/resumable-upload.js";
 import type { TransportRequest, TransportResponse } from "../src/transport.js";
 import { SESSION_URI, json, makeTransport, type Responder } from "./helpers.js";
 
@@ -73,7 +78,11 @@ describe("uploadFromOffset", () => {
   });
 
   it("401 mid-upload refreshes the token and resumes the SAME session", async () => {
-    const { recorder, deps: d, issued } = deps(
+    const {
+      recorder,
+      deps: d,
+      issued,
+    } = deps(
       [
         (req): TransportResponse | undefined => {
           if (req.method !== "PUT") return undefined;
@@ -106,10 +115,11 @@ describe("uploadFromOffset", () => {
 
 describe("probeSession", () => {
   it("maps 308/200/404 to incomplete/done/expired", async () => {
-    const { deps: d1 } = deps([
-      () => ({ status: 308, headers: { range: "bytes=0-4" }, text: "" }),
-    ]);
-    expect(await probeSession(d1, SESSION_URI, 8)).toEqual({ kind: "incomplete", receivedBytes: 5 });
+    const { deps: d1 } = deps([() => ({ status: 308, headers: { range: "bytes=0-4" }, text: "" })]);
+    expect(await probeSession(d1, SESSION_URI, 8)).toEqual({
+      kind: "incomplete",
+      receivedBytes: 5,
+    });
     const { deps: d2 } = deps([() => json(200, { id: "vidP" })]);
     expect(await probeSession(d2, SESSION_URI, 8)).toEqual({ kind: "done", videoId: "vidP" });
     const { deps: d3 } = deps([() => json(404, {})]);

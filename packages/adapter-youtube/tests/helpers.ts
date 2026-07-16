@@ -14,7 +14,11 @@ export const SESSION_URI = "https://upload.googleapis.com/session/TESTSESSION";
 
 export type Responder = (req: TransportRequest, callIndex: number) => TransportResponse | undefined;
 
-export function json(status: number, body: unknown, headers: Record<string, string> = {}): TransportResponse {
+export function json(
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = {},
+): TransportResponse {
   return { status, headers, text: JSON.stringify(body) };
 }
 
@@ -43,7 +47,9 @@ export function makeTransport(responders: Responder[]): Recorder {
           return Promise.resolve(response);
         }
       }
-      return Promise.resolve(json(500, { error: { message: `unfixtured: ${req.method} ${req.url}` } }));
+      return Promise.resolve(
+        json(500, { error: { message: `unfixtured: ${req.method} ${req.url}` } }),
+      );
     },
   };
 }
@@ -56,7 +62,9 @@ export const tokenResponder: Responder = (req) =>
 export function channelResponder(id: string = CHANNEL_ID): Responder {
   return (req) =>
     req.method === "GET" && req.url.includes("/channels?")
-      ? json(200, { items: [{ id, contentDetails: { relatedPlaylists: { uploads: UPLOADS_ID } } }] })
+      ? json(200, {
+          items: [{ id, contentDetails: { relatedPlaylists: { uploads: UPLOADS_ID } } }],
+        })
       : undefined;
 }
 
@@ -86,10 +94,7 @@ export function uploadResponders(videoId = "vid001"): Responder[] {
   ];
 }
 
-export function videoStatusResponder(
-  item: Record<string, unknown>,
-  videoId = "vid001",
-): Responder {
+export function videoStatusResponder(item: Record<string, unknown>, videoId = "vid001"): Responder {
   return (req) =>
     req.method === "GET" && req.url.includes(`/videos?part=`) && req.url.includes(videoId)
       ? json(200, { items: [{ id: videoId, ...item }] })
@@ -98,7 +103,11 @@ export function videoStatusResponder(
 
 export const processedVideo = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   status: { uploadStatus: "processed", privacyStatus: "private" },
-  snippet: { title: "Заголовок выпуска", description: "Описание: https://arcanada.ai/ru/blog/x", channelId: CHANNEL_ID },
+  snippet: {
+    title: "Заголовок выпуска",
+    description: "Описание: https://arcanada.ai/ru/blog/x",
+    channelId: CHANNEL_ID,
+  },
   contentDetails: { duration: "PT1M30S" },
   processingDetails: { processingStatus: "succeeded" },
   ...over,

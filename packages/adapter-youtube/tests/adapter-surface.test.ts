@@ -18,7 +18,10 @@ import {
   type Responder,
 } from "./helpers.js";
 
-async function adapterWith(responders: Responder[], envOver: Record<string, string | undefined> = {}) {
+async function adapterWith(
+  responders: Responder[],
+  envOver: Record<string, string | undefined> = {},
+) {
   const fixture = await makeFixture();
   const recorder = makeTransport(responders);
   const env = { ...fixture.env, ...envOver } as NodeJS.ProcessEnv;
@@ -31,10 +34,17 @@ async function adapterWith(responders: Responder[], envOver: Record<string, stri
   return { adapter, recorder, fixture };
 }
 
-const ownPlaylists = (items: Array<{ id: string; title: string }>): Responder => (req) =>
-  req.method === "GET" && req.url.includes("mine=true")
-    ? json(200, { items: items.map((i) => ({ id: i.id, snippet: { title: i.title, channelId: CHANNEL_ID } })) })
-    : undefined;
+const ownPlaylists =
+  (items: Array<{ id: string; title: string }>): Responder =>
+  (req) =>
+    req.method === "GET" && req.url.includes("mine=true")
+      ? json(200, {
+          items: items.map((i) => ({
+            id: i.id,
+            snippet: { title: i.title, channelId: CHANNEL_ID },
+          })),
+        })
+      : undefined;
 
 const playlistCreate: Responder = (req, index) =>
   req.method === "POST" && req.url.includes("/playlists?part=snippet,status")
@@ -98,26 +108,30 @@ describe("playlist bootstrap", () => {
   });
 });
 
-const videoSnippet = (over: Record<string, unknown> = {}): Responder => (req) =>
-  req.method === "GET" && req.url.includes("/videos?part=snippet&id=")
-    ? json(200, {
-        items: [
-          {
-            snippet: {
-              title: "Заголовок",
-              description: "Описание",
-              categoryId: "22",
-              defaultLanguage: "ru",
-              channelId: CHANNEL_ID,
-              ...over,
+const videoSnippet =
+  (over: Record<string, unknown> = {}): Responder =>
+  (req) =>
+    req.method === "GET" && req.url.includes("/videos?part=snippet&id=")
+      ? json(200, {
+          items: [
+            {
+              snippet: {
+                title: "Заголовок",
+                description: "Описание",
+                categoryId: "22",
+                defaultLanguage: "ru",
+                channelId: CHANNEL_ID,
+                ...over,
+              },
             },
-          },
-        ],
-      })
-    : undefined;
+          ],
+        })
+      : undefined;
 
 const videosUpdate: Responder = (req) =>
-  req.method === "PUT" && req.url.includes("/videos?part=snippet") ? json(200, { id: "vid001" }) : undefined;
+  req.method === "PUT" && req.url.includes("/videos?part=snippet")
+    ? json(200, { id: "vid001" })
+    : undefined;
 
 const WATCH = "https://www.youtube.com/watch?v=vid00001";
 
@@ -129,26 +143,45 @@ describe("edit contract", () => {
       videoSnippet(),
       videosUpdate,
     ]);
-    const result = await adapter.edit({ postUrl: WATCH, title: "Новый заголовок", profile: "origin" });
+    const result = await adapter.edit({
+      postUrl: WATCH,
+      title: "Новый заголовок",
+      profile: "origin",
+    });
     expect(result.edited).toBe(true);
     const update = recorder.requests.find((r) => r.method === "PUT");
-    const body = JSON.parse(update?.body as string) as { snippet: { categoryId: string; title: string } };
+    const body = JSON.parse(update?.body as string) as {
+      snippet: { categoryId: string; title: string };
+    };
     expect(body.snippet.categoryId).toBe("22");
     expect(body.snippet.title).toBe("Новый заголовок");
   });
 
   it("unarmed edit → NOT_ARMED before any network call", async () => {
-    const { adapter, recorder } = await adapterWith([tokenResponder], { YOUTUBE_LIVE_ARMED: undefined });
-    await expect(adapter.edit({ postUrl: WATCH, title: "x", profile: "origin" })).rejects.toMatchObject({
+    const { adapter, recorder } = await adapterWith([tokenResponder], {
+      YOUTUBE_LIVE_ARMED: undefined,
+    });
+    await expect(
+      adapter.edit({ postUrl: WATCH, title: "x", profile: "origin" }),
+    ).rejects.toMatchObject({
       code: ErrorCode.NOT_ARMED,
     });
     expect(recorder.requests).toEqual([]);
   });
 
   it("read-before-edit oracle mismatch fails closed with no update", async () => {
-    const { adapter, recorder } = await adapterWith([tokenResponder, channelResponder(), videoSnippet()]);
+    const { adapter, recorder } = await adapterWith([
+      tokenResponder,
+      channelResponder(),
+      videoSnippet(),
+    ]);
     await expect(
-      adapter.edit({ postUrl: WATCH, title: "Новый", expectedContent: "нет такого текста", profile: "origin" }),
+      adapter.edit({
+        postUrl: WATCH,
+        title: "Новый",
+        expectedContent: "нет такого текста",
+        profile: "origin",
+      }),
     ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
     expect(recorder.requests.some((r) => r.method === "PUT")).toBe(false);
   });
@@ -179,10 +212,12 @@ describe("unsupported operations", () => {
 });
 
 describe("authenticated verify", () => {
-  const verifyItems = (channelId: string): Responder => (req) =>
-    req.method === "GET" && req.url.includes("/videos?part=status,snippet")
-      ? json(200, { items: [{ id: "vid00001", snippet: { channelId } }] })
-      : undefined;
+  const verifyItems =
+    (channelId: string): Responder =>
+    (req) =>
+      req.method === "GET" && req.url.includes("/videos?part=status,snippet")
+        ? json(200, { items: [{ id: "vid00001", snippet: { channelId } }] })
+        : undefined;
 
   it("own video verifies ok", async () => {
     const { adapter } = await adapterWith([tokenResponder, verifyItems(CHANNEL_ID)]);
@@ -200,9 +235,11 @@ describe("authenticated verify", () => {
 
   it("page-name URLs fail fast as INVALID_ARGS (no API spend)", async () => {
     const { adapter, recorder } = await adapterWith([tokenResponder]);
-    await expect(adapter.verify("https://www.youtube.com/playlist?list=PLx")).rejects.toMatchObject({
-      code: ErrorCode.INVALID_ARGS,
-    });
+    await expect(adapter.verify("https://www.youtube.com/playlist?list=PLx")).rejects.toMatchObject(
+      {
+        code: ErrorCode.INVALID_ARGS,
+      },
+    );
     await expect(adapter.verify("https://www.youtube.com/watch")).rejects.toMatchObject({
       code: ErrorCode.INVALID_ARGS,
     });
