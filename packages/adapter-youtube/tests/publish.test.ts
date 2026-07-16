@@ -502,6 +502,24 @@ describe("fail-closed audit", () => {
     await writeFile(fixture.auditBaseDir, "not-a-directory");
     await expect(publishYouTube(input(), deps)).rejects.toThrow(/audit append failed/);
   });
+
+  it("directory fsync failure aborts before the first upload data PUT", async () => {
+    const { deps, recorder, ledgerPath } = await makeDeps(happyResponders());
+    const openDirectory = async (_directoryPath: string) => ({
+      sync: () =>
+        Promise.reject(Object.assign(new Error("directory sync unavailable"), { code: "ENOTSUP" })),
+      close: () => Promise.resolve(),
+    });
+    deps.ledger = new UploadLedger(ledgerPath, undefined, openDirectory);
+    await expect(publishYouTube(input(), deps)).rejects.toThrow(
+      /directory fsync failed.*refusing/i,
+    );
+    expect(
+      recorder.requests.filter(
+        (request) => request.method === "PUT" && request.url.includes("/session/"),
+      ),
+    ).toEqual([]);
+  });
 });
 
 describe("two-phase mutation audit", () => {

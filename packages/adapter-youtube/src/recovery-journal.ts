@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
 
 import { acquireFileLease } from "./file-lease.js";
+import { syncDirectoryDurably, type OpenDirectory } from "./durable-write.js";
 export type MutationKind = "upload" | "playlist-create" | "playlist-insert" | "edit";
 export type RecoveryState = "intent" | "applied";
 
@@ -172,7 +173,10 @@ export class RecoveryJournal {
     }
   }
 
-  constructor(private readonly path: string) {}
+  constructor(
+    private readonly path: string,
+    private readonly openDirectory?: OpenDirectory,
+  ) {}
 
   async load(): Promise<RecoveryEntry[]> {
     try {
@@ -277,12 +281,7 @@ export class RecoveryJournal {
       await rename(temp, this.path);
       moved = true;
       await chmod(this.path, 0o600);
-      const parent = await open(dirname(this.path), "r");
-      try {
-        await parent.sync();
-      } finally {
-        await parent.close();
-      }
+      await syncDirectoryDurably(dirname(this.path), this.openDirectory);
     } finally {
       if (!moved) await unlink(temp).catch(() => undefined);
     }

@@ -110,6 +110,63 @@ it("persists transferStarted before a data PUT can make expiry ambiguous", async
   });
 });
 
+it("directory-fsyncs transferStarted, uploaded, and finalized ledger rewrites", async () => {
+  const path = await tmpLedgerPath();
+  const synced: string[] = [];
+  const openDirectory = async (directoryPath: string) => ({
+    sync: async () => {
+      synced.push(directoryPath);
+    },
+    close: () => Promise.resolve(),
+  });
+  const ledger = new UploadLedger(path, undefined, openDirectory);
+  await ledger.append({ ...ENTRY, state: "uploading", transferStarted: false });
+  await ledger.markTransferStarted(ENTRY.sha256);
+  await ledger.markUploaded(ENTRY.sha256, "vid-durable");
+  await ledger.finalize(ENTRY.sha256, "vid-durable");
+  expect(synced).toEqual([dirname(path), dirname(path), dirname(path)]);
+});
+
+it.each([
+  {
+    state: "transferStarted",
+    failAtSync: 1,
+    mutate: async (ledger: UploadLedger) => ledger.markTransferStarted(ENTRY.sha256),
+  },
+  {
+    state: "uploaded",
+    failAtSync: 2,
+    mutate: async (ledger: UploadLedger) => {
+      await ledger.markTransferStarted(ENTRY.sha256);
+      await ledger.markUploaded(ENTRY.sha256, "vid-durable");
+    },
+  },
+  {
+    state: "finalized",
+    failAtSync: 3,
+    mutate: async (ledger: UploadLedger) => {
+      await ledger.markTransferStarted(ENTRY.sha256);
+      await ledger.markUploaded(ENTRY.sha256, "vid-durable");
+      await ledger.finalize(ENTRY.sha256, "vid-durable");
+    },
+  },
+])("fails closed when the $state parent-directory fsync fails", async ({ failAtSync, mutate }) => {
+  const path = await tmpLedgerPath();
+  let syncCount = 0;
+  const openDirectory = async (_directoryPath: string) => ({
+    sync: async () => {
+      syncCount += 1;
+      if (syncCount === failAtSync) {
+        throw Object.assign(new Error("directory sync unavailable"), { code: "ENOTSUP" });
+      }
+    },
+    close: () => Promise.resolve(),
+  });
+  const ledger = new UploadLedger(path, undefined, openDirectory);
+  await ledger.append({ ...ENTRY, state: "uploading", transferStarted: false });
+  await expect(mutate(ledger)).rejects.toThrow(/directory fsync failed.*refusing/i);
+});
+
 it("serializes process-like contenders so only one can claim an absent upload", async () => {
   const path = await tmpLedgerPath();
   const first = new UploadLedger(path);
@@ -234,6 +291,22 @@ describe("RecoveryJournal", () => {
       });
     await Promise.all([contender(first), contender(second)]);
     expect(maxActive).toBe(1);
+  });
+
+  it("fails closed when recovery-journal directory fsync fails", async () => {
+    const path = await tmpLedgerPath();
+    const openDirectory = async (_directoryPath: string) => ({
+      sync: () =>
+        Promise.reject(Object.assign(new Error("directory sync unavailable"), { code: "ENOTSUP" })),
+      close: () => Promise.resolve(),
+    });
+    const journal = new RecoveryJournal(path, openDirectory);
+    await expect(
+      journal.begin("playlist-insert", "PLru:vid1", {
+        playlistId: "PLru",
+        videoId: "vid1",
+      }),
+    ).rejects.toThrow(/directory fsync failed.*refusing/i);
   });
 
   it("preserves the old journal when an atomic rewrite cannot create its temp file", async () => {

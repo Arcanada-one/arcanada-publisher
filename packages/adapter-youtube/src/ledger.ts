@@ -19,6 +19,7 @@ import { dirname, join } from "node:path";
 import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
 import { RecoveryJournal } from "./recovery-journal.js";
 import { acquireFileLease, type LeaseBackend } from "./file-lease.js";
+import { syncDirectoryDurably, type OpenDirectory } from "./durable-write.js";
 
 export interface LedgerEntry {
   state?: "uploading" | "uploaded" | "finalized";
@@ -49,6 +50,7 @@ export class UploadLedger {
   constructor(
     private readonly path: string,
     private readonly leaseBackend?: LeaseBackend,
+    private readonly openDirectory?: OpenDirectory,
   ) {}
 
   recoveryJournal(): RecoveryJournal {
@@ -192,6 +194,7 @@ export class UploadLedger {
       await rename(temp, this.path);
       moved = true;
       await chmod(this.path, 0o600);
+      await syncDirectoryDurably(dirname(this.path), this.openDirectory);
     } finally {
       if (!moved) await unlink(temp).catch(() => undefined);
     }
