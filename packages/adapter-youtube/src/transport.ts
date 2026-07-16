@@ -30,14 +30,15 @@ export function createFetchTransport(fetchImpl: typeof fetch = fetch): Transport
       request.body !== undefined &&
       typeof request.body !== "string" &&
       !(request.body instanceof Uint8Array);
-    const response = await fetchImpl(request.url, {
+    const init: Record<string, unknown> = {
       method: request.method,
       ...(request.headers ? { headers: request.headers } : {}),
-      ...(request.body !== undefined ? { body: request.body as BodyInit } : {}),
+      ...(request.body !== undefined ? { body: request.body } : {}),
       // Node fetch requires half-duplex for streaming request bodies.
-      ...(streaming ? ({ duplex: "half" } as object) : {}),
+      ...(streaming ? { duplex: "half" } : {}),
       signal: AbortSignal.timeout(request.timeoutMs ?? DEFAULT_TIMEOUT_MS),
-    });
+    };
+    const response = await fetchImpl(request.url, init as Parameters<typeof fetch>[1]);
     const headers: Record<string, string> = {};
     response.headers.forEach((value, key) => {
       headers[key.toLowerCase()] = value;
