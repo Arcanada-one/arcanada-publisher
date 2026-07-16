@@ -23,9 +23,11 @@
     "lint": "eslint --no-error-on-unmatched-pattern src tests"
   },
   "dependencies": {
-    "@arcanada/publisher-core": "workspace:*"
+    "@arcanada/publisher-core": "workspace:*",
+    "proper-lockfile": "4.1.2"
   },
   "devDependencies": {
+    "@types/proper-lockfile": "^4.1.4",
     "typescript": "^5.7.2",
     "vitest": "^3.2.7"
   }

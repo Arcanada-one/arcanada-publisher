@@ -168,14 +168,9 @@ export async function bootstrapPlaylists(
   deps: BootstrapDeps,
 ): Promise<Record<PublishLanguage, string>> {
   requireArmed(deps.env, "playlist bootstrap");
-  const existing = { items: await listOwnPlaylists(deps) } as PlaylistsListResponse;
   const result = {} as Record<PublishLanguage, string>;
   for (const language of ["en", "ru"] as const) {
     const canonical = CANONICAL_PLAYLIST_TITLES[language];
-    const matches = (existing.items ?? []).filter((i) => i.snippet?.title === canonical);
-    if (matches.length > 1) {
-      throw broken(`duplicate canonical-title playlists for ${language} — operator must resolve`);
-    }
     const key = `canonical:${language}`;
     const spec = {
       kind: "playlist-create" as const,
@@ -189,58 +184,67 @@ export async function bootstrapPlaylists(
       auditOptions: deps.auditOptions,
       ...(deps.auditAppend ? { auditAppend: deps.auditAppend } : {}),
     };
-    const pendingOperation = await deps.journal.find("playlist-create", key);
-    if (matches.length === 1 && matches[0]?.id) {
-      const existingId = matches[0].id;
-      if (pendingOperation) {
-        if (
-          pendingOperation.state === "applied" &&
-          pendingOperation.result?.["playlistId"] !== existingId
-        ) {
-          throw broken(
-            `applied playlist-create operation points to a different id than canonical ${existingId}`,
+    await deps.journal.withMutationLease("playlist-create", key, async () => {
+      const pendingOperation = await deps.journal.find("playlist-create", key);
+      const freshExisting = { items: await listOwnPlaylists(deps) } as PlaylistsListResponse;
+      const matches = (freshExisting.items ?? []).filter(
+        (item) => item.snippet?.title === canonical,
+      );
+      if (matches.length > 1) {
+        throw broken(`duplicate canonical-title playlists for ${language} — operator must resolve`);
+      }
+      if (matches.length === 1 && matches[0]?.id) {
+        const existingId = matches[0].id;
+        if (pendingOperation) {
+          if (
+            pendingOperation.state === "applied" &&
+            pendingOperation.result?.["playlistId"] !== existingId
+          ) {
+            throw broken(
+              `applied playlist-create operation points to a different id than canonical ${existingId}`,
+            );
+          }
+          const entry = await beginMutation(control, spec);
+          await completeMutation(
+            control,
+            { ...spec, postUrl: `https://www.youtube.com/playlist?list=${existingId}` },
+            entry,
+            { playlistId: existingId },
           );
         }
-        const entry = await beginMutation(control, spec);
-        await completeMutation(
-          control,
-          { ...spec, postUrl: `https://www.youtube.com/playlist?list=${existingId}` },
-          entry,
-          { playlistId: existingId },
+        result[language] = existingId;
+        return;
+      }
+      if (pendingOperation) {
+        throw new AdapterError(
+          ErrorCode.PLAYLIST_BINDING_BROKEN,
+          `ambiguous playlist-create recovery for ${language}: intent exists but no canonical playlist is proven`,
+          { operationId: pendingOperation.operationId, recoverable: true },
         );
       }
-      result[language] = existingId;
-      continue;
-    }
-    if (pendingOperation) {
-      throw new AdapterError(
-        ErrorCode.PLAYLIST_BINDING_BROKEN,
-        `ambiguous playlist-create recovery for ${language}: intent exists but no canonical playlist is proven`,
-        { operationId: pendingOperation.operationId, recoverable: true },
+      const entry = await beginMutation(control, spec);
+      const created = (await apiJson(
+        deps.transport,
+        deps.accessToken,
+        {
+          method: "POST",
+          url: `${PLAYLISTS_URL}?part=snippet,status`,
+          body: JSON.stringify({
+            snippet: { title: canonical, defaultLanguage: language },
+            status: { privacyStatus: "public" },
+          }),
+        },
+        "playlist create",
+      )) as { id?: string };
+      if (!created.id) throw broken(`playlist create for ${language} returned no id`);
+      await completeMutation(
+        control,
+        { ...spec, postUrl: `https://www.youtube.com/playlist?list=${created.id}` },
+        entry,
+        { playlistId: created.id },
       );
-    }
-    const entry = await beginMutation(control, spec);
-    const created = (await apiJson(
-      deps.transport,
-      deps.accessToken,
-      {
-        method: "POST",
-        url: `${PLAYLISTS_URL}?part=snippet,status`,
-        body: JSON.stringify({
-          snippet: { title: canonical, defaultLanguage: language },
-          status: { privacyStatus: "public" },
-        }),
-      },
-      "playlist create",
-    )) as { id?: string };
-    if (!created.id) throw broken(`playlist create for ${language} returned no id`);
-    await completeMutation(
-      control,
-      { ...spec, postUrl: `https://www.youtube.com/playlist?list=${created.id}` },
-      entry,
-      { playlistId: created.id },
-    );
-    result[language] = created.id;
+      result[language] = created.id;
+    });
   }
   return result;
 }

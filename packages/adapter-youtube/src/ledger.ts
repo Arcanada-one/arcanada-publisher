@@ -18,6 +18,7 @@ import {
 import { dirname, join } from "node:path";
 import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
 import { RecoveryJournal } from "./recovery-journal.js";
+import { acquireFileLease, type LeaseBackend } from "./file-lease.js";
 
 export interface LedgerEntry {
   state?: "uploading" | "uploaded" | "finalized";
@@ -45,24 +46,23 @@ export function sha256Bytes(bytes: Uint8Array): string {
 }
 
 export class UploadLedger {
-  /** In-process serialization: gate/append/complete on the same file must not interleave. */
-  private static readonly locks = new Map<string, Promise<unknown>>();
-
-  constructor(private readonly path: string) {}
+  constructor(
+    private readonly path: string,
+    private readonly leaseBackend?: LeaseBackend,
+  ) {}
 
   recoveryJournal(): RecoveryJournal {
     return new RecoveryJournal(join(dirname(this.path), "recovery.json"));
   }
 
-  /** Run `fn` exclusively for this ledger path (concurrent /publish requests share the process). */
+  /** Run `fn` exclusively across API/CLI processes sharing this ledger path. */
   async withLock<T>(fn: () => Promise<T>): Promise<T> {
-    const previous = UploadLedger.locks.get(this.path) ?? Promise.resolve();
-    const next = previous.then(fn, fn);
-    UploadLedger.locks.set(
-      this.path,
-      next.catch(() => undefined),
-    );
-    return next;
+    const release = await acquireFileLease(this.path, 5_000, this.leaseBackend);
+    try {
+      return await fn();
+    } finally {
+      await release();
+    }
   }
 
   async load(): Promise<LedgerEntry[]> {
@@ -135,18 +135,20 @@ export class UploadLedger {
 
   /** Finalize and compact every historical copy of the session URI from disk. */
   async finalize(sha256: string, videoId: string): Promise<void> {
-    const entries = await this.load();
-    const updated = entries.map((entry) => {
-      if (entry.sha256 !== sha256) return entry;
-      const { sessionUri: _scrubbed, ...rest } = entry;
-      return {
-        ...rest,
-        state: "finalized" as const,
-        videoId,
-        completedAt: new Date().toISOString(),
-      };
+    await this.withLock(async () => {
+      const entries = await this.load();
+      const updated = entries.map((entry) => {
+        if (entry.sha256 !== sha256) return entry;
+        const { sessionUri: _scrubbed, ...rest } = entry;
+        return {
+          ...rest,
+          state: "finalized" as const,
+          videoId,
+          completedAt: new Date().toISOString(),
+        };
+      });
+      await this.writeAll(updated);
     });
-    await this.writeAll(updated);
   }
 
   /** Backward-compatible name retained for callers outside this package. */

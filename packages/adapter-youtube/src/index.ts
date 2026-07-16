@@ -176,58 +176,68 @@ export class YouTubeAdapter extends BaseAdapter {
       auditOptions: this.options.auditBaseDir ? { baseDir: this.options.auditBaseDir } : {},
       ...(this.options.auditAppend ? { auditAppend: this.options.auditAppend } : {}),
     };
-    const pending = await journal.find("edit", key);
-    const alreadyApplied =
-      pending !== undefined &&
-      String(snippet["title"] ?? "") === nextTitle &&
-      String(snippet["description"] ?? "") === nextDescription;
-    if (
-      !alreadyApplied &&
-      input.expectedContent !== undefined &&
-      !String(snippet["description"] ?? "").includes(input.expectedContent)
-    ) {
-      throw new AdapterError(
-        ErrorCode.VERIFY_FAILED,
-        "edit: read-before-edit oracle mismatch - current description does not contain expectedContent",
-      );
-    }
-    if (pending && !alreadyApplied) {
-      throw new AdapterError(
-        ErrorCode.VERIFY_FAILED,
-        "ambiguous edit recovery: intent exists but requested metadata is not proven remote",
-        { operationId: pending.operationId, recoverable: true },
-      );
-    }
-    const entry = await beginMutation(control, spec);
-    if (!alreadyApplied) {
-      const updated = {
-        ...snippet,
-        title: nextTitle,
-        description: nextDescription,
-        categoryId: snippet["categoryId"],
-      };
-      await apiJson(
+    return journal.withMutationLease("edit", videoId, async () => {
+      const fresh = (await apiJson(
         this.transport,
         token,
-        {
-          method: "PUT",
-          url: `${VIDEOS_URL}?part=snippet`,
-          body: JSON.stringify({ id: videoId, snippet: updated }),
-        },
-        "videos.update",
-      );
-    }
-    const auditRef = await completeMutation(control, spec, entry, {
-      videoId,
-      postUrl: input.postUrl,
-    });
-    return EditResultSchema.parse({
-      ok: true,
-      platform: "youtube",
-      account: channel.channelId,
-      postUrl: input.postUrl,
-      edited: true,
-      auditRef,
+        { method: "GET", url: `${VIDEOS_URL}?part=snippet&id=${videoId}` },
+        "edit lease read-before-update",
+      )) as { items?: Array<{ snippet?: Record<string, unknown> }> };
+      const freshSnippet = fresh.items?.[0]?.snippet;
+      if (!freshSnippet)
+        throw new AdapterError(ErrorCode.VERIFY_FAILED, `edit: video ${videoId} not found`);
+      const pending = await journal.find("edit", key);
+      const alreadyApplied =
+        String(freshSnippet["title"] ?? "") === nextTitle &&
+        String(freshSnippet["description"] ?? "") === nextDescription;
+      if (
+        !alreadyApplied &&
+        input.expectedContent !== undefined &&
+        !String(freshSnippet["description"] ?? "").includes(input.expectedContent)
+      ) {
+        throw new AdapterError(
+          ErrorCode.VERIFY_FAILED,
+          "edit: read-before-edit oracle mismatch - current description does not contain expectedContent",
+        );
+      }
+      if (pending && !alreadyApplied) {
+        throw new AdapterError(
+          ErrorCode.VERIFY_FAILED,
+          "ambiguous edit recovery: intent exists but requested metadata is not proven remote",
+          { operationId: pending.operationId, recoverable: true },
+        );
+      }
+      const entry = await beginMutation(control, spec);
+      if (!alreadyApplied) {
+        const updated = {
+          ...freshSnippet,
+          title: nextTitle,
+          description: nextDescription,
+          categoryId: freshSnippet["categoryId"],
+        };
+        await apiJson(
+          this.transport,
+          token,
+          {
+            method: "PUT",
+            url: `${VIDEOS_URL}?part=snippet`,
+            body: JSON.stringify({ id: videoId, snippet: updated }),
+          },
+          "videos.update",
+        );
+      }
+      const auditRef = await completeMutation(control, spec, entry, {
+        videoId,
+        postUrl: input.postUrl,
+      });
+      return EditResultSchema.parse({
+        ok: true,
+        platform: "youtube",
+        account: channel.channelId,
+        postUrl: input.postUrl,
+        edited: true,
+        auditRef,
+      });
     });
   }
 

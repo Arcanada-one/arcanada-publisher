@@ -132,18 +132,14 @@ export async function publishYouTube(
     refreshAccessToken: () => deps.auth.refreshAccessToken(),
     ...(deps.sleep ? { sleep: deps.sleep } : {}),
   };
-  let preProbedVideoId: string | undefined;
-  let preProbe: ProbeResult | undefined;
   if (!input.dryRun) {
     requireArmed(deps.env, "publish");
     if (pending) {
       if (!pending.sessionUri) {
         throw ambiguousSession("non-final ledger state is missing its session URI", sha256);
       }
-      preProbe = await probeSession(uploadDeps, pending.sessionUri, source.size);
-      if (pending.state === "uploaded") {
-        preProbedVideoId = probeUploadedState(pending, preProbe, sha256);
-      }
+      const earlyProbe = await probeSession(uploadDeps, pending.sessionUri, source.size);
+      if (pending.state === "uploaded") probeUploadedState(pending, earlyProbe, sha256);
     }
   }
 
@@ -193,12 +189,23 @@ export async function publishYouTube(
       { operationId: priorUploadOperation.operationId, recoverable: true },
     );
   }
-  const videoId = await deps.ledger.withLock(async () => {
+  const { videoId, recoveringUploaded } = await deps.ledger.withLock(async () => {
     const pendingLocked = await deps.ledger.gate(sha256);
+    let authoritativeProbe: ProbeResult | undefined;
+    let recoveredVideoId: string | undefined;
+    if (pendingLocked) {
+      if (!pendingLocked.sessionUri) {
+        throw ambiguousSession("non-final ledger state is missing its session URI", sha256);
+      }
+      authoritativeProbe = await probeSession(uploadDeps, pendingLocked.sessionUri, source.size);
+      if (pendingLocked.state === "uploaded") {
+        recoveredVideoId = probeUploadedState(pendingLocked, authoritativeProbe, sha256);
+      }
+    }
     const id = await runUpload(uploadDeps, deps, {
-      ...(preProbedVideoId ? { recoveredVideoId: preProbedVideoId } : {}),
-      ...(preProbe ? { preProbe } : {}),
-      pending: pendingLocked ?? pending,
+      ...(recoveredVideoId ? { recoveredVideoId } : {}),
+      ...(authoritativeProbe ? { preProbe: authoritativeProbe } : {}),
+      pending: pendingLocked,
       sha256,
       title,
       description,
@@ -208,7 +215,7 @@ export async function publishYouTube(
       mime,
     });
     await deps.ledger.markUploaded(sha256, id);
-    return id;
+    return { videoId: id, recoveringUploaded: pendingLocked?.state === "uploaded" };
   });
 
   const postUrl = `https://www.youtube.com/watch?v=${videoId}`;
@@ -230,7 +237,6 @@ export async function publishYouTube(
       );
     }
   };
-  const recoveringUploaded = pending?.state === "uploaded";
   if (recoveringUploaded) await proveUploadOwnership();
   await pollProcessing(deps, videoId);
   if (!recoveringUploaded) await proveUploadOwnership();
@@ -252,39 +258,41 @@ export async function publishYouTube(
     postUrl,
     intent: { playlistId, videoId },
   };
-  const pendingInsert = await journal.find("playlist-insert", insertKey);
-  const alreadyInPlaylist = await isVideoInPlaylist(
-    deps.transport,
-    freshToken,
-    playlistId,
-    videoId,
-  );
-  if (!alreadyInPlaylist) {
-    if (pendingInsert) {
-      throw new AdapterError(
-        ErrorCode.VERIFY_FAILED,
-        "ambiguous playlist-insert recovery: intent exists but remote insertion is not proven",
-        { operationId: pendingInsert.operationId, recoverable: true },
-      );
+  await journal.withMutationLease("playlist-insert", insertKey, async () => {
+    const pendingInsert = await journal.find("playlist-insert", insertKey);
+    const alreadyInPlaylist = await isVideoInPlaylist(
+      deps.transport,
+      freshToken,
+      playlistId,
+      videoId,
+    );
+    if (!alreadyInPlaylist) {
+      if (pendingInsert) {
+        throw new AdapterError(
+          ErrorCode.VERIFY_FAILED,
+          "ambiguous playlist-insert recovery: intent exists but remote insertion is not proven",
+          { operationId: pendingInsert.operationId, recoverable: true },
+        );
+      }
+      const insertEntry = await beginMutation(mutationControl, insertSpec);
+      await insertIntoPlaylist(deps.transport, freshToken, playlistId, videoId);
+      await completeMutation(mutationControl, insertSpec, insertEntry, { playlistId, videoId });
+    } else if (pendingInsert) {
+      if (
+        pendingInsert.state === "applied" &&
+        (pendingInsert.result?.["playlistId"] !== playlistId ||
+          pendingInsert.result?.["videoId"] !== videoId)
+      ) {
+        throw new AdapterError(
+          ErrorCode.VERIFY_FAILED,
+          "applied playlist-insert recovery result conflicts with the proven remote membership",
+          { operationId: pendingInsert.operationId, recoverable: true },
+        );
+      }
+      const insertEntry = await beginMutation(mutationControl, insertSpec);
+      await completeMutation(mutationControl, insertSpec, insertEntry, { playlistId, videoId });
     }
-    const insertEntry = await beginMutation(mutationControl, insertSpec);
-    await insertIntoPlaylist(deps.transport, freshToken, playlistId, videoId);
-    await completeMutation(mutationControl, insertSpec, insertEntry, { playlistId, videoId });
-  } else if (pendingInsert) {
-    if (
-      pendingInsert.state === "applied" &&
-      (pendingInsert.result?.["playlistId"] !== playlistId ||
-        pendingInsert.result?.["videoId"] !== videoId)
-    ) {
-      throw new AdapterError(
-        ErrorCode.VERIFY_FAILED,
-        "applied playlist-insert recovery result conflicts with the proven remote membership",
-        { operationId: pendingInsert.operationId, recoverable: true },
-      );
-    }
-    const insertEntry = await beginMutation(mutationControl, insertSpec);
-    await completeMutation(mutationControl, insertSpec, insertEntry, { playlistId, videoId });
-  }
+  });
 
   const readBack = await fetchVideo(deps, videoId);
   await deps.ledger.finalize(sha256, videoId);

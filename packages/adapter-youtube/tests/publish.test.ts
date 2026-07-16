@@ -278,7 +278,8 @@ describe("read-back and playlist phase", () => {
     const result = await publishYouTube(input(), deps);
     expect(result.postUrl).toContain("vid009");
     expect(puts[0]).toBe(`bytes */${loaded.source.size}`); // probe first, total pinned
-    expect(puts[1]).toBe(`bytes 3-${loaded.source.size - 1}/${loaded.source.size}`); // resume from server offset, not 0
+    expect(puts[1]).toBe(`bytes */${loaded.source.size}`); // authoritative probe inside lease
+    expect(puts[2]).toBe(`bytes 3-${loaded.source.size - 1}/${loaded.source.size}`); // resume from server offset, not 0
     expect(await readFile(ledgerPath, "utf8")).not.toContain("PENDINGLIVE"); // scrubbed
   });
 
@@ -304,12 +305,13 @@ describe("read-back and playlist phase", () => {
     });
     const result = await publishYouTube(input(), deps);
     expect(result.postUrl).toContain("vid010");
-    // exactly ONE PUT to the session — and it IS the probe (star range, no body):
-    // zero data re-transfer, no fresh session
+    // Early probe plus authoritative in-lease probe; zero data re-transfer.
     const sessionPuts = recorder.requests.filter((r) => r.url === LIVE_SESSION);
-    expect(sessionPuts).toHaveLength(1);
-    expect(sessionPuts[0]?.headers?.["content-range"]).toBe("bytes */8");
-    expect(sessionPuts[0]?.body).toBeUndefined();
+    expect(sessionPuts).toHaveLength(2);
+    expect(sessionPuts.every((request) => request.headers?.["content-range"] === "bytes */8")).toBe(
+      true,
+    );
+    expect(sessionPuts.every((request) => request.body === undefined)).toBe(true);
     expect(recorder.requests.some((r) => r.url.includes("uploadType=resumable"))).toBe(false);
     const probeIndex = recorder.requests.findIndex((request) => request.url === LIVE_SESSION);
     const channelIndex = recorder.requests.findIndex((request) =>

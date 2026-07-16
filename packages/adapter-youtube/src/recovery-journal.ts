@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
 
+import { acquireFileLease } from "./file-lease.js";
 export type MutationKind = "upload" | "playlist-create" | "playlist-insert" | "edit";
 export type RecoveryState = "intent" | "applied";
 
@@ -161,6 +162,15 @@ function validateEntries(value: unknown): RecoveryEntry[] {
 
 export class RecoveryJournal {
   private static readonly locks = new Map<string, Promise<unknown>>();
+  async withMutationLease<T>(kind: MutationKind, key: string, fn: () => Promise<T>): Promise<T> {
+    const digest = createHash("sha256").update(`${kind}:${key}`).digest("hex");
+    const release = await acquireFileLease(`${this.path}.mutation.${digest}`);
+    try {
+      return await fn();
+    } finally {
+      await release();
+    }
+  }
 
   constructor(private readonly path: string) {}
 
@@ -281,7 +291,7 @@ export class RecoveryJournal {
   private async withLock<T>(fn: () => Promise<T>): Promise<T> {
     const previous = RecoveryJournal.locks.get(this.path) ?? Promise.resolve();
     const execute = async (): Promise<T> => {
-      const release = await this.acquireFileLock();
+      const release = await acquireFileLease(this.path, 250);
       try {
         return await fn();
       } finally {
@@ -294,29 +304,5 @@ export class RecoveryJournal {
       next.catch(() => undefined),
     );
     return next;
-  }
-
-  private async acquireFileLock(): Promise<() => Promise<void>> {
-    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-    const lockPath = `${this.path}.lock`;
-    for (let attempt = 0; attempt < 500; attempt += 1) {
-      try {
-        const handle = await open(lockPath, "wx", 0o600);
-        await handle.writeFile(`${process.pid}\n`);
-        await handle.sync();
-        return async () => {
-          await handle.close();
-          await unlink(lockPath);
-        };
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-    }
-    throw new AdapterError(
-      ErrorCode.INTERNAL_PANIC,
-      "recovery journal lock timeout - refusing a concurrent mutation",
-      { lockPath, recoverable: true },
-    );
   }
 }

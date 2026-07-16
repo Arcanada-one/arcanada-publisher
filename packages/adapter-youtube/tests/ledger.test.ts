@@ -1,7 +1,7 @@
 // PUB-0035 upload ledger: sha256-keyed duplicate gate with fail-closed
 // corruption handling (plan Phase 3.3, V-AC-1/V-AC-3 fixtures).
 
-import { chmod, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, stat, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { AdapterError } from "@arcanada/publisher-core";
@@ -109,6 +109,47 @@ it("persists transferStarted before a data PUT can make expiry ambiguous", async
     transferStarted: true,
   });
 });
+
+it("serializes process-like contenders so only one can claim an absent upload", async () => {
+  const path = await tmpLedgerPath();
+  const first = new UploadLedger(path);
+  const second = new UploadLedger(path);
+  const attempt = (ledger: UploadLedger): Promise<boolean> =>
+    ledger.withLock(async () => {
+      if (await ledger.gate(ENTRY.sha256)) return false;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await ledger.append(ENTRY);
+      return true;
+    });
+  const claims = await Promise.all([attempt(first), attempt(second)]);
+  expect(claims.filter(Boolean)).toHaveLength(1);
+  expect(await first.load()).toHaveLength(1);
+});
+
+it("reclaims a stale cross-platform lock directory", async () => {
+  const path = await tmpLedgerPath();
+  await mkdir(`${path}.lock`);
+  const stale = new Date(Date.now() - 30_000);
+  await utimes(`${path}.lock`, stale, stale);
+  const ledger = new UploadLedger(path);
+  await expect(ledger.withLock(async () => "acquired")).resolves.toBe("acquired");
+  await expect(stat(`${path}.lock`)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("fails closed when the lock backend is unavailable", async () => {
+  const path = await tmpLedgerPath();
+  let mutationRan = false;
+  const unavailable = async (): Promise<never> => {
+    throw Object.assign(new Error("backend missing"), { code: "ENOENT" });
+  };
+  const ledger = new UploadLedger(path, unavailable);
+  await expect(
+    ledger.withLock(async () => {
+      mutationRan = true;
+    }),
+  ).rejects.toThrow(/ownership lease unavailable/i);
+  expect(mutationRan).toBe(false);
+});
 describe("sha256Bytes", () => {
   it("hashes deterministically", async () => {
     const h1 = sha256Bytes(new Uint8Array([1, 2, 3]));
@@ -176,6 +217,23 @@ describe("RecoveryJournal", () => {
       journal.begin("edit", "vid1:content-hash", { ...first, title: "B" }),
     ).rejects.toThrow(/intent does not match/i);
     expect(await journal.load()).toHaveLength(1);
+  });
+
+  it("serializes the same mutation key across independent journal instances", async () => {
+    const path = await tmpLedgerPath();
+    const first = new RecoveryJournal(path);
+    const second = new RecoveryJournal(path);
+    let active = 0;
+    let maxActive = 0;
+    const contender = (journal: RecoveryJournal): Promise<void> =>
+      journal.withMutationLease("edit", "same-key", async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        active -= 1;
+      });
+    await Promise.all([contender(first), contender(second)]);
+    expect(maxActive).toBe(1);
   });
 
   it("preserves the old journal when an atomic rewrite cannot create its temp file", async () => {
