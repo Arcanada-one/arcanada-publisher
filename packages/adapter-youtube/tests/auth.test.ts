@@ -102,6 +102,18 @@ describe("consent login (real loopback listener)", () => {
     await loginDone;
   });
 
+  it("abandoned consent times out fail-closed (AUTH_EXPIRED)", async () => {
+    const profilesRoot = await mkdtemp(join(tmpdir(), "pub0035-auth-"));
+    const auth = new AuthManager("origin", {
+      transport: () => Promise.resolve(tokenOk),
+      env: ENV,
+      profilesRoot,
+      consentTimeoutMs: 40,
+      openUrl: () => {},
+    });
+    await expect(auth.login()).rejects.toMatchObject({ code: ErrorCode.AUTH_EXPIRED });
+  });
+
   it("state mismatch aborts the consent fail-closed", async () => {
     const { auth } = await seededManager(() => tokenOk);
     let consentUrl = "";

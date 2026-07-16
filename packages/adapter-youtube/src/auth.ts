@@ -26,6 +26,8 @@ export interface AuthDeps {
   now?: () => number;
   /** Consent-URL presenter: default prints for the operator's own browser. */
   openUrl?: (url: string) => void | Promise<void>;
+  /** Consent-flow timeout override (tests). Default 10 minutes. */
+  consentTimeoutMs?: number;
 }
 
 interface StoredToken {
@@ -110,8 +112,8 @@ export class AuthManager {
       const timeout = setTimeout(() => {
         server.close();
         server.closeAllConnections?.();
-        reject(new AdapterError(ErrorCode.AUTH_EXPIRED, "OAuth consent timed out (10 min)"));
-      }, 600_000);
+        reject(new AdapterError(ErrorCode.AUTH_EXPIRED, "OAuth consent timed out"));
+      }, this.deps.consentTimeoutMs ?? 600_000);
       timeout.unref?.();
       const server = createServer((req, res) => {
         const url = new URL(req.url ?? "/", this.redirectUri);

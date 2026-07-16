@@ -101,9 +101,11 @@ async function handlePublish(body: Body, deps: RouteDeps): Promise<unknown> {
 
   if (dryRun) return result;
   deps.rateLimiter.record(platform);
-  // Adapters with an internal fail-closed audit (youtube) already carry their
-  // auditRef — do not double-audit or displace the stronger ref.
-  if ((result as { auditRef?: string }).auditRef) return result;
+  // The youtube adapter audits internally (fail-closed) and carries its own
+  // auditRef — do not double-audit or displace the stronger ref. Pinned to the
+  // platform so a spurious auditRef from any OTHER adapter can never suppress
+  // the route-layer audit (route semantics unchanged for other platforms).
+  if (platform === "youtube" && (result as { auditRef?: string }).auditRef) return result;
   const auditRef = await appendAudit(
     { platform, account: result.account, action: "publish", postUrl: result.postUrl },
     deps.auditBaseDir ? { baseDir: deps.auditBaseDir } : {},

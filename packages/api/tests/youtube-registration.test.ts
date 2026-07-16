@@ -103,6 +103,54 @@ describe("POST /publish forwards the YouTube field set", () => {
   });
 });
 
+describe("route audit dedup is pinned to youtube", () => {
+  const withRef = (platform: "youtube" | "telegram"): Adapter => ({
+    platform,
+    login: () => Promise.resolve(),
+    publish: () =>
+      Promise.resolve({
+        ok: true as const,
+        platform,
+        account: "acc",
+        postUrl: "https://example.com/p/1",
+        attachments: [],
+        commentIds: [],
+        warnings: [],
+        auditRef: "PUB-audit-20260716-deadbeef", // adapter-supplied ref
+      }),
+    comment: () => Promise.reject(new Error("unused")),
+    edit: () => Promise.reject(new Error("unused")),
+    delete: () => Promise.reject(new Error("unused")),
+    verify: () => Promise.reject(new Error("unused")),
+  });
+
+  it("youtube: adapter auditRef survives, route does not double-audit", async () => {
+    const result = (await dispatchPost(
+      "/publish",
+      { platform: "youtube", text: "Описание", profile: "origin" },
+      { makeAdapter: () => withRef("youtube"), rateLimiter: new RateLimiter() },
+    )) as { auditRef?: string };
+    expect(result.auditRef).toBe("PUB-audit-20260716-deadbeef");
+  });
+
+  it("other platforms: a spurious adapter auditRef canNOT suppress the route-layer audit", async () => {
+    const { mkdtemp } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const auditBaseDir = await mkdtemp(join(tmpdir(), "pub0035-route-audit-"));
+    const result = (await dispatchPost(
+      "/publish",
+      { platform: "telegram", text: "hi", profile: "origin" },
+      { makeAdapter: () => withRef("telegram"), rateLimiter: new RateLimiter(), auditBaseDir },
+    )) as { auditRef?: string };
+    // route-layer audit ran and REPLACED the spurious ref with its own
+    expect(result.auditRef).toBeDefined();
+    expect(result.auditRef).not.toBe("PUB-audit-20260716-deadbeef");
+    const { readdir } = await import("node:fs/promises");
+    expect((await readdir(auditBaseDir)).length).toBeGreaterThan(0);
+  });
+});
+
 describe("POST /edit forwards title", () => {
   it("metadata-only edit reaches the adapter with title", async () => {
     const captured = { publish: [] as PublishInput[], edit: [] as EditInput[] };
