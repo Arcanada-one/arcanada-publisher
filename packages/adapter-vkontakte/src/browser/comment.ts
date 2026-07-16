@@ -24,7 +24,10 @@ export const REQUIRED_LINK_COUNT = 4;
 export function unwrapVkAwayLink(href: string): string {
   try {
     const u = new URL(href);
-    if ((u.hostname === "vk.com" || u.hostname === "m.vk.com") && u.pathname === "/away.php") {
+    if (
+      (u.hostname === "vk.com" || u.hostname === "vk.ru" || u.hostname === "m.vk.com") &&
+      u.pathname === "/away.php"
+    ) {
       const to = u.searchParams.get("to");
       if (to) return to;
     }
@@ -36,6 +39,8 @@ export function unwrapVkAwayLink(href: string): string {
 
 export interface VkBrowserCommentInput {
   parentPostUrl: string;
+  /** Rendered comment body, including the human-readable link labels. */
+  text: string;
   /** Exactly four links, in the required order: Telegram, X, Site, Article. */
   links: string[];
   profile: string;
@@ -112,7 +117,7 @@ export async function runVkComment(
   const session = await steps.readSession();
   assertAuthorized(session, input.expectedAccount);
 
-  const commentText = input.links.join("\n");
+  const commentText = input.text;
   const posted = await steps.postTopLevelComment(commentText);
   if (posted.replyToCommentId !== undefined) {
     throw new AdapterError(
