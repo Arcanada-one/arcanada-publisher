@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { ErrorCode } from "@arcanada/publisher-core";
 import { runVkComment, unwrapVkAwayLink, type VkCommentSteps } from "../../src/browser/comment.js";
 import { type SessionState } from "../../src/browser/session-guard.js";
+import { VKontakteBrowserAdapter } from "../../src/browser/index.js";
 
 const OK_SESSION: SessionState = {
   loggedIn: true,
@@ -42,6 +43,7 @@ function commentSteps(overrides: Partial<VkCommentSteps> = {}): {
 
 const INPUT = {
   parentPostUrl: "https://vk.com/wall12345_100",
+  text: FOUR_LINKS.map((url, index) => `${index + 1}. ${url}`).join("\n"),
   links: FOUR_LINKS,
   profile: "vika",
   expectedAccount: { accountId: "12345" },
@@ -137,5 +139,27 @@ describe("vk browser — comment 4-link read-back", () => {
     expect(unwrapVkAwayLink("https://t.me/valentovtypes/214")).toBe(
       "https://t.me/valentovtypes/214",
     );
+    expect(
+      unwrapVkAwayLink(
+        "https://vk.ru/away.php?to=" + encodeURIComponent("https://cubrim.com/ru/addressor"),
+      ),
+    ).toBe("https://cubrim.com/ru/addressor");
+  });
+
+  it("extracts the four labelled links from the CLI text body in dry-run mode", async () => {
+    const adapter = new VKontakteBrowserAdapter();
+    const result = await adapter.comment({
+      parentPostUrl: INPUT.parentPostUrl,
+      text: [
+        `Telegram (RU): ${FOUR_LINKS[0]}`,
+        `X (EN): ${FOUR_LINKS[1]}`,
+        `Cubrim: ${FOUR_LINKS[2]}`,
+        `Article (RU): ${FOUR_LINKS[3]}`,
+      ].join("\n"),
+      profile: "default",
+      dryRun: true,
+    } as Parameters<VKontakteBrowserAdapter["comment"]>[0] & { dryRun: true });
+
+    expect(result.ok).toBe(true);
   });
 });

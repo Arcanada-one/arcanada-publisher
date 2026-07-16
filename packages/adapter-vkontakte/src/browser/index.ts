@@ -25,16 +25,70 @@ import {
 import { preflightPostText } from "./sanitize.js";
 import { launchSession, openVkFeed, withScreenshotOnFail } from "./context.js";
 import { login as headedLogin } from "./login.js";
-import { selectors, isCaptchaBlob, isLinksForbiddenBlob } from "./selectors.js";
+import { isCaptchaBlob, isLinksForbiddenBlob } from "./selectors.js";
 import { extractWallPermalink } from "./url-extraction.js";
 import { runVkPublish, type VkPublishSteps } from "./publish.js";
 import { runVkComment, type VkCommentSteps } from "./comment.js";
 import { type SessionState } from "./session-guard.js";
 import { type WallPostSummary } from "./duplicate-guard.js";
+import { WALL_PATH_RE } from "./url-extraction.js";
 
 /** Preview settle ceiling and publish-enabled ceiling (video transcoding). */
 const VIDEO_PREVIEW_TIMEOUT_MS = 120_000;
 const PUBLISH_READY_TIMEOUT_MS = 180_000;
+const POST_SELECTOR = '[data-testid="post"]';
+const PROFILE_READY_SELECTOR = '[data-testid="posting_create_post_button"]';
+const COMPOSER_TITLE_SELECTOR = '[data-testid="modalheader-title"]';
+
+function extractUrls(text: string): string[] {
+  return text.match(/https?:\/\/[^\s]+/g)?.map((url) => url.replace(/[),.;]+$/, "")) ?? [];
+}
+
+async function openOwnProfile(page: Page): Promise<void> {
+  const profileLink = page
+    .locator('[data-testid="leftmenu"] a')
+    .filter({ hasText: /^Профиль$/ })
+    .first();
+  await profileLink.waitFor({ state: "visible", timeout: 15_000 });
+  const href = await profileLink.getAttribute("href");
+  if (!href) {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "vk: own-profile link is not observable — STOP before composer",
+    );
+  }
+  await page.goto(new URL(href, page.url()).toString(), { waitUntil: "domcontentloaded" });
+  await page.locator(PROFILE_READY_SELECTOR).waitFor({ state: "visible", timeout: 30_000 });
+}
+
+function wallIdFromPermalink(permalink: string): string {
+  const match = new URL(permalink).pathname.match(WALL_PATH_RE);
+  if (!match) {
+    throw new AdapterError(ErrorCode.VERIFY_FAILED, "vk: cannot bind target wall post", {
+      permalink,
+    });
+  }
+  return `${match[1]}_${match[2]}`;
+}
+
+function targetPost(page: Page, permalink: string) {
+  const wallId = wallIdFromPermalink(permalink);
+  return page.locator(`${POST_SELECTOR}:has(a[href*="/wall${wallId}"])`).first();
+}
+
+async function renderedPostText(post: ReturnType<Page["locator"]>): Promise<string> {
+  const showMore = post.locator('[data-testid="showmoretext-after"]').first();
+  if (await showMore.isVisible().catch(() => false)) {
+    await showMore.click();
+  }
+  return (
+    (await post
+      .locator('[data-testid="showmoretext-in-expanded"], [data-testid="showmoretext-in"]')
+      .first()
+      .innerText()
+      .catch(() => "")) || ""
+  );
+}
 
 export interface VkBrowserPublishInput extends PublishInput {
   /** Path to the native video (passed via --image on the CLI). */
@@ -116,27 +170,25 @@ async function guardPlatformRefusals(page: Page): Promise<void> {
 
 /** Build the concrete publish steps over a live page. */
 function publishSteps(page: Page): VkPublishSteps {
+  let composerBody = "";
   return {
     readSession: () => readSessionState(page),
     async readRecentPosts(): Promise<WallPostSummary[]> {
-      // Read the operator's own wall via Node-side locators (no in-browser DOM types).
-      const posts = page.locator('[data-testid="wall_post"], .post');
+      await openOwnProfile(page);
+      // Read only the operator's own wall, never the mixed news feed.
+      const posts = page.locator(POST_SELECTOR);
       const count = Math.min(await posts.count().catch(() => 0), 20);
       const out: WallPostSummary[] = [];
       for (let i = 0; i < count; i++) {
         const p = posts.nth(i);
-        const text = await p
-          .locator(".wall_post_text, [data-testid='wall_post_text']")
-          .first()
-          .innerText()
-          .catch(() => "");
+        const text = await renderedPostText(p);
         const hasVideo =
           (await p
-            .locator("video, [data-testid='video_preview']")
+            .locator('video, [data-testid="primary-attachment-video"]')
             .count()
             .catch(() => 0)) > 0;
         const href = await p
-          .locator('a[href*="/wall"]')
+          .locator('[data-testid="post_date_block_preview"][href*="/wall"]')
           .first()
           .getAttribute("href")
           .catch(() => null);
@@ -149,52 +201,89 @@ function publishSteps(page: Page): VkPublishSteps {
       return out;
     },
     async uploadVideoAndAwaitReady(videoPath: string): Promise<void> {
-      const fileInput = page.locator('input[type="file"]').first();
+      const create = page.locator(PROFILE_READY_SELECTOR).first();
+      await create.click();
+
+      // Never overwrite an unrelated operator draft. The current campaign's
+      // own diagnostic draft is cleared explicitly outside this generic path.
+      const savedDraft = page.getByRole("button", { name: "Открыть черновик", exact: true });
+      const composerTitle = page.locator(COMPOSER_TITLE_SELECTOR).filter({ hasText: "Новый пост" });
+      await Promise.race([
+        savedDraft.waitFor({ state: "visible", timeout: 15_000 }),
+        composerTitle.waitFor({ state: "visible", timeout: 15_000 }),
+      ]).catch(() => {});
+      if (await savedDraft.isVisible().catch(() => false)) {
+        throw new AdapterError(
+          ErrorCode.VERIFY_FAILED,
+          "vk publish: saved draft detected — STOP; operator must resolve it explicitly",
+        );
+      }
+      await composerTitle.waitFor({ state: "visible", timeout: 15_000 });
+
+      const fileInput = page.locator('[data-testid="posting_base_screen_download_from_device"]');
       await fileInput.setInputFiles(videoPath);
       await page
-        .locator(selectors.attachedVideoPreview)
+        .locator('[data-testid="posting_attachment_item"]')
         .first()
-        .waitFor({ state: "visible", timeout: VIDEO_PREVIEW_TIMEOUT_MS })
-        .catch(() => {});
+        .waitFor({ state: "visible", timeout: VIDEO_PREVIEW_TIMEOUT_MS });
+      await page
+        .locator('[data-testid="posting_base_screen_next"]')
+        .waitFor({ state: "visible", timeout: VIDEO_PREVIEW_TIMEOUT_MS });
       await guardPlatformRefusals(page);
     },
     async typeText(text: string): Promise<void> {
-      const box = page.getByRole("textbox").last();
+      const box = page.locator('[data-testid="posting_base_screen_input_message"]');
       await box.click();
       await page.keyboard.insertText(text);
+      composerBody = text;
     },
     async preSubmitSnapshot() {
       const composerText = await page
-        .getByRole("textbox")
-        .last()
+        .locator('[data-testid="posting_base_screen_input_message"]')
         .innerText()
         .catch(() => "");
-      const hasVideo = (await page.locator(selectors.attachedVideoPreview).count()) > 0;
+      const hasVideo = (await page.locator('[data-testid="posting_attachment_item"]').count()) > 0;
       return { hasText: composerText.trim().length > 0, hasVideo };
     },
     async submit(): Promise<string> {
-      const publishBtn = page.getByRole("button", { name: selectors.publishButton }).first();
-      await publishBtn
-        .waitFor({ state: "visible", timeout: PUBLISH_READY_TIMEOUT_MS })
-        .catch(() => {});
+      await page.locator('[data-testid="posting_base_screen_next"]').click();
+      const publishBtn = page.locator('[data-testid="posting_submit_button"]');
+      await publishBtn.waitFor({ state: "visible", timeout: PUBLISH_READY_TIMEOUT_MS });
+      await page
+        .locator('[data-testid="primary-attachment-video"]')
+        .waitFor({ state: "visible", timeout: PUBLISH_READY_TIMEOUT_MS });
+      if (!(await publishBtn.isEnabled())) {
+        throw new AdapterError(
+          ErrorCode.VERIFY_FAILED,
+          "vk publish: final publish control is disabled — ABORT",
+        );
+      }
       await publishBtn.click();
       await guardPlatformRefusals(page);
-      await page.waitForTimeout(3_000);
-      const href = await page
-        .locator('a[href*="/wall"]')
+      await publishBtn.waitFor({ state: "hidden", timeout: PUBLISH_READY_TIMEOUT_MS });
+
+      const title = composerBody.split("\n", 1)[0]?.trim();
+      if (!title) {
+        throw new AdapterError(ErrorCode.VERIFY_FAILED, "vk publish: title oracle is empty");
+      }
+      const published = page.locator(POST_SELECTOR).filter({ hasText: title }).first();
+      await published.waitFor({ state: "visible", timeout: 30_000 });
+      const href = await published
+        .locator('[data-testid="post_date_block_preview"][href*="/wall"]')
         .first()
         .evaluate((a) => (a as unknown as { href: string }).href);
       return extractWallPermalink(href);
     },
     async readBack(permalink: string) {
-      await page.goto(permalink);
-      const article = page.locator('[data-testid="wall_post"], .post').first();
+      await page.goto(permalink, { waitUntil: "domcontentloaded" });
+      const article = targetPost(page, permalink);
       await article.waitFor({ state: "visible", timeout: 15_000 });
-      const text = (await article.innerText().catch(() => "")) ?? "";
-      const hasVideo = (await article.locator("video, [data-testid='video_preview']").count()) > 0;
+      const text = await renderedPostText(article);
+      const hasVideo =
+        (await article.locator('video, [data-testid="primary-attachment-video"]').count()) > 0;
       const authorName =
         (await article
-          .locator(".author, [data-testid='post_author']")
+          .locator('[data-testid="post-header-title"]')
           .first()
           .innerText()
           .catch(() => "")) || "";
@@ -203,31 +292,53 @@ function publishSteps(page: Page): VkPublishSteps {
   };
 }
 
-function commentSteps(page: Page): VkCommentSteps {
+function commentSteps(page: Page, parentPostUrl: string): VkCommentSteps {
+  let postedCommentId = "";
   return {
     readSession: () => readSessionState(page),
     async postTopLevelComment(text: string) {
-      const composer = page.getByRole("textbox", { name: selectors.commentComposer }).first();
+      await page.goto(parentPostUrl, { waitUntil: "domcontentloaded" });
+      const article = targetPost(page, parentPostUrl);
+      await article.waitFor({ state: "visible", timeout: 20_000 });
+      const composer = article
+        .locator('[data-testid="content-editable-input"][aria-label^="Написать комментарий"]')
+        .first();
       await composer.click();
       await page.keyboard.insertText(text);
-      const submit = page.getByRole("button", { name: selectors.commentSubmit }).first();
+      const submit = article.locator('[data-testid="send-comment"]');
       await submit.click();
       await guardPlatformRefusals(page);
-      await page.waitForTimeout(2_000);
-      const idAttr = await page
-        .locator('[data-testid="comment"], .reply')
-        .last()
-        .getAttribute("data-comment-id")
-        .catch(() => null);
-      return { commentId: idAttr ?? "unknown" };
+      const linkOracle = extractUrls(text)[0];
+      const comments = article.locator('[data-testid="wall_comments_comment_root"]');
+      const posted = linkOracle ? comments.filter({ hasText: linkOracle }).last() : comments.last();
+      await posted.waitFor({ state: "visible", timeout: 20_000 });
+      const idAttr = await posted.getAttribute("id");
+      const commentId = idAttr?.match(/_([0-9]+)$/)?.[1];
+      if (!commentId) {
+        throw new AdapterError(
+          ErrorCode.VERIFY_FAILED,
+          "vk comment: posted comment id is not observable — STOP",
+        );
+      }
+      postedCommentId = commentId;
+      return { commentId };
     },
     async readBackComment(commentId: string) {
-      const block = page.locator(`[data-comment-id="${commentId}"], .reply`).last();
+      const block = page
+        .locator(`[data-testid="wall_comments_comment_root"][id$="_${commentId}"]`)
+        .last();
+      await block.waitFor({ state: "visible", timeout: 15_000 });
       const text = (await block.innerText().catch(() => "")) ?? "";
-      const isReply = (await block.getAttribute("data-reply-to").catch(() => null)) !== null;
+      const isReply =
+        (await block
+          .locator('xpath=ancestor::*[@data-testid="wall_comments_comment_root"]')
+          .count()) > 0;
       const links = await block
-        .locator("a[href]")
+        .locator('a[data-testid="link"][href]')
         .evaluateAll((els) => els.map((a) => (a as unknown as { href: string }).href));
+      if (postedCommentId && postedCommentId !== commentId) {
+        throw new AdapterError(ErrorCode.VERIFY_FAILED, "vk comment read-back id mismatch");
+      }
       return { text, isReply, links };
     },
   };
@@ -300,7 +411,7 @@ export class VKontakteBrowserAdapter extends BaseAdapter {
 
   async comment(input: CommentInput): Promise<CommentResult> {
     const vi = input as VkBrowserCommentInput & { dryRun?: boolean };
-    const links = vi.links ?? [];
+    const links = vi.links ?? extractUrls(input.text);
     // Dry-run symmetry with publish(): validate inputs, never launch a browser.
     if (vi.dryRun) {
       if (links.length !== 4) {
@@ -324,8 +435,14 @@ export class VKontakteBrowserAdapter extends BaseAdapter {
     return this.withPage(input.profile, (page) =>
       withScreenshotOnFail(page, "vk-comment", () =>
         runVkComment(
-          { parentPostUrl: input.parentPostUrl, links, profile: input.profile, expectedAccount },
-          commentSteps(page),
+          {
+            parentPostUrl: input.parentPostUrl,
+            text: input.text,
+            links,
+            profile: input.profile,
+            expectedAccount,
+          },
+          commentSteps(page, input.parentPostUrl),
         ),
       ),
     );
