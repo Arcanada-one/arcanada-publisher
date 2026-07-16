@@ -311,6 +311,12 @@ describe("read-back and playlist phase", () => {
     expect(sessionPuts[0]?.headers?.["content-range"]).toBe("bytes */8");
     expect(sessionPuts[0]?.body).toBeUndefined();
     expect(recorder.requests.some((r) => r.url.includes("uploadType=resumable"))).toBe(false);
+    const probeIndex = recorder.requests.findIndex((request) => request.url === LIVE_SESSION);
+    const channelIndex = recorder.requests.findIndex((request) =>
+      request.url.includes("/channels?"),
+    );
+    expect(probeIndex).toBeGreaterThan(-1);
+    expect(channelIndex).toBeGreaterThan(probeIndex);
   });
 
   it("uploaded retry probes first, proves uploads-playlist ownership, and never re-uploads", async () => {
@@ -345,10 +351,15 @@ describe("read-back and playlist phase", () => {
     const result = await publishYouTube(input(), deps);
     expect(result.postUrl).toContain("vid011");
     const probeIndex = recorder.requests.findIndex((request) => request.url === SESSION);
+    const channelOracleIndex = recorder.requests.findIndex((request) =>
+      request.url.includes("/channels?"),
+    );
     const proofIndex = recorder.requests.findIndex((request) =>
       request.url.includes(`playlistId=${UPLOADS_ID}`),
     );
     expect(probeIndex).toBeGreaterThan(-1);
+    expect(channelOracleIndex).toBeGreaterThan(probeIndex);
+    expect(proofIndex).toBeGreaterThan(channelOracleIndex);
     expect(proofIndex).toBeGreaterThan(probeIndex);
     expect(recorder.requests.some((request) => request.url.includes("uploadType=resumable"))).toBe(
       false,
@@ -373,6 +384,25 @@ describe("read-back and playlist phase", () => {
       videoId: "vid-no-session",
     });
     await expect(publishYouTube(input(), deps)).rejects.toThrow(/mandatory session URI|ambiguous/i);
+    expect(recorder.mutating()).toEqual([]);
+  });
+
+  it("uploading state without a saved session URI fails before any channel or upload request", async () => {
+    const { deps, recorder } = await makeDeps([
+      tokenResponder,
+      channelResponder(),
+      playlistsResponder(),
+    ]);
+    const loaded = await deps.loadSource("x");
+    const { sha256Bytes } = await import("../src/ledger.js");
+    await deps.ledger.append({
+      sha256: sha256Bytes(loaded.bytes ?? new Uint8Array()),
+      title: RU.title,
+      totalBytes: loaded.source.size,
+      startedAt: "2026-07-16T00:00:00Z",
+    });
+    await expect(publishYouTube(input(), deps)).rejects.toThrow(/session URI|ambiguous/i);
+    expect(recorder.requests.some((request) => request.url.includes("/channels?"))).toBe(false);
     expect(recorder.mutating()).toEqual([]);
   });
 
@@ -527,6 +557,33 @@ describe("two-phase mutation audit", () => {
       ),
     ).toEqual([]);
     expect(await deps.journal.load()).toEqual([]);
+  });
+
+  it("intent audit failure never erases a reused applied recovery entry", async () => {
+    const { deps, recorder } = await makeDeps([
+      tokenResponder,
+      channelResponder(),
+      playlistsResponder(),
+      ...uploadResponders("vid001"),
+      videoStatusResponder(processedVideo(), "vid001"),
+      ...playlistItemsResponders(true),
+    ]);
+    const entry = await deps.journal.begin("playlist-insert", "PLru001:vid001", {
+      playlistId: "PLru001",
+      videoId: "vid001",
+    });
+    await deps.journal.markApplied(entry.operationId, { playlistId: "PLru001", videoId: "vid001" });
+    deps.auditAppend = failAudit("playlist-insert", "intent");
+    await expect(publishYouTube(input(), deps)).rejects.toThrow(/intent audit failed/);
+    expect(await deps.journal.find("playlist-insert", "PLru001:vid001")).toMatchObject({
+      operationId: entry.operationId,
+      state: "applied",
+    });
+    expect(
+      recorder.requests.filter(
+        (request) => request.method === "POST" && request.url.includes("/playlistItems"),
+      ),
+    ).toEqual([]);
   });
 
   it("playlist-insert outcome failure preserves the applied playlist operation", async () => {

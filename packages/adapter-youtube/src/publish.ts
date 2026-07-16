@@ -30,6 +30,7 @@ import {
   startSession,
   uploadFromOffset,
   type ByteSource,
+  type ProbeResult,
   type UploadDeps,
 } from "./resumable-upload.js";
 import { apiJson, type Transport } from "./transport.js";
@@ -121,14 +122,35 @@ export async function publishYouTube(
   if (!input.dryRun) {
     limiter.check("youtube");
   }
-  const accessToken = await deps.auth.getAccessToken();
-  const channel = await assertChannel(deps.transport, accessToken);
-  const binding = resolveBinding(deps.env);
-  await verifyBinding(deps.transport, accessToken, binding);
 
   const { source, bytes, mime } = await deps.loadSource(input.videoPath);
   const sha256 = bytes !== undefined ? sha256Bytes(bytes) : await hashSource(source);
   const pending = await deps.ledger.gate(sha256);
+  const uploadDeps: UploadDeps = {
+    transport: deps.transport,
+    getAccessToken: () => deps.auth.getAccessToken(),
+    refreshAccessToken: () => deps.auth.refreshAccessToken(),
+    ...(deps.sleep ? { sleep: deps.sleep } : {}),
+  };
+  let preProbedVideoId: string | undefined;
+  let preProbe: ProbeResult | undefined;
+  if (!input.dryRun) {
+    requireArmed(deps.env, "publish");
+    if (pending) {
+      if (!pending.sessionUri) {
+        throw ambiguousSession("non-final ledger state is missing its session URI", sha256);
+      }
+      preProbe = await probeSession(uploadDeps, pending.sessionUri, source.size);
+      if (pending.state === "uploaded") {
+        preProbedVideoId = probeUploadedState(pending, preProbe, sha256);
+      }
+    }
+  }
+
+  const accessToken = await deps.auth.getAccessToken();
+  const channel = await assertChannel(deps.transport, accessToken);
+  const binding = resolveBinding(deps.env);
+  await verifyBinding(deps.transport, accessToken, binding);
 
   const planWarnings = [
     `plan: channel=${channel.channelId}`,
@@ -148,15 +170,8 @@ export async function publishYouTube(
     });
   }
 
-  requireArmed(deps.env, "publish");
   const journal = deps.journal ?? deps.ledger.recoveryJournal();
 
-  const uploadDeps: UploadDeps = {
-    transport: deps.transport,
-    getAccessToken: () => deps.auth.getAccessToken(),
-    refreshAccessToken: () => deps.auth.refreshAccessToken(),
-    ...(deps.sleep ? { sleep: deps.sleep } : {}),
-  };
   const mutationControl = {
     journal,
     auditOptions: deps.auditOptions,
@@ -181,6 +196,8 @@ export async function publishYouTube(
   const videoId = await deps.ledger.withLock(async () => {
     const pendingLocked = await deps.ledger.gate(sha256);
     const id = await runUpload(uploadDeps, deps, {
+      ...(preProbedVideoId ? { recoveredVideoId: preProbedVideoId } : {}),
+      ...(preProbe ? { preProbe } : {}),
       pending: pendingLocked ?? pending,
       sha256,
       title,
@@ -254,6 +271,17 @@ export async function publishYouTube(
     await insertIntoPlaylist(deps.transport, freshToken, playlistId, videoId);
     await completeMutation(mutationControl, insertSpec, insertEntry, { playlistId, videoId });
   } else if (pendingInsert) {
+    if (
+      pendingInsert.state === "applied" &&
+      (pendingInsert.result?.["playlistId"] !== playlistId ||
+        pendingInsert.result?.["videoId"] !== videoId)
+    ) {
+      throw new AdapterError(
+        ErrorCode.VERIFY_FAILED,
+        "applied playlist-insert recovery result conflicts with the proven remote membership",
+        { operationId: pendingInsert.operationId, recoverable: true },
+      );
+    }
     const insertEntry = await beginMutation(mutationControl, insertSpec);
     await completeMutation(mutationControl, insertSpec, insertEntry, { playlistId, videoId });
   }
@@ -281,9 +309,29 @@ async function hashSource(source: ByteSource): Promise<string> {
   return sha256Bytes(Buffer.concat(chunks));
 }
 
+function probeUploadedState(pending: LedgerEntry, probe: ProbeResult, sha256: string): string {
+  if (!pending.videoId) {
+    throw ambiguousSession("uploaded ledger state is missing its mandatory video id", sha256);
+  }
+  if (probe.kind === "done") {
+    if (probe.videoId !== pending.videoId) {
+      throw new AdapterError(
+        ErrorCode.VERIFY_FAILED,
+        "resumable probe returned a different video id",
+        { ledgerVideoId: pending.videoId, probeVideoId: probe.videoId },
+      );
+    }
+    return probe.videoId;
+  }
+  if (probe.kind === "expired") return pending.videoId;
+  throw ambiguousSession("uploaded ledger state but resumable probe is incomplete", sha256);
+}
+
 interface UploadPlan {
+  recoveredVideoId?: string;
   pending: LedgerEntry | undefined;
   sha256: string;
+  preProbe?: ProbeResult;
   title: string;
   description: string;
   language: "en" | "ru";
@@ -297,6 +345,7 @@ async function runUpload(
   deps: PublishDeps,
   plan: UploadPlan,
 ): Promise<string> {
+  if (plan.recoveredVideoId) return plan.recoveredVideoId;
   const metadata = {
     snippet: {
       title: plan.title,
@@ -322,33 +371,11 @@ async function runUpload(
     return uploadFromOffset(uploadDeps, sessionUri, plan.source, offset);
   };
 
-  if (plan.pending?.state === "uploaded" && plan.pending.videoId) {
-    if (!plan.pending.sessionUri) {
-      throw ambiguousSession(
-        "uploaded ledger state is missing its mandatory session URI",
-        plan.sha256,
-      );
+  if (plan.pending) {
+    if (!plan.pending.sessionUri || !plan.preProbe) {
+      throw ambiguousSession("non-final ledger state was not probed before preflight", plan.sha256);
     }
-    const probe = await probeSession(uploadDeps, plan.pending.sessionUri, plan.source.size);
-    if (probe.kind === "done") {
-      if (probe.videoId !== plan.pending.videoId) {
-        throw new AdapterError(
-          ErrorCode.VERIFY_FAILED,
-          "resumable probe returned a different video id",
-          {
-            ledgerVideoId: plan.pending.videoId,
-            probeVideoId: probe.videoId,
-          },
-        );
-      }
-      return probe.videoId;
-    }
-    if (probe.kind === "expired") return plan.pending.videoId;
-    throw ambiguousSession("uploaded ledger state but resumable probe is incomplete", plan.sha256);
-  }
-
-  if (plan.pending?.sessionUri) {
-    const probe = await probeSession(uploadDeps, plan.pending.sessionUri, plan.source.size);
+    const probe = plan.preProbe;
     if (probe.kind === "done") return probe.videoId;
     if (probe.kind === "incomplete") {
       return transfer(plan.pending.sessionUri, probe.receivedBytes);

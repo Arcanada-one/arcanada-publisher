@@ -76,11 +76,15 @@ export async function beginMutation(
   control: MutationControl,
   spec: MutationSpec,
 ): Promise<RecoveryEntry> {
-  const entry = await control.journal.begin(spec.kind, spec.key, spec.intent);
+  const { entry, created } = await control.journal.beginWithStatus(
+    spec.kind,
+    spec.key,
+    spec.intent,
+  );
   const append = control.auditAppend ?? appendAudit;
   const ref = await append(auditInput(spec, entry, "intent"), control.auditOptions);
   if (ref === null) {
-    await control.journal.resolve(entry.operationId);
+    if (created) await control.journal.resolve(entry.operationId);
     throw new AdapterError(
       ErrorCode.INTERNAL_PANIC,
       "intent audit failed (audit append failed) - mutation was not attempted",

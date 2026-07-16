@@ -131,14 +131,14 @@ describe("RecoveryJournal", () => {
       operationId: intent.operationId,
       state: "intent",
     });
-    await journal.markApplied(intent.operationId, { playlistItemId: "pli1" });
+    await journal.markApplied(intent.operationId, { playlistId: "PLru", videoId: "vid1" });
     expect(await journal.find("playlist-insert", "PLru:vid1")).toMatchObject({
       state: "applied",
-      result: { playlistItemId: "pli1" },
+      result: { playlistId: "PLru", videoId: "vid1" },
     });
     await journal.resolve(intent.operationId);
     expect(await journal.find("playlist-insert", "PLru:vid1")).toBeUndefined();
-    expect(await readFile(path, "utf8")).not.toContain("pli1");
+    expect(await readFile(path, "utf8")).toBe("[]\n");
   });
 
   it("rejects valid JSON with malformed entry fields", async () => {
@@ -147,11 +147,54 @@ describe("RecoveryJournal", () => {
     await expect(new RecoveryJournal(path).load()).rejects.toThrow(/journal corrupt/i);
   });
 
+  it("rejects disallowed outgoing recovery fields before persisting them", async () => {
+    const journal = new RecoveryJournal(await tmpLedgerPath());
+    await expect(
+      journal.begin("playlist-insert", "PLru:vid1", {
+        playlistId: "PLru",
+        videoId: "vid1",
+        sessionUri: "secret",
+      }),
+    ).rejects.toThrow(/schema/i);
+    expect(await journal.load()).toEqual([]);
+  });
+
   it("reuses the unresolved operation id for an idempotent retry", async () => {
     const journal = new RecoveryJournal(await tmpLedgerPath());
-    const first = await journal.begin("edit", "vid1:content-hash", { videoId: "vid1" });
-    const retry = await journal.begin("edit", "vid1:content-hash", { videoId: "vid1" });
+    const editIntent = { videoId: "vid1", title: "Title", description: "Description" };
+    const first = await journal.begin("edit", "vid1:content-hash", editIntent);
+    const retry = await journal.begin("edit", "vid1:content-hash", editIntent);
     expect(retry.operationId).toBe(first.operationId);
     expect(await journal.load()).toHaveLength(1);
+  });
+
+  it("fails closed when the same recovery key is requested with a different intent", async () => {
+    const journal = new RecoveryJournal(await tmpLedgerPath());
+    const first = { videoId: "vid1", title: "A", description: "D" };
+    await journal.begin("edit", "vid1:content-hash", first);
+    await expect(
+      journal.begin("edit", "vid1:content-hash", { ...first, title: "B" }),
+    ).rejects.toThrow(/intent does not match/i);
+    expect(await journal.load()).toHaveLength(1);
+  });
+
+  it("preserves the old journal when an atomic rewrite cannot create its temp file", async () => {
+    const path = await tmpLedgerPath();
+    const journal = new RecoveryJournal(path);
+    const entry = await journal.begin("playlist-insert", "PLru:vid1", {
+      playlistId: "PLru",
+      videoId: "vid1",
+    });
+    const before = await readFile(path, "utf8");
+    await chmod(dirname(path), 0o500);
+    try {
+      await expect(
+        journal.markApplied(entry.operationId, { playlistId: "PLru", videoId: "vid1" }),
+      ).rejects.toThrow();
+    } finally {
+      await chmod(dirname(path), 0o700);
+    }
+    expect(await readFile(path, "utf8")).toBe(before);
+    expect(await journal.find("playlist-insert", "PLru:vid1")).toMatchObject({ state: "intent" });
   });
 });

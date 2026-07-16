@@ -143,7 +143,10 @@ describe("playlist bootstrap", () => {
     const journal = new RecoveryJournal(
       join(fixture.profilesRoot, "youtube", "origin", "recovery.json"),
     );
-    const entry = await journal.begin("playlist-create", "canonical:en", { language: "en" });
+    const entry = await journal.begin("playlist-create", "canonical:en", {
+      language: "en",
+      canonicalTitle: "Arcanada — English",
+    });
     await journal.markApplied(entry.operationId, { playlistId: "PLenRecovered" });
     await expect(adapter.bootstrapPlaylists("origin")).resolves.toEqual({
       en: "PLenRecovered",
@@ -165,7 +168,10 @@ describe("playlist bootstrap", () => {
     const journal = new RecoveryJournal(
       join(fixture.profilesRoot, "youtube", "origin", "recovery.json"),
     );
-    const entry = await journal.begin("playlist-create", "canonical:en", { language: "en" });
+    const entry = await journal.begin("playlist-create", "canonical:en", {
+      language: "en",
+      canonicalTitle: "Arcanada — English",
+    });
     await journal.markApplied(entry.operationId, { playlistId: "PLdifferent" });
     await expect(adapter.bootstrapPlaylists("origin")).rejects.toThrow(/different id/i);
     expect(recorder.mutating()).toEqual([]);
@@ -277,8 +283,12 @@ describe("edit contract", () => {
     const journal = new RecoveryJournal(
       join(fixture.profilesRoot, "youtube", "origin", "recovery.json"),
     );
-    const entry = await journal.begin("edit", key, { videoId: "vid00001" });
-    await journal.markApplied(entry.operationId, { videoId: "vid00001" });
+    const entry = await journal.begin("edit", key, {
+      videoId: "vid00001",
+      title: nextTitle,
+      description: "Описание",
+    });
+    await journal.markApplied(entry.operationId, { videoId: "vid00001", postUrl: WATCH });
     await expect(
       adapter.edit({
         postUrl: WATCH,
