@@ -80,6 +80,8 @@ async function dispatch(args: ParsedArgs): Promise<RunResult> {
       return runInspectProfilePost(platform, profile, args);
     case "publish":
       return runPublish(platform, profile, args);
+    case "bootstrap-playlists":
+      return runBootstrapPlaylists(platform, profile);
   }
 }
 
@@ -295,6 +297,19 @@ async function runInspectProfilePost(
     profile,
   });
   return { code: ErrorCode.SUCCESS, message: JSON.stringify(result) };
+}
+
+async function runBootstrapPlaylists(platform: Platform, profile: string): Promise<RunResult> {
+  if (platform !== "youtube") {
+    return { code: ErrorCode.INVALID_ARGS, message: "bootstrap-playlists is a YouTube-only command" };
+  }
+  // Armed state + fail-closed audit are enforced INSIDE the adapter (D-REQ-12).
+  const { YouTubeAdapter } = await import("@arcanada/publisher-youtube");
+  const binding = await new YouTubeAdapter().bootstrapPlaylists(profile);
+  return {
+    code: ErrorCode.SUCCESS,
+    message: `playlists bound: YOUTUBE_PLAYLIST_EN=${binding.en} YOUTUBE_PLAYLIST_RU=${binding.ru}`,
+  };
 }
 
 async function runPublish(

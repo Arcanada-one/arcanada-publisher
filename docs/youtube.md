@@ -22,6 +22,24 @@ oracle only — never store passwords/cookies/tokens in git or task artefacts).
    channel identity** at the account chooser. The refresh token lands at
    `~/.arcanada-publisher/profiles/youtube/<profile>/token.json` (0600).
 
+## 1a. Playlist bootstrap and binding
+
+The adapter routes by STABLE playlist ids from env: `YOUTUBE_PLAYLIST_EN` and
+`YOUTUBE_PLAYLIST_RU`. To create/bind the canonical playlists
+(«Arcanada — English» / «Arcanada — Русский»), arm the session (see § 5) and run:
+
+```
+arcanada-publisher bootstrap-playlists --platform youtube --profile origin
+```
+
+The command is read-before-create (existing canonical-title playlists are
+reused, never duplicated; >50-playlist channels are paginated), every creation
+writes a fail-closed `playlist-create` audit record, and an unarmed run fails
+with `NOT_ARMED`. Export the two printed `PL…` ids into the publisher env —
+publishing fails closed (`PLAYLIST_BINDING_BROKEN`) until both are set, and
+also when a bound playlist's live title diverges from the canonical one
+(possible EN↔RU swap: re-run bootstrap or fix the title in Studio).
+
 ## 2. Compliance audit (quota & compliance)
 
 File the free **audit + quota extension form**
@@ -81,5 +99,6 @@ explicit operator go recorded in the task log.
 - **Captions (`captions.insert`)** — optional per the official docs; costs 400
   quota units per call; scope `youtube.force-ssl` already suffices.
 - **Custom thumbnails (`thumbnails.set`)** — requires a phone-verified
-  account; ≤2 MB via API. The preflight probes and reports the capability; it
-  never blocks an upload.
+  account; ≤2 MB via API. Not implemented in v1 and never blocks an upload;
+  check the account's verification status manually in Studio during the
+  Phase-7 live preflight if thumbnails are wanted later.

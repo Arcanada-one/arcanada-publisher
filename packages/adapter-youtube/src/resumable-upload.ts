@@ -20,6 +20,8 @@ export interface ByteSource {
 export interface UploadDeps {
   transport: Transport;
   getAccessToken: () => Promise<string>;
+  /** Force-mint a NEW access token (a cached getAccessToken is a no-op on 401). */
+  refreshAccessToken?: () => Promise<string>;
   sleep?: (ms: number) => Promise<void>;
   maxAttempts?: number;
 }
@@ -66,7 +68,10 @@ export async function probeSession(
   const response = await deps.transport({
     method: "PUT",
     url: sessionUri,
-    headers: { "content-range": `bytes */${totalBytes}` },
+    headers: {
+      authorization: `Bearer ${await deps.getAccessToken()}`,
+      "content-range": `bytes */${totalBytes}`,
+    },
   });
   if (response.status === 308) {
     const range = response.headers["range"]; // "bytes=0-LAST"
@@ -135,8 +140,9 @@ export async function uploadFromOffset(
     }
     if (response.status === 401) {
       // Access token aged out mid-upload (multi-GB files exceed the ~1h TTL):
-      // refresh and resume the SAME session from the server-confirmed offset.
-      await deps.getAccessToken();
+      // FORCE a refresh (the cached getAccessToken would return the same dead
+      // token) and resume the SAME session from the server-confirmed offset.
+      await (deps.refreshAccessToken ?? deps.getAccessToken)();
       const probe = await probeSession(deps, sessionUri, source.size);
       if (probe.kind === "done") return probe.videoId;
       if (probe.kind === "expired") {

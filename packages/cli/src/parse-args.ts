@@ -11,6 +11,7 @@
 
 export type Command =
   | "publish"
+  | "bootstrap-playlists"
   | "comment"
   | "replace-comment"
   | "inspect-profile-post"
@@ -23,6 +24,7 @@ export type Command =
 
 const COMMANDS = new Set<Command>([
   "publish",
+  "bootstrap-playlists",
   "comment",
   "replace-comment",
   "inspect-profile-post",

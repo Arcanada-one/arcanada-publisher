@@ -159,7 +159,11 @@ describe("V-AC-3 fail-closed branches", () => {
     });
     const path = (ledger as unknown as { path: string }).path;
     await writeFile(path, '{"sha256": broken\n', { mode: 0o600 });
-    await expect(publishYouTube(input(), deps)).rejects.toThrow(/ledger corrupt/);
+    const failure = publishYouTube(input(), deps);
+    await expect(failure).rejects.toThrow(/ledger corrupt/);
+    await failure.catch((error: unknown) => {
+      expect((error as { code: number }).code).toBe(ErrorCode.INVALID_ARGS);
+    });
     expect(recorder.mutating()).toEqual([]);
   });
 });

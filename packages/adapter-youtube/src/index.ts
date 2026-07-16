@@ -4,7 +4,7 @@
 // by design; edit is metadata-only via videos.update.
 
 import { readFile } from "node:fs/promises";
-import { basename, extname } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 import {
   AdapterError,
   BaseAdapter,
@@ -25,19 +25,16 @@ import {
 import { AuthManager, type AuthDeps } from "./auth.js";
 import { ARCANADA_CHANNEL_ID, assertChannel } from "./channel-oracle.js";
 import { UploadLedger } from "./ledger.js";
-import {
-  auditOrAbort,
-  publishYouTube,
-  requireArmed,
-  VIDEOS_URL,
-  type PublishDeps,
-} from "./publish.js";
+import { auditOrAbort, requireArmed } from "./gate.js";
+import { publishYouTube, VIDEOS_URL, type PublishDeps } from "./publish.js";
+import { bootstrapPlaylists, type PublishLanguage } from "./playlist-binding.js";
+import { validateDescriptionBytes, validateLanguagePurity, validateTitle } from "./templates.js";
 import { createFetchTransport, apiJson, type Transport } from "./transport.js";
-import { dirname, join } from "node:path";
 
 export { ARCANADA_CHANNEL_ID } from "./channel-oracle.js";
 export { CANONICAL_PLAYLIST_TITLES, bootstrapPlaylists } from "./playlist-binding.js";
-export { isArmed, requireArmed, youtubeRateLimiter } from "./publish.js";
+export { isArmed, requireArmed } from "./gate.js";
+export { youtubeRateLimiter, youtubeDryRunLimiter } from "./publish.js";
 export { AuthManager } from "./auth.js";
 export type { Transport, TransportRequest, TransportResponse } from "./transport.js";
 
@@ -143,6 +140,25 @@ export class YouTubeAdapter extends BaseAdapter {
     if (!snippet) {
       throw new AdapterError(ErrorCode.VERIFY_FAILED, `edit: video ${videoId} not found`);
     }
+    // Read-before-edit oracle (same contract the browser adapters honour).
+    if (
+      input.expectedContent !== undefined &&
+      !String(snippet["description"] ?? "").includes(input.expectedContent)
+    ) {
+      throw new AdapterError(
+        ErrorCode.VERIFY_FAILED,
+        "edit: read-before-edit oracle mismatch — current description does not contain expectedContent",
+      );
+    }
+    // The same fail-closed metadata validation as publish (D-REQ-09).
+    const nextTitle = input.title ?? String(snippet["title"] ?? "");
+    const nextDescription = input.text ?? String(snippet["description"] ?? "");
+    validateTitle(nextTitle);
+    validateDescriptionBytes(nextDescription);
+    const lang = snippet["defaultLanguage"];
+    if (lang === "en" || lang === "ru") {
+      validateLanguagePurity(lang, nextTitle, nextDescription);
+    }
     const updated = {
       ...snippet,
       ...(input.title !== undefined ? { title: input.title } : {}),
@@ -173,6 +189,21 @@ export class YouTubeAdapter extends BaseAdapter {
     });
   }
 
+  /**
+   * Operator-gated playlist bootstrap (PRD Technical Approach item 4): armed
+   * state enforced inside bootstrapPlaylists; every creation audited fail-closed.
+   */
+  async bootstrapPlaylists(profile: string): Promise<Record<PublishLanguage, string>> {
+    const token = await this.auth(profile).getAccessToken();
+    await assertChannel(this.transport, token);
+    return bootstrapPlaylists({
+      transport: this.transport,
+      accessToken: token,
+      env: this.env,
+      auditOptions: this.options.auditBaseDir ? { baseDir: this.options.auditBaseDir } : {},
+    });
+  }
+
   delete(_input: DeleteInput): Promise<DeleteResult> {
     return Promise.reject(
       new AdapterError(
@@ -189,12 +220,15 @@ export class YouTubeAdapter extends BaseAdapter {
     const parsed = (await apiJson(
       this.transport,
       token,
-      { method: "GET", url: `${VIDEOS_URL}?part=status&id=${videoId}` },
+      { method: "GET", url: `${VIDEOS_URL}?part=status,snippet&id=${videoId}` },
       "verify",
-    )) as { items?: Array<{ id?: string }> };
-    const reachable = (parsed.items ?? []).length > 0;
+    )) as { items?: Array<{ id?: string; snippet?: { channelId?: string } }> };
+    const item = parsed.items?.[0];
+    const reachable = item !== undefined;
+    // ok requires OUR channel — a reachable foreign video must not verify green.
+    const owned = item?.snippet?.channelId === ARCANADA_CHANNEL_ID;
     return VerifyResultSchema.parse({
-      ok: reachable,
+      ok: reachable && owned,
       platform: "youtube",
       postUrl,
       reachable,
@@ -207,10 +241,18 @@ export class YouTubeAdapter extends BaseAdapter {
 function parseVideoId(postUrl: string): string {
   try {
     const url = new URL(postUrl);
-    const id = url.searchParams.get("v") ?? basename(url.pathname);
+    const fromParam = url.searchParams.get("v");
+    const fromShort =
+      url.hostname === "youtu.be"
+        ? basename(url.pathname)
+        : url.pathname.startsWith("/shorts/")
+          ? url.pathname.split("/")[2]
+          : undefined;
+    const id = fromParam ?? fromShort;
     if (id && /^[A-Za-z0-9_-]{5,}$/.test(id)) return id;
   } catch {
     // fall through
   }
+  // Path basenames like "watch"/"playlist" are page names, not video ids — fail fast.
   throw new AdapterError(ErrorCode.INVALID_ARGS, `cannot parse a videoId from '${postUrl}'`);
 }

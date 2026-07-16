@@ -25,7 +25,18 @@ export function sha256Bytes(bytes: Uint8Array): string {
 }
 
 export class UploadLedger {
+  /** In-process serialization: gate/append/complete on the same file must not interleave. */
+  private static readonly locks = new Map<string, Promise<unknown>>();
+
   constructor(private readonly path: string) {}
+
+  /** Run `fn` exclusively for this ledger path (concurrent /publish requests share the process). */
+  async withLock<T>(fn: () => Promise<T>): Promise<T> {
+    const previous = UploadLedger.locks.get(this.path) ?? Promise.resolve();
+    const next = previous.then(fn, fn);
+    UploadLedger.locks.set(this.path, next.catch(() => undefined));
+    return next;
+  }
 
   async load(): Promise<LedgerEntry[]> {
     let raw: string;

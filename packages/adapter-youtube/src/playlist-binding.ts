@@ -4,8 +4,9 @@
 // Bootstrap is read-before-create, duplicate-protected, audited, and
 // operator-gated (plan C10, D-REQ-04).
 
-import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
+import { AdapterError, ErrorCode, type AuditOptions } from "@arcanada/publisher-core";
 import { ARCANADA_CHANNEL_ID } from "./channel-oracle.js";
+import { auditOrAbort, requireArmed } from "./gate.js";
 import { apiJson, type Transport } from "./transport.js";
 
 export type PublishLanguage = "en" | "ru";
@@ -131,24 +132,41 @@ export async function insertIntoPlaylist(
 export interface BootstrapDeps {
   transport: Transport;
   accessToken: string;
-  /** Fail-closed audit sink (auditOrAbort from publish.ts). */
-  audit: (action: "playlist-create", postUrl: string) => Promise<void>;
+  /** Arming gate source — bootstrap enforces it ITSELF (code-enforced, D-REQ-12). */
+  env: NodeJS.ProcessEnv;
+  /** Fail-closed audit destination — bootstrap calls auditOrAbort itself. */
+  auditOptions: AuditOptions;
+}
+
+/** Paginated playlists.list mine=true (a >50-playlist channel must not miss the canonical title). */
+async function listOwnPlaylists(deps: BootstrapDeps): Promise<PlaylistsListResponse["items"]> {
+  const items: NonNullable<PlaylistsListResponse["items"]> = [];
+  let pageToken = "";
+  for (let page = 0; page < 20; page += 1) {
+    const url = `${PLAYLISTS_URL}?part=snippet&mine=true&maxResults=50${pageToken ? `&pageToken=${pageToken}` : ""}`;
+    const parsed = (await apiJson(
+      deps.transport,
+      deps.accessToken,
+      { method: "GET", url },
+      "playlist bootstrap read-before-create",
+    )) as PlaylistsListResponse & { nextPageToken?: string };
+    items.push(...(parsed.items ?? []));
+    if (!parsed.nextPageToken) break;
+    pageToken = parsed.nextPageToken;
+  }
+  return items;
 }
 
 /**
  * Read-before-create bootstrap: reuse an existing canonical-title playlist,
- * create only what is missing (each creation audited). The ARMING gate is the
- * caller's responsibility — this function performs mutations when called.
+ * create only what is missing. The arming gate and the fail-closed audit are
+ * enforced HERE (not delegated to callers) — an unarmed call mutates nothing.
  */
 export async function bootstrapPlaylists(
   deps: BootstrapDeps,
 ): Promise<Record<PublishLanguage, string>> {
-  const existing = (await apiJson(
-    deps.transport,
-    deps.accessToken,
-    { method: "GET", url: `${PLAYLISTS_URL}?part=snippet&mine=true&maxResults=50` },
-    "playlist bootstrap read-before-create",
-  )) as PlaylistsListResponse;
+  requireArmed(deps.env, "playlist bootstrap");
+  const existing = { items: await listOwnPlaylists(deps) } as PlaylistsListResponse;
   const result = {} as Record<PublishLanguage, string>;
   for (const language of ["en", "ru"] as const) {
     const canonical = CANONICAL_PLAYLIST_TITLES[language];
@@ -174,7 +192,14 @@ export async function bootstrapPlaylists(
       "playlist create",
     )) as { id?: string };
     if (!created.id) throw broken(`playlist create for ${language} returned no id`);
-    await deps.audit("playlist-create", `https://www.youtube.com/playlist?list=${created.id}`);
+    await auditOrAbort(
+      {
+        account: ARCANADA_CHANNEL_ID,
+        action: "playlist-create",
+        postUrl: `https://www.youtube.com/playlist?list=${created.id}`,
+      },
+      deps.auditOptions,
+    );
     result[language] = created.id;
   }
   return result;

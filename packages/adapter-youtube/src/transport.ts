@@ -98,7 +98,10 @@ function extractReason(text: string): string {
     const parsed = JSON.parse(text) as {
       error?: { errors?: Array<{ reason?: string }>; message?: string };
     };
-    return parsed.error?.errors?.[0]?.reason ?? parsed.error?.message ?? "";
+    const raw = parsed.error?.errors?.[0]?.reason ?? parsed.error?.message ?? "";
+    // Upstream free-text may echo request URLs; session ids are bearer
+    // capabilities — scrub them structurally before the reason can surface.
+    return raw.replace(/upload_id=[^&\s"']+/g, "upload_id=[redacted]").slice(0, 200);
   } catch {
     return "";
   }

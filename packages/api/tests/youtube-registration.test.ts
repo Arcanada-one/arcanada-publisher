@@ -39,6 +39,14 @@ function fakeAdapter(captured: { publish: PublishInput[]; edit: EditInput[] }): 
   };
 }
 
+describe("adapter factory — youtube case constructs the REAL adapter", () => {
+  it("makeAdapter('youtube') returns a YouTubeAdapter instance", async () => {
+    const { makeAdapter } = await import("../src/adapter-factory.js");
+    const { YouTubeAdapter } = await import("@arcanada/publisher-youtube");
+    expect(makeAdapter("youtube")).toBeInstanceOf(YouTubeAdapter);
+  });
+});
+
 describe("statusForCode — new codes must not collapse into 500", () => {
   it("maps the PUB-0035 range to actionable statuses", () => {
     expect(statusForCode(ErrorCode.AUTH_EXPIRED)).toBe(401);
@@ -75,6 +83,8 @@ describe("POST /publish forwards the YouTube field set", () => {
     expect(input.privacyStatus).toBe("private");
     expect(input.title).toBe("Заголовок");
     expect(input.dryRun).toBe(true);
+    expect(input.text).toBe("Описание");
+    expect(input.profile).toBe("origin");
   });
 
   it("a malformed privacyStatus is dropped, never forwarded", async () => {

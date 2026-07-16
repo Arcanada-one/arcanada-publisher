@@ -34,6 +34,14 @@ const tokenOk: TransportResponse = {
   text: JSON.stringify({ access_token: "at-fixture-access", expires_in: 3600, refresh_token: "1//0refresh" }),
 };
 
+async function waitFor(cond: () => boolean, timeoutMs = 3_000): Promise<void> {
+  const start = Date.now();
+  while (!cond()) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitFor timeout");
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 async function seededManager(respond: (req: TransportRequest) => TransportResponse) {
   const profilesRoot = await mkdtemp(join(tmpdir(), "pub0035-auth-"));
   const { transport, requests } = recordingTransport(respond);
@@ -49,7 +57,7 @@ describe("consent login (real loopback listener)", () => {
       consentUrl = u;
     };
     const loginDone = auth.login();
-    await new Promise((r) => setTimeout(r, 50)); // listener up, consent URL captured
+    await waitFor(() => consentUrl !== "");
     const url = new URL(consentUrl);
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
     expect(url.searchParams.get("code_challenge")).toBeTruthy();
@@ -62,11 +70,31 @@ describe("consent login (real loopback listener)", () => {
     expect(first.status).toBe(200);
     await loginDone;
     // single-shot: the listener is gone after one redirect
-    await expect(fetch(redirect)).rejects.toThrow();
+    await expect(fetch(redirect)).rejects.toThrow(/fetch failed/);
     const tokenPath = auth.tokenPath();
     expect((await stat(tokenPath)).mode & 0o777).toBe(0o600);
     expect((await stat(dirname(tokenPath))).mode & 0o777).toBe(0o700);
     expect(await readFile(tokenPath, "utf8")).toContain("refresh_token");
+  });
+
+  it("stray local requests (wrong path / no code) do NOT consume the single shot", async () => {
+    const { auth } = await seededManager(() => tokenOk);
+    let consentUrl = "";
+    (auth as unknown as { deps: { openUrl: (u: string) => void } }).deps.openUrl = (u) => {
+      consentUrl = u;
+    };
+    const loginDone = auth.login();
+    await waitFor(() => consentUrl !== "");
+    const url = new URL(consentUrl);
+    const redirect = new URL(url.searchParams.get("redirect_uri") ?? "");
+    const strayPath = new URL(redirect.origin + "/favicon.ico");
+    expect((await fetch(strayPath)).status).toBe(404); // ignored, listener stays up
+    const noParams = new URL(redirect.origin + "/oauth2/callback");
+    expect((await fetch(noParams)).status).toBe(404); // no code/error → ignored too
+    redirect.searchParams.set("code", "4/0Axcode");
+    redirect.searchParams.set("state", url.searchParams.get("state") ?? "");
+    expect((await fetch(redirect)).status).toBe(200); // the real redirect still lands
+    await loginDone;
   });
 
   it("state mismatch aborts the consent fail-closed", async () => {
@@ -79,7 +107,7 @@ describe("consent login (real loopback listener)", () => {
     // Attach the rejection expectation BEFORE triggering the redirect so the
     // promise is never momentarily unhandled.
     const expectation = expect(loginDone).rejects.toThrow(/state mismatch/);
-    await new Promise((r) => setTimeout(r, 50));
+    await waitFor(() => consentUrl !== "");
     const redirect = new URL(new URL(consentUrl).searchParams.get("redirect_uri") ?? "");
     redirect.searchParams.set("code", "4/0Axcode");
     redirect.searchParams.set("state", "WRONG");

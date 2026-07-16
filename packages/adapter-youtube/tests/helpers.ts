@@ -21,17 +21,18 @@ export function json(status: number, body: unknown, headers: Record<string, stri
 export interface Recorder {
   transport: Transport;
   requests: TransportRequest[];
-  /** Mutating = non-GET, excluding the OAuth token exchange. */
+  /** Mutating = non-GET, excluding EXACTLY the OAuth token-exchange URL. */
   mutating(): TransportRequest[];
 }
+
+export const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 export function makeTransport(responders: Responder[]): Recorder {
   const requests: TransportRequest[] = [];
   const counts = new Map<Responder, number>();
   return {
     requests,
-    mutating: () =>
-      requests.filter((r) => r.method !== "GET" && !r.url.includes("oauth2.googleapis.com")),
+    mutating: () => requests.filter((r) => r.method !== "GET" && r.url !== OAUTH_TOKEN_URL),
     transport: (req) => {
       requests.push(req);
       for (const responder of responders) {

@@ -97,6 +97,7 @@ describe("happy path", () => {
     const audit = await readFile(join(fixture.auditBaseDir, auditFiles[0] ?? ""), "utf8");
     expect(audit).toContain('"action":"publish"');
     expect(audit).not.toMatch(/upload_id=|ya29\.|GOCSPX-/);
+    expect(audit).not.toContain("TESTSESSION"); // the sessionUri bearer capability itself
   });
 });
 
@@ -171,6 +172,27 @@ describe("read-back and playlist phase", () => {
     expect(result.warnings.join("\n")).toMatch(/private-lock|privacyStatus divergence/);
   });
 
+  it("read-back divergences: title/description/missing-duration all surface in warnings", async () => {
+    const { deps } = await makeDeps([
+      tokenResponder,
+      channelResponder(),
+      playlistsResponder(),
+      ...uploadResponders(),
+      videoStatusResponder(
+        processedVideo({
+          snippet: { title: "Другой заголовок", description: "другое описание", channelId: CHANNEL_ID },
+          contentDetails: {},
+        }),
+      ),
+      ...playlistItemsResponders(),
+    ]);
+    const result = await publishYouTube(input(), deps);
+    const joined = result.warnings.join("\n");
+    expect(joined).toMatch(/title differs/);
+    expect(joined).toMatch(/description differs/);
+    expect(joined).toMatch(/duration not exposed/);
+  });
+
   it("insert failure after processed preserves the videoId in the ledger (reconciliation)", async () => {
     const { deps, ledgerPath } = await makeDeps([
       tokenResponder,
@@ -213,8 +235,6 @@ describe("read-back and playlist phase", () => {
       videoStatusResponder(processedVideo(), "vid002"),
       ...playlistItemsResponders(),
     ]);
-    const bytes = new Uint8Array(await readFile("/dev/null").catch(() => Buffer.alloc(0)));
-    void bytes;
     // Seed a pending entry with a dead session for the fixture file's hash.
     const loaded = await deps.loadSource("x");
     const { sha256Bytes } = await import("../src/ledger.js");
@@ -260,6 +280,24 @@ describe("guards living in publish.test.ts per C16 mapping", () => {
     );
     await expect(publishYouTube(input(), deps)).rejects.toMatchObject({
       code: ErrorCode.CHANNEL_MISMATCH,
+    });
+  });
+});
+
+describe("dry-run metering", () => {
+  const KEY = "ARCANADA_PUBLISHER_RATE_YOUTUBE";
+  afterEach(() => {
+    delete process.env[KEY];
+  });
+
+  it("dry-runs are check+RECORDED on their own limiter — unlimited dry-run floods are impossible", async () => {
+    process.env[KEY] = "1";
+    const { deps } = await makeDeps(happyResponders());
+    deps.dryRunLimiter = new RateLimiter();
+    const first = await publishYouTube(input({ dryRun: true }), deps);
+    expect(first.warnings.join()).toContain("dry-run");
+    await expect(publishYouTube(input({ dryRun: true }), deps)).rejects.toMatchObject({
+      code: ErrorCode.RATE_LIMIT,
     });
   });
 });

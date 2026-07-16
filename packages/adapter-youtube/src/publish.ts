@@ -11,11 +11,11 @@ import {
   PublishResultSchema,
   RateLimiter,
   appendAudit,
-  type AuditAction,
   type AuditOptions,
   type PublishInput,
   type PublishResult,
 } from "@arcanada/publisher-core";
+import { auditOrAbort, requireArmed } from "./gate.js";
 import type { AuthManager } from "./auth.js";
 import { ARCANADA_CHANNEL_ID, assertChannel } from "./channel-oracle.js";
 import { UploadLedger, sha256Bytes, type LedgerEntry } from "./ledger.js";
@@ -26,7 +26,7 @@ import {
   resolveLanguage,
   verifyBinding,
 } from "./playlist-binding.js";
-import { startSession, uploadFromOffset, type ByteSource, type UploadDeps } from "./resumable-upload.js";
+import { probeSession, startSession, uploadFromOffset, type ByteSource, type UploadDeps } from "./resumable-upload.js";
 import { apiJson, type Transport } from "./transport.js";
 import {
   validateDescriptionBytes,
@@ -44,38 +44,18 @@ export const VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos";
  */
 export const youtubeRateLimiter = new RateLimiter();
 
-export function isArmed(env: NodeJS.ProcessEnv): boolean {
-  return env["YOUTUBE_LIVE_ARMED"] === "1";
-}
+export { auditOrAbort, isArmed, requireArmed } from "./gate.js";
 
-export function requireArmed(env: NodeJS.ProcessEnv, operation: string): void {
-  if (!isArmed(env)) {
-    throw new AdapterError(
-      ErrorCode.NOT_ARMED,
-      `${operation}: live YouTube mutations require the operator-armed state (YOUTUBE_LIVE_ARMED=1 after dry-run plan review)`,
-      { operation },
-    );
-  }
-}
-
-/** Fail-closed audit: the stock appendAudit is fail-soft; YouTube mutations abort on a null ref. */
-export async function auditOrAbort(
-  input: { account: string; action: AuditAction; postUrl?: string },
-  options: AuditOptions,
-): Promise<string> {
-  const ref = await appendAudit({ platform: "youtube", ...input }, options);
-  if (ref === null) {
-    throw new AdapterError(
-      ErrorCode.INTERNAL_PANIC,
-      "audit append failed — aborting the mutation (fail-closed AAL L2 control)",
-    );
-  }
-  return ref;
-}
+/**
+ * Dry-run preflights are metered on their OWN module-scoped limiter (check +
+ * record) — the live limiter counts only recorded live publishes, so without
+ * this an unattended loop could drive unlimited credentialed dry-run reads.
+ */
+export const youtubeDryRunLimiter = new RateLimiter();
 
 export interface PublishDeps {
   transport: Transport;
-  auth: Pick<AuthManager, "getAccessToken">;
+  auth: Pick<AuthManager, "getAccessToken" | "refreshAccessToken">;
   env: NodeJS.ProcessEnv;
   ledger: UploadLedger;
   /** Byte source loader for the video file (injectable for tests). */
@@ -86,6 +66,7 @@ export interface PublishDeps {
   pollIntervalMs?: number;
   pollTimeoutMs?: number;
   limiter?: RateLimiter;
+  dryRunLimiter?: RateLimiter;
 }
 
 interface VideoStatus {
@@ -119,8 +100,15 @@ export async function publishYouTube(input: PublishInput, deps: PublishDeps): Pr
   validateDescriptionBytes(description);
   validateLanguagePurity(language, title, description);
 
-  // Metered preflight (dry-run included — credentialed reads have real cost).
-  limiter.check("youtube");
+  // Metered preflight. Dry-runs are metered on their own limiter (check AND
+  // record — credentialed reads have real cost); live publishes on the live one.
+  if (input.dryRun) {
+    const dryLimiter = deps.dryRunLimiter ?? youtubeDryRunLimiter;
+    dryLimiter.check("youtube");
+    dryLimiter.record("youtube");
+  } else {
+    limiter.check("youtube");
+  }
   const accessToken = await deps.auth.getAccessToken();
   const channel = await assertChannel(deps.transport, accessToken);
   const binding = resolveBinding(deps.env);
@@ -153,30 +141,54 @@ export async function publishYouTube(input: PublishInput, deps: PublishDeps): Pr
   const uploadDeps: UploadDeps = {
     transport: deps.transport,
     getAccessToken: () => deps.auth.getAccessToken(),
+    refreshAccessToken: () => deps.auth.refreshAccessToken(),
     ...(deps.sleep ? { sleep: deps.sleep } : {}),
   };
-  const videoId = await runUpload(uploadDeps, deps, {
-    pending,
-    sha256,
-    title,
-    description,
-    language,
-    privacy,
-    source,
-    mime,
+  // Serialize the gate→upload→complete window per ledger: two concurrent
+  // /publish calls for the same file must not both pass the duplicate gate.
+  const videoId = await deps.ledger.withLock(async () => {
+    const pendingLocked = await deps.ledger.gate(sha256);
+    const id = await runUpload(uploadDeps, deps, {
+      pending: pendingLocked ?? pending,
+      sha256,
+      title,
+      description,
+      language,
+      privacy,
+      source,
+      mime,
+    });
+    await deps.ledger.complete(sha256, id);
+    return id;
   });
-  await deps.ledger.complete(sha256, videoId);
 
-  await pollProcessing(deps, videoId);
+  let readBack: VideosListItem;
+  try {
+    await pollProcessing(deps, videoId);
 
-  // Oracle re-assert before the playlist mutation (D-REQ-03: every mutating call).
-  const freshToken = await deps.auth.getAccessToken();
-  await assertChannel(deps.transport, freshToken);
-  if (!(await isVideoInPlaylist(deps.transport, freshToken, binding[language], videoId))) {
-    await insertIntoPlaylist(deps.transport, freshToken, binding[language], videoId);
+    // Oracle re-assert before the playlist mutation (D-REQ-03: every mutating call).
+    const freshToken = await deps.auth.getAccessToken();
+    await assertChannel(deps.transport, freshToken);
+    if (!(await isVideoInPlaylist(deps.transport, freshToken, binding[language], videoId))) {
+      await insertIntoPlaylist(deps.transport, freshToken, binding[language], videoId);
+    }
+
+    readBack = await fetchVideo(deps, videoId);
+  } catch (error) {
+    // The upload itself already mutated YouTube: leave a best-effort audit
+    // trace (fail-soft here — the error in flight matters more) so a failed
+    // post-upload step never yields a completed-but-untraced upload.
+    await appendAudit(
+      {
+        platform: "youtube",
+        account: channel.channelId,
+        action: "publish",
+        postUrl: `https://www.youtube.com/watch?v=${videoId}`,
+      },
+      deps.auditOptions,
+    );
+    throw error;
   }
-
-  const readBack = await fetchVideo(deps, videoId);
   const warnings = collectDivergences(readBack, { title, description, privacy });
   const postUrl = `https://www.youtube.com/watch?v=${videoId}`;
   const auditRef = await auditOrAbort(
@@ -235,13 +247,30 @@ async function runUpload(uploadDeps: UploadDeps, deps: PublishDeps, plan: Upload
     });
     return uri;
   };
-  const sessionUri = plan.pending?.sessionUri ?? (await freshSession());
+  // Crash-resume of a pending session MUST probe first: the server may hold k
+  // bytes (resume from k, never from 0) or the whole file (crash after 200 but
+  // before ledger.complete — the probe returns the videoId with no transfer).
+  if (plan.pending?.sessionUri) {
+    const probe = await probeSession(uploadDeps, plan.pending.sessionUri, plan.source.size);
+    if (probe.kind === "done") return probe.videoId;
+    if (probe.kind === "incomplete") {
+      return uploadFromOffset(uploadDeps, plan.pending.sessionUri, plan.source, probe.receivedBytes);
+    }
+    // expired → fall through to a fresh session (ledger gate already passed).
+    return uploadFromOffset(uploadDeps, await freshSession(), plan.source, 0);
+  }
+  const sessionUri = await freshSession();
   try {
     return await uploadFromOffset(uploadDeps, sessionUri, plan.source, 0);
   } catch (error) {
-    // Expired session (undocumented TTL): restart ONLY behind the ledger gate —
-    // the duplicate check already passed for this sha256 in this invocation.
-    if (error instanceof AdapterError && /expired/.test(error.message)) {
+    // Session-expiry mid-flight (undocumented TTL): classified by CODE + the
+    // session-specific message — an AUTH_EXPIRED ("authorization expired")
+    // must NOT be misrouted into a fresh quota-spending session.
+    if (
+      error instanceof AdapterError &&
+      error.code === ErrorCode.INVALID_ARGS &&
+      /session expired/.test(error.message)
+    ) {
       return uploadFromOffset(uploadDeps, await freshSession(), plan.source, 0);
     }
     throw error;
@@ -290,9 +319,10 @@ async function pollProcessing(deps: PublishDeps, videoId: string): Promise<void>
         { videoId, failureReason: item.status?.failureReason },
       );
     }
-    // `terminated` = processing info no longer available — a normal terminal
-    // state; `processed` = done.
-    if (upload === "processed" || processing === "terminated") return;
+    // Terminal successes: uploadStatus `processed`, or processingDetails
+    // reporting `succeeded`/`terminated` (the latter = info no longer
+    // available, a normal terminal state) even while uploadStatus lags.
+    if (upload === "processed" || processing === "succeeded" || processing === "terminated") return;
     if (now() - startedAt > timeout) {
       throw new AdapterError(ErrorCode.VERIFY_FAILED, "processing poll timeout exceeded", {
         videoId,

@@ -6,12 +6,12 @@
 // API, so every auth branch is fixture-testable; no third-party OAuth client
 // (and no gaxios bypassing the seam).
 
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
+import { AdapterError, ErrorCode, validateProfileName } from "@arcanada/publisher-core";
 import { parseJson, type Transport } from "./transport.js";
 
 export const OAUTH_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -32,6 +32,12 @@ interface StoredToken {
   refresh_token: string;
 }
 
+function timingSafeEqualStr(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
+}
+
 function base64url(bytes: Buffer): string {
   return bytes.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
@@ -44,14 +50,17 @@ export class AuthManager {
     private readonly profile: string,
     deps: AuthDeps,
   ) {
+    // Same tool-scoping rule the API route applies — a CLI-supplied
+    // "../../etc" profile must never relocate token/ledger writes.
+    validateProfileName(profile);
     this.deps = deps;
   }
 
   tokenPath(): string {
+    const env = this.deps.env ?? process.env; // injected env wins WHOLESALE (no per-key fallthrough)
     const root =
       this.deps.profilesRoot ??
-      this.deps.env?.["ARCANADA_PUBLISHER_PROFILES_ROOT"] ??
-      process.env["ARCANADA_PUBLISHER_PROFILES_ROOT"] ??
+      env["ARCANADA_PUBLISHER_PROFILES_ROOT"] ??
       join(homedir(), ".arcanada-publisher", "profiles");
     return join(root, "youtube", this.profile === "" ? "default" : this.profile, "token.json");
   }
@@ -98,9 +107,22 @@ export class AuthManager {
   /** Single-shot 127.0.0.1 listener: accepts exactly one redirect, then closes. */
   private receiveAuthCode(clientId: string, challenge: string, state: string): Promise<string> {
     return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        server.close();
+        server.closeAllConnections?.();
+        reject(new AdapterError(ErrorCode.AUTH_EXPIRED, "OAuth consent timed out (10 min)"));
+      }, 600_000);
+      timeout.unref?.();
       const server = createServer((req, res) => {
         const url = new URL(req.url ?? "/", this.redirectUri);
         res.setHeader("content-type", "text/plain; charset=utf-8");
+        // A stray local request (favicon probe, port scanner) must NOT consume
+        // the single shot — only the real callback path with an OAuth outcome.
+        if (url.pathname !== "/oauth2/callback" || (!url.searchParams.has("code") && !url.searchParams.has("error"))) {
+          res.statusCode = 404;
+          res.end("not the OAuth callback");
+          return;
+        }
         // Single-shot: `connection: close` retires this socket after the
         // response flushes (no RST mid-read), and server.close() refuses any
         // new connection — together the listener serves exactly one redirect.
@@ -108,8 +130,9 @@ export class AuthManager {
         const gotState = url.searchParams.get("state");
         const code = url.searchParams.get("code");
         res.end("Arcanada Publisher: you may close this tab.");
+        clearTimeout(timeout);
         server.close();
-        if (gotState !== state) {
+        if (!timingSafeEqualStr(gotState ?? "", state)) {
           reject(
             new AdapterError(ErrorCode.INVALID_ARGS, "OAuth state mismatch — consent aborted"),
           );
