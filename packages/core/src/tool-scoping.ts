@@ -20,6 +20,10 @@ export const PLATFORM_TEXT_LIMITS: Record<Platform, number> = {
   reddit: 40_000,
   vkontakte: 16_384,
   telegram: 4_096,
+  // Coarse route-level cap only: YouTube's real description limit is 5000 BYTES
+  // (UTF-8), enforced byte-aware inside the adapter. UTF-8 bytes >= UTF-16 units
+  // for every string, so no legal description is rejected here.
+  youtube: 5_000,
 };
 
 /** Image MIME types an agent may attach. */

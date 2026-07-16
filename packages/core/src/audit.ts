@@ -13,7 +13,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Platform } from "./platform.js";
 
-export type AuditAction = "publish" | "comment" | "edit" | "delete";
+export type AuditAction = "publish" | "comment" | "edit" | "delete" | "playlist-create";
 
 /** The fields an audit record may carry. Anything outside this set is dropped. */
 export interface AuditInput {
