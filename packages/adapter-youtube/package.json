@@ -1,14 +1,11 @@
 {
-  "name": "@arcanada/publisher",
+  "name": "@arcanada/publisher-youtube",
   "version": "0.1.0-pre.0",
-  "description": "Unified CLI for arcanada-publisher",
+  "description": "YouTube Data API v3 adapter for arcanada-publisher (API-first, no browser automation)",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "bin": {
-    "arcanada-publisher": "dist/index.js"
-  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -27,17 +24,10 @@
   },
   "dependencies": {
     "@arcanada/publisher-core": "workspace:*",
-    "@arcanada/publisher-facebook": "workspace:*",
-    "@arcanada/publisher-linkedin": "workspace:*",
-    "@arcanada/publisher-reddit": "workspace:*",
-    "@arcanada/publisher-server": "workspace:*",
-    "@arcanada/publisher-telegram": "workspace:*",
-    "@arcanada/publisher-video": "workspace:*",
-    "@arcanada/publisher-vkontakte": "workspace:*",
-    "@arcanada/publisher-x": "workspace:*",
-    "@arcanada/publisher-youtube": "workspace:*"
+    "proper-lockfile": "4.1.2"
   },
   "devDependencies": {
+    "@types/proper-lockfile": "^4.1.4",
     "typescript": "^5.7.2",
     "vitest": "^3.2.7"
   }

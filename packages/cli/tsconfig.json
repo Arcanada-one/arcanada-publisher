@@ -1,11 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": {
-    "outDir": "dist",
-    "rootDir": "src"
-  },
-  "include": ["src/**/*"],
-  "exclude": ["tests/**/*", "dist/**/*"],
+  "compilerOptions": { "outDir": "dist", "rootDir": "src", "tsBuildInfoFile": "dist/.tsbuildinfo" },
+  "include": ["src/**/*.ts"],
   "references": [
     { "path": "../core" },
     { "path": "../api" },
@@ -15,6 +11,7 @@
     { "path": "../adapter-reddit" },
     { "path": "../adapter-vkontakte" },
     { "path": "../adapter-telegram" },
-    { "path": "../video-generator" }
+    { "path": "../video-generator" },
+    { "path": "../adapter-youtube" }
   ]
 }

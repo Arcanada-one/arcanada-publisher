@@ -9,10 +9,12 @@
 import { type Adapter, type Platform } from "@arcanada/publisher-core";
 
 /** A platform-bound Adapter that defers construction to the first method call. */
-function lazyAdapter(platform: Platform): Adapter {
+function lazyAdapter(platform: Platform, auditBaseDir?: string): Adapter {
   let real: Promise<Adapter> | undefined;
   const resolve = (): Promise<Adapter> => {
-    real ??= import("./adapter-factory.js").then((m) => m.makeAdapter(platform));
+    real ??= import("./adapter-factory.js").then((m) =>
+      m.makeAdapter(platform, false, auditBaseDir),
+    );
     return real;
   };
   return {
@@ -27,6 +29,6 @@ function lazyAdapter(platform: Platform): Adapter {
 }
 
 /** Default factory used when the server is started without an injected one. */
-export function defaultMakeAdapter(platform: Platform): Adapter {
-  return lazyAdapter(platform);
+export function defaultMakeAdapter(platform: Platform, auditBaseDir?: string): Adapter {
+  return lazyAdapter(platform, auditBaseDir);
 }

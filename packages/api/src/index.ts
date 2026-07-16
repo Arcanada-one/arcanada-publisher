@@ -40,7 +40,8 @@ const DEFAULT_PORT = 8787;
 /** Build the route dependencies from server options, filling in live defaults. */
 function resolveDeps(options: ApiServerOptions): RouteDeps {
   return {
-    makeAdapter: options.makeAdapter ?? defaultMakeAdapter,
+    makeAdapter:
+      options.makeAdapter ?? ((platform) => defaultMakeAdapter(platform, options.auditBaseDir)),
     rateLimiter: options.rateLimiter ?? new RateLimiter(),
     ...(options.auditBaseDir ? { auditBaseDir: options.auditBaseDir } : {}),
   };

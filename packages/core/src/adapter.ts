@@ -31,6 +31,12 @@ export interface PublishInput {
   premium?: boolean;
   /** Stable author-profile oracle required by adapters that verify ownership after publish. */
   expectedAuthorProfileUrl?: string;
+  /** YouTube-specific: path to the video file to upload (video-mandatory platform). */
+  videoPath?: string;
+  /** YouTube-specific: video language driving fail-closed playlist routing; the adapter validates the allowed set. */
+  language?: string;
+  /** YouTube-specific: requested visibility; effective status is read back after processing. */
+  privacyStatus?: "private" | "unlisted" | "public";
 }
 
 export interface CommentInput {
@@ -54,6 +60,8 @@ export interface EditInput {
   videoWidth?: number;
   videoHeight?: number;
   videoDuration?: number;
+  /** YouTube-specific: metadata-only title update via videos.update. */
+  title?: string;
   profile: string;
 }
 

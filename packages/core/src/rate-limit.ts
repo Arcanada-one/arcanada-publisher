@@ -20,22 +20,33 @@ export const WINDOW_MS = 60 * 60 * 1000;
 export interface RateLimiterOptions {
   /** Clock source (ms epoch). Injectable for deterministic tests. */
   now?: () => number;
+  /**
+   * Env-key suffix so a second limiter class (e.g. preflight metering) can be
+   * tuned independently: key becomes ARCANADA_PUBLISHER_RATE_<PLATFORM><suffix>.
+   */
+  envSuffix?: string;
+  /** Default ceiling override for this limiter instance. */
+  defaultPerHour?: number;
 }
 
 export class RateLimiter {
   private readonly now: () => number;
+  private readonly envSuffix: string;
+  private readonly defaultPerHour: number;
   private readonly events = new Map<Platform, number[]>();
 
   constructor(options: RateLimiterOptions = {}) {
     this.now = options.now ?? (() => Date.now());
+    this.envSuffix = options.envSuffix ?? "";
+    this.defaultPerHour = options.defaultPerHour ?? DEFAULT_RATE_PER_HOUR;
   }
 
   /** Resolve the per-hour ceiling for a platform, honouring the env override. */
   private limitFor(platform: Platform): number {
-    const raw = process.env[`ARCANADA_PUBLISHER_RATE_${platform.toUpperCase()}`];
-    if (raw === undefined) return DEFAULT_RATE_PER_HOUR;
+    const raw = process.env[`ARCANADA_PUBLISHER_RATE_${platform.toUpperCase()}${this.envSuffix}`];
+    if (raw === undefined) return this.defaultPerHour;
     const parsed = Number.parseInt(raw, 10);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_RATE_PER_HOUR;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : this.defaultPerHour;
   }
 
   /** Drop events that have aged out of the window; return the surviving list. */

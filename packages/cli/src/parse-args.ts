@@ -11,6 +11,7 @@
 
 export type Command =
   | "publish"
+  | "bootstrap-playlists"
   | "comment"
   | "replace-comment"
   | "inspect-profile-post"
@@ -23,6 +24,7 @@ export type Command =
 
 const COMMANDS = new Set<Command>([
   "publish",
+  "bootstrap-playlists",
   "comment",
   "replace-comment",
   "inspect-profile-post",
@@ -73,6 +75,12 @@ export interface ParsedArgs {
   ownerId: number | undefined;
   /** Telegram-specific: target chat/channel id or @username. */
   chatId: string | undefined;
+  /** YouTube-specific: path to the video file to upload. */
+  videoPath: string | undefined;
+  /** YouTube-specific: content language ('en' | 'ru') driving playlist routing. */
+  language: string | undefined;
+  /** YouTube-specific: requested visibility. */
+  privacy: string | undefined;
   /** X-specific (PUB-0033): opt-in Premium long-form mode (25 000-char limit). */
   premium: boolean;
   /**
@@ -144,6 +152,9 @@ const VALUE_FLAGS = new Set([
   "--title",
   "--owner-id",
   "--chat-id",
+  "--video",
+  "--language",
+  "--privacy",
   // video subcommand flags
   "--cover",
   "--audio",
@@ -203,6 +214,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
     title: undefined,
     ownerId: undefined,
     chatId: undefined,
+    videoPath: undefined,
+    language: undefined,
+    privacy: undefined,
     premium: false,
     headed: false,
     browser: false,
@@ -351,6 +365,18 @@ export function parseArgs(argv: string[]): ParsedArgs {
       }
       case "--chat-id":
         out.chatId = value;
+        break;
+      case "--video":
+        out.videoPath = value;
+        break;
+      case "--language":
+        out.language = value;
+        break;
+      case "--privacy":
+        if (value !== "private" && value !== "unlisted" && value !== "public") {
+          throw new CliParseError(`--privacy must be private|unlisted|public, got '${value}'`);
+        }
+        out.privacy = value;
         break;
       // video subcommand flags
       case "--cover":

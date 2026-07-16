@@ -9,6 +9,20 @@ export enum ErrorCode {
   NETWORK_GUARD = 7,
   RATE_LIMIT = 8,
   DUPLICATE = 9,
+  /** Authenticated identity does not own the expected channel/account. */
+  CHANNEL_MISMATCH = 10,
+  /** Content language absent or outside the adapter's allowed set. */
+  LANGUAGE_UNRESOLVED = 11,
+  /** Language→playlist binding missing, foreign, or inconsistent. */
+  PLAYLIST_BINDING_BROKEN = 12,
+  /** Refresh/access token expired or revoked; re-consent required. */
+  AUTH_EXPIRED = 13,
+  /** Upstream API quota exhausted. */
+  QUOTA_EXCEEDED = 14,
+  /** Operation not supported by this adapter by design. */
+  UNSUPPORTED_OPERATION = 15,
+  /** Live mutation attempted without the operator-armed state. */
+  NOT_ARMED = 16,
   INTERNAL_PANIC = 99,
 }
 

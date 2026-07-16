@@ -63,3 +63,25 @@ risks:
     accepted_by: paxbeach@gmail.com
     accepted_on: 2026-05-21
     expires: 2026-08-19
+  # PUB-0035 (YouTube adapter) — accepted residuals from the do-2 verify round
+  - id: youtube-cli-per-process-limiter
+    description: >-
+      The module-scoped preflight/live rate limiters are per-process; a loop
+      shelling out one `arcanada-publisher publish` per iteration is never
+      metered (each CLI process starts at zero). The control is effective on
+      the long-lived loopback API server, which is the agent-facing surface;
+      the CLI is operator-driven by design.
+    severity: low
+    accepted_by: paxbeach@gmail.com
+    accepted_on: 2026-07-16
+    expires: 2026-10-14
+  - id: youtube-post-upload-trace-fail-soft
+    description: >-
+      If a post-upload step fails AND the audit sink is unwritable, the
+      completed upload's best-effort audit trace drops (stderr line emitted);
+      the videoId remains recorded in the 0600 upload ledger and the
+      success-path audit stays fail-closed.
+    severity: low
+    accepted_by: paxbeach@gmail.com
+    accepted_on: 2026-07-16
+    expires: 2026-10-14

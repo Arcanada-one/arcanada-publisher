@@ -1,4 +1,12 @@
-export const PLATFORMS = ["facebook", "linkedin", "x", "reddit", "vkontakte", "telegram"] as const;
+export const PLATFORMS = [
+  "facebook",
+  "linkedin",
+  "x",
+  "reddit",
+  "vkontakte",
+  "telegram",
+  "youtube",
+] as const;
 
 export type Platform = (typeof PLATFORMS)[number];
 

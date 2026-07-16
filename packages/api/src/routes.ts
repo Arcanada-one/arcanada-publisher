@@ -8,6 +8,7 @@
 
 import {
   type Adapter,
+  type PublishResult,
   type Platform,
   AdapterError,
   ErrorCode,
@@ -35,9 +36,18 @@ export function statusForCode(code: ErrorCode): number {
     case ErrorCode.MISSING_INPUT:
       return 400;
     case ErrorCode.NETWORK_GUARD:
+    case ErrorCode.NOT_ARMED:
       return 403;
+    case ErrorCode.AUTH_EXPIRED:
+      return 401;
     case ErrorCode.RATE_LIMIT:
+    case ErrorCode.QUOTA_EXCEEDED:
       return 429;
+    case ErrorCode.CHANNEL_MISMATCH:
+    case ErrorCode.LANGUAGE_UNRESOLVED:
+    case ErrorCode.PLAYLIST_BINDING_BROKEN:
+    case ErrorCode.UNSUPPORTED_OPERATION:
+      return 400;
     default:
       return 500;
   }
@@ -81,15 +91,30 @@ async function handlePublish(body: Body, deps: RouteDeps): Promise<unknown> {
       ? { ownerId: body.ownerId }
       : {}),
     ...(typeof body.chatId === "string" ? { chatId: body.chatId } : {}),
+    ...(typeof body.videoPath === "string" ? { videoPath: body.videoPath } : {}),
+    ...(typeof body.language === "string" ? { language: body.language } : {}),
+    ...(body.privacyStatus === "private" ||
+    body.privacyStatus === "unlisted" ||
+    body.privacyStatus === "public"
+      ? { privacyStatus: body.privacyStatus }
+      : {}),
   });
 
   if (dryRun) return result;
   deps.rateLimiter.record(platform);
+  // The youtube adapter audits internally (fail-closed) and carries its own
+  // auditRef — do not double-audit or displace the stronger ref. Pinned to the
+  // platform so a spurious auditRef from any OTHER adapter can never suppress
+  // the route-layer audit (route semantics unchanged for other platforms).
+  if (platform === "youtube" && (result as { auditRef?: string }).auditRef) return result;
   const auditRef = await appendAudit(
     { platform, account: result.account, action: "publish", postUrl: result.postUrl },
     deps.auditBaseDir ? { baseDir: deps.auditBaseDir } : {},
   );
-  return { ...result, ...(auditRef ? { auditRef } : {}) };
+  // Non-youtube adapters do not own audit refs: drop any spurious incoming ref
+  // so the caller never receives a ref that corresponds to no route record.
+  const { auditRef: _spurious, ...clean } = result as PublishResult & { auditRef?: string };
+  return { ...clean, ...(auditRef ? { auditRef } : {}) };
 }
 
 /** POST /comment — validate then comment (no rate-limit; comments are cheap). */
@@ -107,9 +132,13 @@ async function handleEdit(body: Body, deps: RouteDeps): Promise<unknown> {
   const profile = resolveProfile(body);
   const postUrl = typeof body.targetUrl === "string" ? body.targetUrl : "";
   const text = typeof body.text === "string" ? body.text : undefined;
-  return deps
-    .makeAdapter(platform)
-    .edit({ postUrl, profile, ...(text !== undefined ? { text } : {}) });
+  const title = typeof body.title === "string" ? body.title : undefined;
+  return deps.makeAdapter(platform).edit({
+    postUrl,
+    profile,
+    ...(text !== undefined ? { text } : {}),
+    ...(title !== undefined ? { title } : {}),
+  });
 }
 
 /** POST /delete — read-before-delete oracle is enforced by the adapter. */

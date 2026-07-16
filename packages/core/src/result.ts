@@ -23,6 +23,8 @@ export const PublishResultSchema = z.object({
   postIds: z.array(z.string().min(1)).optional(),
   attachments: z.array(attachmentSchema).default([]),
   commentIds: z.array(z.string()).default([]),
+  /** Non-fatal read-back divergences (e.g. the YouTube private-lock signal). */
+  warnings: z.array(z.string()).default([]),
 });
 
 export const CommentResultSchema = z.object({
