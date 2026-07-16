@@ -18,7 +18,7 @@ const ENTRY = {
   title: "Заголовок",
   totalBytes: 1024,
   startedAt: "2026-07-16T15:00:00Z",
-  sessionUri: "https://upload.example/session?upload_id=SECRET",
+  sessionUri: "https://upload.example/session/SECRET-CAPABILITY",
 };
 
 describe("UploadLedger", () => {
@@ -39,7 +39,7 @@ describe("UploadLedger", () => {
     const ledger = new UploadLedger(await tmpLedgerPath());
     await ledger.append(ENTRY);
     const pending = await ledger.gate(ENTRY.sha256);
-    expect(pending?.sessionUri).toContain("upload_id=SECRET");
+    expect(pending?.sessionUri).toContain("SECRET-CAPABILITY");
   });
 
   it("corrupt line fails CLOSED with an explicit error", async () => {
@@ -56,7 +56,7 @@ describe("UploadLedger", () => {
     await ledger.append(ENTRY);
     await ledger.complete(ENTRY.sha256, "vid123");
     const body = await readFile(path, "utf8");
-    expect(body).not.toContain("upload_id=SECRET");
+    expect(body).not.toContain("SECRET-CAPABILITY");
     expect(body).toContain('"videoId":"vid123"');
   });
 

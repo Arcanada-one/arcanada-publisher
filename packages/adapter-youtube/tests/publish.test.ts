@@ -208,7 +208,7 @@ describe("read-back and playlist phase", () => {
       channelResponder(),
       playlistsResponder(),
       (req) =>
-        req.method === "PUT" && req.url.includes("upload_id=DEAD") ? json(404, {}) : undefined,
+        req.method === "PUT" && req.url.includes("session/DEAD") ? json(404, {}) : undefined,
       ...uploadResponders("vid002"),
       videoStatusResponder(processedVideo(), "vid002"),
       ...playlistItemsResponders(),
@@ -224,11 +224,11 @@ describe("read-back and playlist phase", () => {
       title: RU.title,
       totalBytes: loaded.source.size,
       startedAt: "2026-07-16T00:00:00Z",
-      sessionUri: "https://upload.googleapis.com/session?upload_id=DEAD",
+      sessionUri: "https://upload.googleapis.com/session/DEAD",
     });
     const result = await publishYouTube(input(), deps);
     expect(result.postUrl).toContain("vid002");
-    expect(await readFile(ledgerPath, "utf8")).not.toContain("upload_id=DEAD"); // scrubbed on completion
+    expect(await readFile(ledgerPath, "utf8")).not.toContain("session/DEAD"); // scrubbed on completion
   });
 });
 

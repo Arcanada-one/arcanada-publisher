@@ -9,7 +9,7 @@ import { SESSION_URI, json, makeTransport, type Responder } from "./helpers.js";
 const BYTES = new Uint8Array([10, 11, 12, 13, 14, 15, 16, 17]); // 8 bytes
 const source: ByteSource = { size: BYTES.length, slice: (o) => BYTES.subarray(o) };
 
-function deps(responders: Responder[], tokens: string[] = ["ya29.one"]) {
+function deps(responders: Responder[], tokens: string[] = ["at-one"]) {
   const recorder = makeTransport(responders);
   let tokenIndex = 0;
   const issued: string[] = [];
@@ -19,7 +19,7 @@ function deps(responders: Responder[], tokens: string[] = ["ya29.one"]) {
     deps: {
       transport: recorder.transport,
       getAccessToken: () => {
-        const token = tokens[Math.min(tokenIndex, tokens.length - 1)] ?? "ya29.one";
+        const token = tokens[Math.min(tokenIndex, tokens.length - 1)] ?? "at-one";
         tokenIndex += 1;
         issued.push(token);
         return Promise.resolve(token);
@@ -80,15 +80,15 @@ describe("uploadFromOffset", () => {
           if (req.headers?.["content-range"] === "bytes */8") {
             return { status: 308, headers: { range: "bytes=0-3" }, text: "" };
           }
-          return req.headers?.authorization === "Bearer ya29.two"
+          return req.headers?.authorization === "Bearer at-two"
             ? json(200, { id: "vidZ" })
             : json(401, {});
         },
       ],
-      ["ya29.one", "ya29.two"],
+      ["at-one", "at-two"],
     );
     await expect(uploadFromOffset(d, SESSION_URI, source, 0)).resolves.toBe("vidZ");
-    expect(issued).toContain("ya29.two"); // refresh happened
+    expect(issued).toContain("at-two"); // refresh happened
     expect(recorder.requests.every((r) => r.url === SESSION_URI)).toBe(true); // same session throughout
   });
 

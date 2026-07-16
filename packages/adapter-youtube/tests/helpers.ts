@@ -10,7 +10,7 @@ import type { Transport, TransportRequest, TransportResponse } from "../src/tran
 
 export const CHANNEL_ID = "UC2zUfwafsM2OxaidE0iNM7w";
 export const UPLOADS_ID = "UUzUfwafsM2OxaidE0iNM7w";
-export const SESSION_URI = "https://upload.googleapis.com/session?upload_id=TESTSESSION";
+export const SESSION_URI = "https://upload.googleapis.com/session/TESTSESSION";
 
 export type Responder = (req: TransportRequest, callIndex: number) => TransportResponse | undefined;
 
@@ -49,7 +49,7 @@ export function makeTransport(responders: Responder[]): Recorder {
 
 export const tokenResponder: Responder = (req) =>
   req.url.includes("oauth2.googleapis.com/token")
-    ? json(200, { access_token: "ya29.fixture", expires_in: 3600 })
+    ? json(200, { access_token: "at-fixture", expires_in: 3600 })
     : undefined;
 
 export function channelResponder(id: string = CHANNEL_ID): Responder {
@@ -153,7 +153,7 @@ export async function makeFixture(): Promise<AdapterFixture> {
     videoPath,
     env: {
       YOUTUBE_OAUTH_CLIENT_ID: "id.apps.googleusercontent.com",
-      YOUTUBE_OAUTH_CLIENT_SECRET: "GOCSPX-fixture",
+      YOUTUBE_OAUTH_CLIENT_SECRET: "client-secret-fixture",
       YOUTUBE_PLAYLIST_EN: "PLen001",
       YOUTUBE_PLAYLIST_RU: "PLru001",
       YOUTUBE_LIVE_ARMED: "1",

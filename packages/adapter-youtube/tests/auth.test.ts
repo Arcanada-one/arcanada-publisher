@@ -12,7 +12,7 @@ import type { Transport, TransportRequest, TransportResponse } from "../src/tran
 
 const ENV = {
   YOUTUBE_OAUTH_CLIENT_ID: "client-id.apps.googleusercontent.com",
-  YOUTUBE_OAUTH_CLIENT_SECRET: "GOCSPX-test-secret-value",
+  YOUTUBE_OAUTH_CLIENT_SECRET: "client-secret-fixture",
 } as NodeJS.ProcessEnv;
 
 function recordingTransport(
@@ -31,7 +31,7 @@ function recordingTransport(
 const tokenOk: TransportResponse = {
   status: 200,
   headers: {},
-  text: JSON.stringify({ access_token: "ya29.test-access", expires_in: 3600, refresh_token: "1//0refresh" }),
+  text: JSON.stringify({ access_token: "at-fixture-access", expires_in: 3600, refresh_token: "1//0refresh" }),
 };
 
 async function seededManager(respond: (req: TransportRequest) => TransportResponse) {
@@ -98,7 +98,7 @@ describe("access-token refresh", () => {
     await writeFile(tokenPath, JSON.stringify({ refresh_token: "1//0seed" }), { mode: 0o600 });
     const token1 = await auth.getAccessToken();
     const token2 = await auth.getAccessToken();
-    expect(token1).toBe("ya29.test-access");
+    expect(token1).toBe("at-fixture-access");
     expect(token2).toBe(token1);
     const tokenCalls = requests.filter((r) => r.url === OAUTH_TOKEN_URL);
     expect(tokenCalls).toHaveLength(1); // cached — no second refresh
