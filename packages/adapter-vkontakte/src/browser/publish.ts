@@ -5,7 +5,12 @@
 // read-back-after-submit — are unit-testable on a fake step recorder without a
 // browser (the same pattern adapter-facebook uses via PublishStepRecorder).
 
-import { AdapterError, ErrorCode, PublishResultSchema, type PublishResult } from "@arcanada/publisher-core";
+import {
+  AdapterError,
+  ErrorCode,
+  PublishResultSchema,
+  type PublishResult,
+} from "@arcanada/publisher-core";
 import { assertAuthorized, type ExpectedAccount, type SessionState } from "./session-guard.js";
 import { preflightPostText } from "./sanitize.js";
 import { assertNotDuplicate, type WallPostSummary } from "./duplicate-guard.js";

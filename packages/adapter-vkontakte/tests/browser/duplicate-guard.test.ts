@@ -21,7 +21,11 @@ describe("vk browser — duplicate fragment normalization", () => {
 
 describe("vk browser — read-before-post duplicate guard", () => {
   const recent: WallPostSummary[] = [
-    { text: "Глобальный Адресатор — новая статья цикла Cubrim", hasVideo: true, permalink: "https://vk.com/wall12345_42" },
+    {
+      text: "Глобальный Адресатор — новая статья цикла Cubrim",
+      hasVideo: true,
+      permalink: "https://vk.com/wall12345_42",
+    },
     { text: "Другой пост без видео", hasVideo: false, permalink: "https://vk.com/wall12345_41" },
   ];
 

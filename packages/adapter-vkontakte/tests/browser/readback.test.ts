@@ -42,7 +42,11 @@ describe("vk browser — post read-back oracle", () => {
   it("passes when author, normalized text and video all match", () => {
     expect(() =>
       assertPostReadBack(
-        { account: "Pavel Valentov", text: "Глобальный Адресатор полный текст статьи", hasVideo: true },
+        {
+          account: "Pavel Valentov",
+          text: "Глобальный Адресатор полный текст статьи",
+          hasVideo: true,
+        },
         expected,
       ),
     ).not.toThrow();
@@ -51,7 +55,11 @@ describe("vk browser — post read-back oracle", () => {
   it("STOPs with VERIFY_FAILED when the author differs", () => {
     expect(() =>
       assertPostReadBack(
-        { account: "Someone Else", text: "Глобальный Адресатор полный текст статьи", hasVideo: true },
+        {
+          account: "Someone Else",
+          text: "Глобальный Адресатор полный текст статьи",
+          hasVideo: true,
+        },
         expected,
       ),
     ).toThrowError(expect.objectContaining({ code: ErrorCode.VERIFY_FAILED }));
@@ -69,7 +77,11 @@ describe("vk browser — post read-back oracle", () => {
   it("STOPs with VERIFY_FAILED when the video is not attached", () => {
     expect(() =>
       assertPostReadBack(
-        { account: "Pavel Valentov", text: "Глобальный Адресатор полный текст статьи", hasVideo: false },
+        {
+          account: "Pavel Valentov",
+          text: "Глобальный Адресатор полный текст статьи",
+          hasVideo: false,
+        },
         expected,
       ),
     ).toThrowError(expect.objectContaining({ code: ErrorCode.VERIFY_FAILED }));

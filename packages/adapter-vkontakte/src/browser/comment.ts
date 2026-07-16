@@ -5,7 +5,12 @@
 // the read-back are behind a `VkCommentSteps` seam so misbinding (a reply
 // instead of a top-level comment) and link order/count are unit-testable.
 
-import { AdapterError, ErrorCode, CommentResultSchema, type CommentResult } from "@arcanada/publisher-core";
+import {
+  AdapterError,
+  ErrorCode,
+  CommentResultSchema,
+  type CommentResult,
+} from "@arcanada/publisher-core";
 import { assertAuthorized, type ExpectedAccount, type SessionState } from "./session-guard.js";
 import { extractWallPermalink } from "./url-extraction.js";
 

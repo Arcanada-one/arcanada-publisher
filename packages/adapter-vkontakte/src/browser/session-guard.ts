@@ -37,7 +37,10 @@ export function detectExpiredFromUrl(url: string): boolean {
     return false;
   }
   const host = parsed.hostname;
-  if ((host === "vk.com" || host === "vk.ru" || host === "m.vk.com") && VK_LOGOUT_PATHS.test(parsed.pathname)) {
+  if (
+    (host === "vk.com" || host === "vk.ru" || host === "m.vk.com") &&
+    VK_LOGOUT_PATHS.test(parsed.pathname)
+  ) {
     return true;
   }
   if ((host === "id.vk.com" || host === "id.vk.ru") && ID_AUTH_PATHS.test(parsed.pathname)) {

@@ -66,7 +66,11 @@ describe("vk browser — top-level comment binding (no reply)", () => {
 
   it("STOPs with VERIFY_FAILED if read-back shows the comment is a reply", async () => {
     const { steps } = commentSteps({
-      readBackComment: async () => ({ text: FOUR_LINKS.join("\n"), isReply: true, links: [...FOUR_LINKS] }),
+      readBackComment: async () => ({
+        text: FOUR_LINKS.join("\n"),
+        isReply: true,
+        links: [...FOUR_LINKS],
+      }),
     });
     await expect(runVkComment(INPUT, steps)).rejects.toMatchObject({
       code: ErrorCode.VERIFY_FAILED,
@@ -126,8 +130,12 @@ describe("vk browser — comment 4-link read-back", () => {
 
   it("unwrapVkAwayLink extracts the target from an away.php wrapper and passes plain URLs through", () => {
     expect(
-      unwrapVkAwayLink("https://vk.com/away.php?to=" + encodeURIComponent("https://cubrim.com/ru/addressor")),
+      unwrapVkAwayLink(
+        "https://vk.com/away.php?to=" + encodeURIComponent("https://cubrim.com/ru/addressor"),
+      ),
     ).toBe("https://cubrim.com/ru/addressor");
-    expect(unwrapVkAwayLink("https://t.me/valentovtypes/214")).toBe("https://t.me/valentovtypes/214");
+    expect(unwrapVkAwayLink("https://t.me/valentovtypes/214")).toBe(
+      "https://t.me/valentovtypes/214",
+    );
   });
 });

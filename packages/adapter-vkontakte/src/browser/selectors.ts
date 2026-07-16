@@ -20,11 +20,14 @@ export const selectors = {
   /** Comment submit. */
   commentSubmit: /^(Отправить|Send|Comment)$/i,
   /** Attached-media preview (present once a video settles). */
-  attachedVideoPreview: '[data-testid="video_preview"], video, .VideoPreview, .MediaGrid__interactive',
+  attachedVideoPreview:
+    '[data-testid="video_preview"], video, .VideoPreview, .MediaGrid__interactive',
   /** Captcha / bot-check indicator. */
-  captchaIndicator: /(captcha|введите код|подтвердите, что вы не робот|security check|confirm you are (not a robot|human))/i,
+  captchaIndicator:
+    /(captcha|введите код|подтвердите, что вы не робот|security check|confirm you are (not a robot|human))/i,
   /** Platform "links are forbidden" refusal (VK error 222 analogue in UI). */
-  linksForbiddenIndicator: /(ссылки запрещены|нельзя добавлять ссылки|hyperlinks are forbidden|links are not allowed)/i,
+  linksForbiddenIndicator:
+    /(ссылки запрещены|нельзя добавлять ссылки|hyperlinks are forbidden|links are not allowed)/i,
 } as const;
 
 export type SelectorKey = keyof typeof selectors;

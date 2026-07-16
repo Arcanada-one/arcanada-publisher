@@ -83,10 +83,16 @@ async function readSessionState(page: Page): Promise<SessionState> {
 async function guardPlatformRefusals(page: Page): Promise<void> {
   const blob = await page.content().catch(() => "");
   if (isCaptchaBlob(blob)) {
-    throw new AdapterError(ErrorCode.RATE_LIMIT, "vk: captcha / bot-check detected — STOP (operator decides)");
+    throw new AdapterError(
+      ErrorCode.RATE_LIMIT,
+      "vk: captcha / bot-check detected — STOP (operator decides)",
+    );
   }
   if (isLinksForbiddenBlob(blob)) {
-    throw new AdapterError(ErrorCode.VERIFY_FAILED, "vk: platform refused links (hyperlinks forbidden) — STOP");
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "vk: platform refused links (hyperlinks forbidden) — STOP",
+    );
   }
 }
 
@@ -107,13 +113,20 @@ function publishSteps(page: Page): VkPublishSteps {
           .innerText()
           .catch(() => "");
         const hasVideo =
-          (await p.locator("video, [data-testid='video_preview']").count().catch(() => 0)) > 0;
+          (await p
+            .locator("video, [data-testid='video_preview']")
+            .count()
+            .catch(() => 0)) > 0;
         const href = await p
           .locator('a[href*="/wall"]')
           .first()
           .getAttribute("href")
           .catch(() => null);
-        out.push({ text, hasVideo, permalink: href ? new URL(href, "https://vk.com").toString() : "" });
+        out.push({
+          text,
+          hasVideo,
+          permalink: href ? new URL(href, "https://vk.com").toString() : "",
+        });
       }
       return out;
     },
@@ -133,7 +146,11 @@ function publishSteps(page: Page): VkPublishSteps {
       await page.keyboard.insertText(text);
     },
     async preSubmitSnapshot() {
-      const composerText = await page.getByRole("textbox").last().innerText().catch(() => "");
+      const composerText = await page
+        .getByRole("textbox")
+        .last()
+        .innerText()
+        .catch(() => "");
       const hasVideo = (await page.locator(selectors.attachedVideoPreview).count()) > 0;
       return { hasText: composerText.trim().length > 0, hasVideo };
     },
@@ -157,7 +174,12 @@ function publishSteps(page: Page): VkPublishSteps {
       await article.waitFor({ state: "visible", timeout: 15_000 });
       const text = (await article.innerText().catch(() => "")) ?? "";
       const hasVideo = (await article.locator("video, [data-testid='video_preview']").count()) > 0;
-      const authorName = (await article.locator(".author, [data-testid='post_author']").first().innerText().catch(() => "")) || "";
+      const authorName =
+        (await article
+          .locator(".author, [data-testid='post_author']")
+          .first()
+          .innerText()
+          .catch(() => "")) || "";
       return { account: authorName, text, hasVideo };
     },
   };
@@ -194,9 +216,10 @@ function commentSteps(page: Page): VkCommentSteps {
 }
 
 /** Expected operator account for identity-assertion (from options or env). */
-function resolveExpectedAccount(
-  fromInput: { id?: string; name?: string },
-): { accountId?: string; accountName?: string } {
+function resolveExpectedAccount(fromInput: { id?: string; name?: string }): {
+  accountId?: string;
+  accountName?: string;
+} {
   const id = fromInput.id ?? process.env["VK_EXPECTED_ACCOUNT_ID"];
   const name = fromInput.name ?? process.env["VK_EXPECTED_ACCOUNT_NAME"];
   return {
@@ -220,7 +243,10 @@ export class VKontakteBrowserAdapter extends BaseAdapter {
     const vi = input as VkBrowserPublishInput;
     const videoPath = vi.videoPath ?? vi.imagePaths?.[0] ?? vi.imagePath;
     if (!videoPath) {
-      throw new AdapterError(ErrorCode.MISSING_INPUT, "vk browser publish: a video (--image) is required");
+      throw new AdapterError(
+        ErrorCode.MISSING_INPUT,
+        "vk browser publish: a video (--image) is required",
+      );
     }
     // Dry-run validates inputs (text preflight + video presence) with no browser IO.
     if (input.dryRun) {
@@ -260,7 +286,10 @@ export class VKontakteBrowserAdapter extends BaseAdapter {
     // Dry-run symmetry with publish(): validate inputs, never launch a browser.
     if (vi.dryRun) {
       if (links.length !== 4) {
-        throw new AdapterError(ErrorCode.MISSING_INPUT, "vk browser comment: exactly 4 links are required");
+        throw new AdapterError(
+          ErrorCode.MISSING_INPUT,
+          "vk browser comment: exactly 4 links are required",
+        );
       }
       return CommentResultSchema.parse({
         ok: true,
@@ -318,6 +347,10 @@ export { runVkPublish, type VkPublishSteps } from "./publish.js";
 export { runVkComment, type VkCommentSteps } from "./comment.js";
 export { assertAuthorized, detectExpiredFromUrl, type SessionState } from "./session-guard.js";
 export { preflightPostText, sanitizeComposerText, POST_MAX_CHARS } from "./sanitize.js";
-export { assertNotDuplicate, normalizeFragment, isSameTypedActionError } from "./duplicate-guard.js";
+export {
+  assertNotDuplicate,
+  normalizeFragment,
+  isSameTypedActionError,
+} from "./duplicate-guard.js";
 export { extractWallPermalink } from "./url-extraction.js";
 export { assertPostReadBack } from "./readback.js";

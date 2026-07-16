@@ -26,7 +26,11 @@ describe("vk browser — expired-session detection", () => {
   });
 
   it("does not flag the authorised feed / wall URLs", () => {
-    for (const u of ["https://vk.com/feed", "https://vk.com/id12345", "https://vk.com/wall12345_10"]) {
+    for (const u of [
+      "https://vk.com/feed",
+      "https://vk.com/id12345",
+      "https://vk.com/wall12345_10",
+    ]) {
       expect(detectExpiredFromUrl(u)).toBe(false);
     }
   });
@@ -34,12 +38,8 @@ describe("vk browser — expired-session detection", () => {
 
 describe("vk browser — fail-closed authorization (positive check)", () => {
   it("passes when logged in AND identity matches the expected account", () => {
-    expect(() =>
-      assertAuthorized(LOGGED_IN, { accountId: "12345" }),
-    ).not.toThrow();
-    expect(() =>
-      assertAuthorized(LOGGED_IN, { accountName: "Pavel Valentov" }),
-    ).not.toThrow();
+    expect(() => assertAuthorized(LOGGED_IN, { accountId: "12345" })).not.toThrow();
+    expect(() => assertAuthorized(LOGGED_IN, { accountName: "Pavel Valentov" })).not.toThrow();
   });
 
   it("STOPs with NO_PROFILE when not logged in (expired/absent session)", () => {
@@ -50,12 +50,12 @@ describe("vk browser — fail-closed authorization (positive check)", () => {
   });
 
   it("STOPs with VERIFY_FAILED when logged in as the WRONG account (identity mismatch)", () => {
-    expect(() =>
-      assertAuthorized(LOGGED_IN, { accountId: "99999" }),
-    ).toThrowError(expect.objectContaining({ code: ErrorCode.VERIFY_FAILED }));
-    expect(() =>
-      assertAuthorized(LOGGED_IN, { accountName: "Someone Else" }),
-    ).toThrowError(expect.objectContaining({ code: ErrorCode.VERIFY_FAILED }));
+    expect(() => assertAuthorized(LOGGED_IN, { accountId: "99999" })).toThrowError(
+      expect.objectContaining({ code: ErrorCode.VERIFY_FAILED }),
+    );
+    expect(() => assertAuthorized(LOGGED_IN, { accountName: "Someone Else" })).toThrowError(
+      expect.objectContaining({ code: ErrorCode.VERIFY_FAILED }),
+    );
   });
 
   it("STOPs with NO_PROFILE when logged in but no identity is observable", () => {

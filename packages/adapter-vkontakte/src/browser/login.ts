@@ -35,7 +35,9 @@ export async function login(options: LoginOptions, ctx: LoginContext = {}): Prom
   try {
     await session.page.goto(VK_FEED);
     // The user-menu / avatar button becomes visible once sign-in completes.
-    const authed = session.page.locator('[data-testid="rc_menu_button"], .TopNavBtn__profile, a[href^="/id"]').first();
+    const authed = session.page
+      .locator('[data-testid="rc_menu_button"], .TopNavBtn__profile, a[href^="/id"]')
+      .first();
     for (let i = 0; i < LOGIN_POLL_ITERATIONS; i++) {
       try {
         if (await authed.isVisible()) return;
