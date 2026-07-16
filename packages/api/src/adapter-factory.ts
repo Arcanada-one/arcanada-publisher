@@ -8,7 +8,7 @@ import { FacebookAdapter } from "@arcanada/publisher-facebook";
 import { LinkedInAdapter } from "@arcanada/publisher-linkedin";
 import { XAdapter } from "@arcanada/publisher-x";
 import { RedditAdapter } from "@arcanada/publisher-reddit";
-import { VKontakteAdapter } from "@arcanada/publisher-vkontakte";
+import { VKontakteAdapter, VKontakteBrowserAdapter } from "@arcanada/publisher-vkontakte";
 import { TelegramAdapter } from "@arcanada/publisher-telegram";
 
 /** Construct the live adapter for a platform. `dryRun` lets token adapters skip env. */
@@ -23,7 +23,11 @@ export function makeAdapter(platform: Platform, dryRun = false): Adapter {
     case "reddit":
       return new RedditAdapter({ accessToken: requireToken("REDDIT_ACCESS_TOKEN", dryRun) });
     case "vkontakte":
-      return new VKontakteAdapter({ accessToken: requireToken("VK_ACCESS_TOKEN", dryRun) });
+      // PUB-0034: ARCANADA_VK_BROWSER=1 selects the headed browser adapter
+      // (persistent profile, no token); unset keeps the token-API adapter.
+      return process.env["ARCANADA_VK_BROWSER"] === "1"
+        ? new VKontakteBrowserAdapter({ headed: true })
+        : new VKontakteAdapter({ accessToken: requireToken("VK_ACCESS_TOKEN", dryRun) });
     case "telegram":
       return makeTelegramAdapter(requireToken("TELEGRAM_BOT_TOKEN", dryRun));
     default:

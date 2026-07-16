@@ -7,7 +7,7 @@ import { FacebookAdapter } from "@arcanada/publisher-facebook";
 import { LinkedInAdapter } from "@arcanada/publisher-linkedin";
 import { XAdapter } from "@arcanada/publisher-x";
 import { RedditAdapter } from "@arcanada/publisher-reddit";
-import { VKontakteAdapter } from "@arcanada/publisher-vkontakte";
+import { VKontakteAdapter, VKontakteBrowserAdapter } from "@arcanada/publisher-vkontakte";
 import { TelegramAdapter } from "@arcanada/publisher-telegram";
 import { type ParsedArgs } from "./parse-args.js";
 
@@ -35,7 +35,11 @@ export function makeAdapter(platform: Platform, args: ParsedArgs): Adapter {
     case "reddit":
       return new RedditAdapter({ accessToken: requireToken("REDDIT_ACCESS_TOKEN", args) });
     case "vkontakte":
-      return new VKontakteAdapter({ accessToken: requireToken("VK_ACCESS_TOKEN", args) });
+      // PUB-0034: --browser selects the headed browser adapter (persistent
+      // profile, no token); without it the token-API adapter is unchanged.
+      return args.browser
+        ? new VKontakteBrowserAdapter({ headed: args.headed })
+        : new VKontakteAdapter({ accessToken: requireToken("VK_ACCESS_TOKEN", args) });
     case "telegram":
       return makeTelegramAdapter(requireToken("TELEGRAM_BOT_TOKEN", args));
     default:
