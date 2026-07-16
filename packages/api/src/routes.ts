@@ -8,6 +8,7 @@
 
 import {
   type Adapter,
+  type PublishResult,
   type Platform,
   AdapterError,
   ErrorCode,
@@ -110,7 +111,10 @@ async function handlePublish(body: Body, deps: RouteDeps): Promise<unknown> {
     { platform, account: result.account, action: "publish", postUrl: result.postUrl },
     deps.auditBaseDir ? { baseDir: deps.auditBaseDir } : {},
   );
-  return { ...result, ...(auditRef ? { auditRef } : {}) };
+  // Non-youtube adapters do not own audit refs: drop any spurious incoming ref
+  // so the caller never receives a ref that corresponds to no route record.
+  const { auditRef: _spurious, ...clean } = result as PublishResult & { auditRef?: string };
+  return { ...clean, ...(auditRef ? { auditRef } : {}) };
 }
 
 /** POST /comment — validate then comment (no rate-limit; comments are cheap). */

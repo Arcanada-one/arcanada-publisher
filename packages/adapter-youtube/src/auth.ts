@@ -109,12 +109,7 @@ export class AuthManager {
   /** Single-shot 127.0.0.1 listener: accepts exactly one redirect, then closes. */
   private receiveAuthCode(clientId: string, challenge: string, state: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        server.close();
-        server.closeAllConnections?.();
-        reject(new AdapterError(ErrorCode.AUTH_EXPIRED, "OAuth consent timed out"));
-      }, this.deps.consentTimeoutMs ?? 600_000);
-      timeout.unref?.();
+      let timeout: NodeJS.Timeout | undefined;
       const server = createServer((req, res) => {
         const url = new URL(req.url ?? "/", this.redirectUri);
         res.setHeader("content-type", "text/plain; charset=utf-8");
@@ -135,8 +130,20 @@ export class AuthManager {
         const gotState = url.searchParams.get("state");
         const code = url.searchParams.get("code");
         res.end("Arcanada Publisher: you may close this tab.");
-        clearTimeout(timeout);
+        if (timeout) clearTimeout(timeout);
         server.close();
+        const consentError = url.searchParams.get("error");
+        if (consentError) {
+          // Operator denied (or Google errored) — say so, don't misdiagnose
+          // plumbing. The error code value is not secret material.
+          reject(
+            new AdapterError(
+              ErrorCode.AUTH_EXPIRED,
+              `OAuth consent not granted: ${consentError} — re-run login and approve access`,
+            ),
+          );
+          return;
+        }
         if (!timingSafeEqualStr(gotState ?? "", state)) {
           reject(
             new AdapterError(ErrorCode.INVALID_ARGS, "OAuth state mismatch — consent aborted"),
@@ -150,8 +157,18 @@ export class AuthManager {
         resolve(code);
       });
       server.listen(0, "127.0.0.1", () => {
+        // Timer starts only once the listener is actually up — starting it
+        // earlier could fire against a not-yet-listening server (no-op close,
+        // leaked late bind).
+        timeout = setTimeout(() => {
+          server.close();
+          server.closeAllConnections?.();
+          reject(new AdapterError(ErrorCode.AUTH_EXPIRED, "OAuth consent timed out"));
+        }, this.deps.consentTimeoutMs ?? 600_000);
+        timeout.unref?.();
         const address = server.address();
         if (address === null || typeof address === "string") {
+          if (timeout) clearTimeout(timeout);
           reject(new AdapterError(ErrorCode.INTERNAL_PANIC, "loopback listener failed to bind"));
           return;
         }

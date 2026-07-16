@@ -124,13 +124,18 @@ describe("route audit dedup is pinned to youtube", () => {
     verify: () => Promise.reject(new Error("unused")),
   });
 
-  it("youtube: adapter auditRef survives, route does not double-audit", async () => {
+  it("youtube: adapter auditRef survives, route does not double-audit (audit dir stays empty)", async () => {
+    const { mkdtemp, readdir } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const auditBaseDir = await mkdtemp(join(tmpdir(), "pub0035-route-audit-yt-"));
     const result = (await dispatchPost(
       "/publish",
       { platform: "youtube", text: "Описание", profile: "origin" },
-      { makeAdapter: () => withRef("youtube"), rateLimiter: new RateLimiter() },
+      { makeAdapter: () => withRef("youtube"), rateLimiter: new RateLimiter(), auditBaseDir },
     )) as { auditRef?: string };
     expect(result.auditRef).toBe("PUB-audit-20260716-deadbeef");
+    expect(await readdir(auditBaseDir)).toEqual([]); // no route-layer record written
   });
 
   it("other platforms: a spurious adapter auditRef canNOT suppress the route-layer audit", async () => {

@@ -55,6 +55,8 @@ export interface YouTubeAdapterOptions {
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   openUrl?: AuthDeps["openUrl"];
+  /** Consent-flow timeout override (default 10 min). */
+  consentTimeoutMs?: number;
 }
 
 export class YouTubeAdapter extends BaseAdapter {
@@ -75,6 +77,9 @@ export class YouTubeAdapter extends BaseAdapter {
       ...(this.options.profilesRoot ? { profilesRoot: this.options.profilesRoot } : {}),
       ...(this.options.now ? { now: this.options.now } : {}),
       ...(this.options.openUrl ? { openUrl: this.options.openUrl } : {}),
+      ...(this.options.consentTimeoutMs !== undefined
+        ? { consentTimeoutMs: this.options.consentTimeoutMs }
+        : {}),
     });
   }
 

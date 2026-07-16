@@ -261,7 +261,7 @@ describe("read-back and playlist phase", () => {
     });
     const result = await publishYouTube(input(), deps);
     expect(result.postUrl).toContain("vid009");
-    expect(puts[0]).toMatch(/^bytes \*\//); // probe first
+    expect(puts[0]).toBe(`bytes */${loaded.source.size}`); // probe first, total pinned
     expect(puts[1]).toBe(`bytes 3-${loaded.source.size - 1}/${loaded.source.size}`); // resume from server offset, not 0
     expect(await readFile(ledgerPath, "utf8")).not.toContain("PENDINGLIVE"); // scrubbed
   });
@@ -288,8 +288,12 @@ describe("read-back and playlist phase", () => {
     });
     const result = await publishYouTube(input(), deps);
     expect(result.postUrl).toContain("vid010");
-    // exactly ONE PUT to the session (the probe) — no data re-transfer, no fresh session
-    expect(recorder.requests.filter((r) => r.url === LIVE_SESSION)).toHaveLength(1);
+    // exactly ONE PUT to the session — and it IS the probe (star range, no body):
+    // zero data re-transfer, no fresh session
+    const sessionPuts = recorder.requests.filter((r) => r.url === LIVE_SESSION);
+    expect(sessionPuts).toHaveLength(1);
+    expect(sessionPuts[0]?.headers?.["content-range"]).toBe("bytes */8");
+    expect(sessionPuts[0]?.body).toBeUndefined();
     expect(recorder.requests.some((r) => r.url.includes("uploadType=resumable"))).toBe(false);
   });
 
@@ -388,10 +392,12 @@ describe("module-scoped rate limiter", () => {
   const KEY = "ARCANADA_PUBLISHER_RATE_YOUTUBE";
   afterEach(() => {
     delete process.env[KEY];
+    delete process.env["ARCANADA_PUBLISHER_RATE_YOUTUBE_PREFLIGHT"];
   });
 
   it("limiter state survives across adapter constructions (module scope)", async () => {
     process.env[KEY] = "2";
+    process.env["ARCANADA_PUBLISHER_RATE_YOUTUBE_PREFLIGHT"] = "2";
     const fixture = await makeFixture();
     const make = () =>
       new YouTubeAdapter({
@@ -410,12 +416,16 @@ describe("module-scoped rate limiter", () => {
         videoPath: fixture.videoPath,
         privacyStatus: "private",
       });
+    const { youtubeRateLimiter } = await import("../src/publish.js");
+    const liveBefore = youtubeRateLimiter.count("youtube");
     const first = await publishOnce();
     expect(first.postUrl).toContain("vid001");
-    // Second construction: preflight limiter already carries 1 recorded event —
-    // module scope means the fresh instance sees it; the duplicate-ledger would
-    // reject anyway, so assert via a THIRD construction hitting the cap first.
-    await expect(publishOnce()).rejects.toThrow(); // duplicate ledger or limiter — state persisted either way
+    // LIVE limiter is module-scoped: the success was recorded on it and a fresh
+    // adapter instance sees the same state.
+    expect(youtubeRateLimiter.count("youtube")).toBe(liveBefore + 1);
+    // Second construction dies at the duplicate ledger (pinned), third at the
+    // preflight cap — every stateful guard persisted across constructions.
+    await expect(publishOnce()).rejects.toThrow(/duplicate upload blocked/);
     await expect(publishOnce()).rejects.toMatchObject({ code: ErrorCode.RATE_LIMIT });
   });
 });

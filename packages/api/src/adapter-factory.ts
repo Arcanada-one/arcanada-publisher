@@ -13,7 +13,7 @@ import { TelegramAdapter } from "@arcanada/publisher-telegram";
 import { YouTubeAdapter } from "@arcanada/publisher-youtube";
 
 /** Construct the live adapter for a platform. `dryRun` lets token adapters skip env. */
-export function makeAdapter(platform: Platform, dryRun = false): Adapter {
+export function makeAdapter(platform: Platform, dryRun = false, auditBaseDir?: string): Adapter {
   switch (platform) {
     case "facebook":
       return new FacebookAdapter();
@@ -30,7 +30,9 @@ export function makeAdapter(platform: Platform, dryRun = false): Adapter {
     case "youtube":
       // OAuth env credentials are read inside the adapter (never the request
       // body); dry-run performs credentialed read-only preflight (PUB-0035).
-      return new YouTubeAdapter();
+      // The API's configured audit dir MUST reach the adapter — its internal
+      // fail-closed audits replace the route-layer record (pinned dedup).
+      return new YouTubeAdapter(auditBaseDir ? { auditBaseDir } : {});
     default:
       throw new AdapterError(
         ErrorCode.INVALID_ARGS,

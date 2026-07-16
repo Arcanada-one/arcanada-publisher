@@ -46,8 +46,6 @@ export const VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos";
  */
 export const youtubeRateLimiter = new RateLimiter();
 
-export { auditOrAbort, isArmed, requireArmed } from "./gate.js";
-
 /**
  * EVERY publish invocation (dry-run, unarmed, failed, or live) is metered on
  * this module-scoped preflight limiter (check + record on entry) — the live
@@ -55,7 +53,10 @@ export { auditOrAbort, isArmed, requireArmed } from "./gate.js";
  * unattended loop could drive unlimited credentialed preflight reads via
  * dry-runs OR via never-armed live attempts.
  */
-export const youtubePreflightLimiter = new RateLimiter();
+export const youtubePreflightLimiter = new RateLimiter({
+  envSuffix: "_PREFLIGHT",
+  defaultPerHour: 20, // documented flow = 2 preflights per live publish; own knob so raising it never loosens the live cost-circuit-breaker
+});
 
 export interface PublishDeps {
   transport: Transport;
@@ -185,10 +186,11 @@ export async function publishYouTube(
 
     readBack = await fetchVideo(deps, videoId);
   } catch (error) {
-    // The upload itself already mutated YouTube: leave a best-effort audit
-    // trace (fail-soft here — the error in flight matters more) so a failed
-    // post-upload step never yields a completed-but-untraced upload.
-    await appendAudit(
+    // The upload itself already mutated YouTube: leave a BEST-EFFORT audit
+    // trace (fail-soft — the in-flight error matters more; if the audit sink
+    // is ALSO broken the trace drops and only the ledger videoId remains —
+    // accepted residual, see accepted-risk.yml).
+    const traceRef = await appendAudit(
       {
         platform: "youtube",
         account: channel.channelId,
@@ -197,6 +199,11 @@ export async function publishYouTube(
       },
       deps.auditOptions,
     );
+    if (traceRef === null) {
+      console.error(
+        `youtube publish: post-upload failure AND audit sink unwritable — video ${videoId} traced only in the ledger`,
+      );
+    }
     throw error;
   }
   const warnings = collectDivergences(readBack, { title, description, privacy });
