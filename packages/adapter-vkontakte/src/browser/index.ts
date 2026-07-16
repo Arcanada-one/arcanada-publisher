@@ -71,8 +71,15 @@ function wallIdFromPermalink(permalink: string): string {
   return `${match[1]}_${match[2]}`;
 }
 
-function targetPost(page: Page, permalink: string) {
+export function targetPost(page: Page, permalink: string) {
   const wallId = wallIdFromPermalink(permalink);
+  const currentPath = new URL(page.url()).pathname;
+  if (currentPath === `/wall${wallId}`) {
+    // On VK's direct wall route the post timestamp is rendered without an
+    // href, so the permalink anchor used on profile/feed pages is absent.
+    // The exact current URL is itself the binding oracle.
+    return page.locator(POST_SELECTOR).first();
+  }
   return page.locator(`${POST_SELECTOR}:has(a[href*="/wall${wallId}"])`).first();
 }
 
