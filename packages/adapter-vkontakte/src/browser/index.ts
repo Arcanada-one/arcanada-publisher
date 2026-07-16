@@ -8,6 +8,7 @@ import { type Page } from "playwright";
 import {
   AdapterError,
   BaseAdapter,
+  CommentResultSchema,
   ErrorCode,
   ProfileManager,
   PublishResultSchema,
@@ -254,8 +255,21 @@ export class VKontakteBrowserAdapter extends BaseAdapter {
   }
 
   async comment(input: CommentInput): Promise<CommentResult> {
-    const vi = input as VkBrowserCommentInput;
+    const vi = input as VkBrowserCommentInput & { dryRun?: boolean };
     const links = vi.links ?? [];
+    // Dry-run symmetry with publish(): validate inputs, never launch a browser.
+    if (vi.dryRun) {
+      if (links.length !== 4) {
+        throw new AdapterError(ErrorCode.MISSING_INPUT, "vk browser comment: exactly 4 links are required");
+      }
+      return CommentResultSchema.parse({
+        ok: true,
+        platform: "vkontakte",
+        account: "dry-run",
+        commentId: "0",
+        parentPostUrl: input.parentPostUrl,
+      });
+    }
     const expectedAccount = resolveExpectedAccount({
       ...(vi.expectedAccountId !== undefined ? { id: vi.expectedAccountId } : {}),
       ...(vi.expectedAccountName !== undefined ? { name: vi.expectedAccountName } : {}),

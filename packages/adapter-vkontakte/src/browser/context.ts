@@ -2,7 +2,7 @@
 // Ported from adapter-facebook/src/context.ts — persistent profile (session
 // cookies at rest), screenshot-on-fail artefacts, outbound-only browser.
 
-import { mkdirSync, existsSync } from "node:fs";
+import { mkdirSync, chmodSync, existsSync } from "node:fs";
 import { join, resolve, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, type BrowserContext, type Page } from "playwright";
@@ -30,7 +30,9 @@ export function resolveArtifactsDir(override?: string): string {
       : resolve(process.cwd(), override)
     : join(PACKAGE_ROOT, "artifacts");
   if (!existsSync(target)) {
+    // Screenshots capture the logged-in VK UI — keep the dir operator-private.
     mkdirSync(target, { recursive: true });
+    chmodSync(target, 0o700);
   }
   return target;
 }

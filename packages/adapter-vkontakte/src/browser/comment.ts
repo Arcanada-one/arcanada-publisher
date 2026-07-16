@@ -11,6 +11,24 @@ import { extractWallPermalink } from "./url-extraction.js";
 
 export const REQUIRED_LINK_COUNT = 4;
 
+/**
+ * Normalise a rendered comment link for comparison: VK rewrites external links
+ * as `https://vk.com/away.php?to=<urlencoded>&...`, so unwrap the `to` param
+ * back to the original URL. Non-away links are returned trimmed.
+ */
+export function unwrapVkAwayLink(href: string): string {
+  try {
+    const u = new URL(href);
+    if ((u.hostname === "vk.com" || u.hostname === "m.vk.com") && u.pathname === "/away.php") {
+      const to = u.searchParams.get("to");
+      if (to) return to;
+    }
+  } catch {
+    // not a URL — fall through to the raw value
+  }
+  return href.trim();
+}
+
 export interface VkBrowserCommentInput {
   parentPostUrl: string;
   /** Exactly four links, in the required order: Telegram, X, Site, Article. */
@@ -48,7 +66,7 @@ function assertLinksEqualInOrder(actual: string[], expected: string[], where: st
     );
   }
   for (let i = 0; i < expected.length; i++) {
-    if (actual[i] !== expected[i]) {
+    if (unwrapVkAwayLink(actual[i]!) !== expected[i]) {
       throw new AdapterError(
         ErrorCode.VERIFY_FAILED,
         `vk comment ${where}: link ${i + 1} mismatch — STOP`,

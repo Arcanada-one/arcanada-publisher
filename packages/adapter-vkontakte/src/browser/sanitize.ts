@@ -15,23 +15,25 @@ import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
 /** Conservative preflight cap (code points). VK's real limit is unconfirmed. */
 export const POST_MAX_CHARS = 15_000;
 
-// Disallow C0 controls (0x00-0x1F) and DEL (0x7F) except newline (0x0A);
-// tab (0x09) is folded to a space before this scan runs.
+// Disallow C0 controls (0x00-0x1F), DEL (0x7F), and C1 controls (0x80-0x9F),
+// except newline (0x0A). Tab (0x09) and CR (0x0D) are normalised before this
+// scan runs (tab -> space, CRLF/CR -> newline).
 function hasDisallowedControl(text: string): boolean {
   for (const ch of text) {
     const cp = ch.codePointAt(0) ?? 0;
     if (cp === 0x0a) continue;
-    if (cp < 0x20 || cp === 0x7f) return true;
+    if (cp < 0x20 || cp === 0x7f || (cp >= 0x80 && cp <= 0x9f)) return true;
   }
   return false;
 }
 
 /**
- * Return `text` with tabs folded to a space, or throw `INVALID_ARGS` if it
- * carries any other control character. Newlines are preserved.
+ * Return `text` with tabs folded to a space and CR/CRLF normalised to "\n", or
+ * throw `INVALID_ARGS` if it carries any other C0/C1/DEL control character.
+ * Newlines are preserved.
  */
 export function sanitizeComposerText(text: string): string {
-  const folded = text.replace(/\t/g, " ");
+  const folded = text.replace(/\r\n?/g, "\n").replace(/\t/g, " ");
   if (hasDisallowedControl(folded)) {
     throw new AdapterError(
       ErrorCode.INVALID_ARGS,

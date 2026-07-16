@@ -17,6 +17,17 @@ describe("vk browser — text sanitization", () => {
     expect(sanitizeComposerText("привет 🚀")).toBe("привет 🚀");
   });
 
+  it("normalises CR / CRLF to a plain newline (does not reject a CRLF body)", () => {
+    expect(sanitizeComposerText("a\r\nb\rc")).toBe("a\nb\nc");
+    expect(() => sanitizeComposerText("line1\r\nline2")).not.toThrow();
+  });
+
+  it("rejects C1 control characters (U+0080–U+009F)", () => {
+    expect(() => sanitizeComposerText("a\u0085b")).toThrowError(
+      expect.objectContaining({ code: ErrorCode.INVALID_ARGS }),
+    );
+  });
+
   it("rejects control sequences (e.g. NUL, ESC, form-feed) with INVALID_ARGS", () => {
     for (const bad of ["a\u0000b", "x\u001by", "p\u000cq", "c\u007fd"]) {
       expect(() => sanitizeComposerText(bad)).toThrowError(

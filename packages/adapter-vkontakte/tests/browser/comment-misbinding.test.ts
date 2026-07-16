@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ErrorCode } from "@arcanada/publisher-core";
-import { runVkComment, type VkCommentSteps } from "../../src/browser/comment.js";
+import { runVkComment, unwrapVkAwayLink, type VkCommentSteps } from "../../src/browser/comment.js";
 import { type SessionState } from "../../src/browser/session-guard.js";
 
 const OK_SESSION: SessionState = {
@@ -111,5 +111,23 @@ describe("vk browser — comment 4-link read-back", () => {
     await expect(
       runVkComment({ ...INPUT, links: FOUR_LINKS.slice(0, 3) }, steps),
     ).rejects.toMatchObject({ code: ErrorCode.MISSING_INPUT });
+  });
+
+  it("survives VK away.php link-wrapping in read-back (unwraps to the original URL)", async () => {
+    const wrapped = FOUR_LINKS.map(
+      (u) => `https://vk.com/away.php?to=${encodeURIComponent(u)}&cc_key=`,
+    );
+    const { steps } = commentSteps({
+      readBackComment: async () => ({ text: wrapped.join("\n"), isReply: false, links: wrapped }),
+    });
+    const res = await runVkComment(INPUT, steps);
+    expect(res.commentId).toBe("555");
+  });
+
+  it("unwrapVkAwayLink extracts the target from an away.php wrapper and passes plain URLs through", () => {
+    expect(
+      unwrapVkAwayLink("https://vk.com/away.php?to=" + encodeURIComponent("https://cubrim.com/ru/addressor")),
+    ).toBe("https://cubrim.com/ru/addressor");
+    expect(unwrapVkAwayLink("https://t.me/valentovtypes/214")).toBe("https://t.me/valentovtypes/214");
   });
 });
