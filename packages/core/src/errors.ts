@@ -8,6 +8,7 @@ export enum ErrorCode {
   VERIFY_FAILED = 6,
   NETWORK_GUARD = 7,
   RATE_LIMIT = 8,
+  DUPLICATE = 9,
   INTERNAL_PANIC = 99,
 }
 

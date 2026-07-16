@@ -99,6 +99,9 @@ importers:
       '@arcanada/publisher-core':
         specifier: workspace:*
         version: link:../core
+      playwright:
+        specifier: ^1.60.0
+        version: 1.60.0
     devDependencies:
       typescript:
         specifier: ^5.7.2
