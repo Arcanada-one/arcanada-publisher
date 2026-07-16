@@ -152,8 +152,14 @@ export async function readSessionState(page: Page): Promise<SessionState> {
   return state;
 }
 
-async function guardPlatformRefusals(page: Page): Promise<void> {
-  const blob = await page.content().catch(() => "");
+export async function guardPlatformRefusals(page: Page): Promise<void> {
+  // Inspect rendered user-visible text only. VK's application bundle contains
+  // dormant strings such as "captcha" even during a normal authorised flow;
+  // scanning page.content() therefore creates a guaranteed false positive.
+  const blob = await page
+    .locator("body")
+    .innerText()
+    .catch(() => "");
   if (isCaptchaBlob(blob)) {
     throw new AdapterError(
       ErrorCode.RATE_LIMIT,
