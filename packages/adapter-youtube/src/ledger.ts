@@ -4,12 +4,25 @@
 // half-written line means a crashed prior upload — exactly when the gate
 // matters most (plan C12, D-REQ-06).
 
-import { createHash } from "node:crypto";
-import { appendFile, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  appendFile,
+  chmod,
+  mkdir,
+  open,
+  readFile,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
+import { RecoveryJournal } from "./recovery-journal.js";
 
 export interface LedgerEntry {
+  state?: "uploading" | "uploaded" | "finalized";
+  /** Written before the first data PUT; false is positive proof that no bytes were sent. */
+  transferStarted?: boolean;
   sha256: string;
   title: string;
   totalBytes: number;
@@ -18,6 +31,13 @@ export interface LedgerEntry {
   sessionUri?: string;
   videoId?: string;
   completedAt?: string;
+}
+
+function normalizeEntry(entry: LedgerEntry): LedgerEntry {
+  if (entry.state) return entry;
+  if (entry.completedAt) return { ...entry, state: "finalized" };
+  if (entry.videoId) return { ...entry, state: "uploaded" };
+  return { ...entry, state: "uploading", transferStarted: entry.transferStarted ?? true };
 }
 
 export function sha256Bytes(bytes: Uint8Array): string {
@@ -29,6 +49,10 @@ export class UploadLedger {
   private static readonly locks = new Map<string, Promise<unknown>>();
 
   constructor(private readonly path: string) {}
+
+  recoveryJournal(): RecoveryJournal {
+    return new RecoveryJournal(join(dirname(this.path), "recovery.json"));
+  }
 
   /** Run `fn` exclusively for this ledger path (concurrent /publish requests share the process). */
   async withLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -54,7 +78,7 @@ export class UploadLedger {
       .filter((line) => line.trim() !== "")
       .map((line, index) => {
         try {
-          return JSON.parse(line) as LedgerEntry;
+          return normalizeEntry(JSON.parse(line) as LedgerEntry);
         } catch {
           throw new AdapterError(
             ErrorCode.INVALID_ARGS,
@@ -73,7 +97,7 @@ export class UploadLedger {
   async gate(sha256: string): Promise<LedgerEntry | undefined> {
     const entries = await this.load();
     const match = entries.filter((e) => e.sha256 === sha256).at(-1);
-    if (match?.videoId) {
+    if (match?.state === "finalized") {
       throw new AdapterError(
         ErrorCode.INVALID_ARGS,
         `duplicate upload blocked by ledger: sha256 already published as video ${match.videoId}`,
@@ -85,20 +109,89 @@ export class UploadLedger {
 
   async append(entry: LedgerEntry): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-    await appendFile(this.path, `${JSON.stringify(entry)}\n`, { mode: 0o600 });
+    await appendFile(
+      this.path,
+      `${JSON.stringify({ state: "uploading", transferStarted: false, ...entry })}\n`,
+      { mode: 0o600 },
+    );
     await chmod(this.path, 0o600);
   }
 
-  /** Mark done and SCRUB the sessionUri bearer capability from disk. */
-  async complete(sha256: string, videoId: string): Promise<void> {
+  async markTransferStarted(sha256: string): Promise<void> {
+    await this.rewriteLatest(sha256, (entry) => ({
+      ...entry,
+      state: "uploading",
+      transferStarted: true,
+    }));
+  }
+
+  async markUploaded(sha256: string, videoId: string): Promise<void> {
+    await this.rewriteLatest(sha256, (entry) => ({
+      ...entry,
+      state: "uploaded",
+      videoId,
+    }));
+  }
+
+  /** Finalize and compact every historical copy of the session URI from disk. */
+  async finalize(sha256: string, videoId: string): Promise<void> {
     const entries = await this.load();
     const updated = entries.map((entry) => {
       if (entry.sha256 !== sha256) return entry;
       const { sessionUri: _scrubbed, ...rest } = entry;
-      return { ...rest, videoId, completedAt: new Date().toISOString() };
+      return {
+        ...rest,
+        state: "finalized" as const,
+        videoId,
+        completedAt: new Date().toISOString(),
+      };
     });
-    const body = updated.map((entry) => JSON.stringify(entry)).join("\n");
-    await writeFile(this.path, body === "" ? "" : `${body}\n`, { mode: 0o600 });
-    await chmod(this.path, 0o600);
+    await this.writeAll(updated);
+  }
+
+  /** Backward-compatible name retained for callers outside this package. */
+  async complete(sha256: string, videoId: string): Promise<void> {
+    await this.finalize(sha256, videoId);
+  }
+
+  private async rewriteLatest(
+    sha256: string,
+    transform: (entry: LedgerEntry) => LedgerEntry,
+  ): Promise<void> {
+    const entries = await this.load();
+    let index = -1;
+    for (let candidate = entries.length - 1; candidate >= 0; candidate -= 1) {
+      if (entries[candidate]?.sha256 === sha256) {
+        index = candidate;
+        break;
+      }
+    }
+    if (index < 0) {
+      throw new AdapterError(ErrorCode.INVALID_ARGS, "upload ledger entry not found");
+    }
+    entries[index] = transform(entries[index] as LedgerEntry);
+    await this.writeAll(entries);
+  }
+
+  private async writeAll(entries: LedgerEntry[]): Promise<void> {
+    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+    const body = entries.map((entry) => JSON.stringify(entry)).join("\n");
+    const temp = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
+    let moved = false;
+    try {
+      await writeFile(temp, body === "" ? "" : `${body}\n`, { mode: 0o600, flag: "wx" });
+      await chmod(temp, 0o600);
+      const handle = await open(temp, "r");
+      try {
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      await rename(temp, this.path);
+      moved = true;
+      await chmod(this.path, 0o600);
+    } finally {
+      if (!moved) await unlink(temp).catch(() => undefined);
+    }
   }
 }

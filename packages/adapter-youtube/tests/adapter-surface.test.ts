@@ -4,10 +4,12 @@
 // authenticated verify with channel-ownership check.
 
 import { readFile, readdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { ErrorCode } from "@arcanada/publisher-core";
+import { ErrorCode, appendAudit } from "@arcanada/publisher-core";
 import { describe, expect, it } from "vitest";
 import { YouTubeAdapter } from "../src/index.js";
+import { RecoveryJournal } from "../src/recovery-journal.js";
 import {
   CHANNEL_ID,
   channelResponder,
@@ -21,6 +23,7 @@ import {
 async function adapterWith(
   responders: Responder[],
   envOver: Record<string, string | undefined> = {},
+  auditAppend?: typeof appendAudit,
 ) {
   const fixture = await makeFixture();
   const recorder = makeTransport(responders);
@@ -30,9 +33,17 @@ async function adapterWith(
     env,
     profilesRoot: fixture.profilesRoot,
     auditBaseDir: fixture.auditBaseDir,
+    ...(auditAppend ? { auditAppend } : {}),
   });
   return { adapter, recorder, fixture };
 }
+
+const failAudit =
+  (action: "playlist-create" | "edit", phase: "intent" | "outcome"): typeof appendAudit =>
+  (input, options) =>
+    input.action === action && input.phase === phase
+      ? Promise.resolve(null)
+      : appendAudit(input, options);
 
 const ownPlaylists =
   (items: Array<{ id: string; title: string }>): Responder =>
@@ -90,7 +101,74 @@ describe("playlist bootstrap", () => {
     expect(recorder.mutating()).toHaveLength(2);
     const auditFiles = await readdir(fixture.auditBaseDir);
     const audit = await readFile(join(fixture.auditBaseDir, auditFiles[0] ?? ""), "utf8");
-    expect(audit.match(/"action":"playlist-create"/g)).toHaveLength(2);
+    expect(audit.match(/"action":"playlist-create"/g)).toHaveLength(4);
+  });
+
+  it("playlist-create intent audit failure sends zero POSTs", async () => {
+    const { adapter, recorder } = await adapterWith(
+      [tokenResponder, channelResponder(), ownPlaylists([]), playlistCreate],
+      {},
+      failAudit("playlist-create", "intent"),
+    );
+    await expect(adapter.bootstrapPlaylists("origin")).rejects.toThrow(/intent audit failed/);
+    expect(recorder.mutating()).toEqual([]);
+  });
+
+  it("playlist-create outcome audit failure leaves an applied recovery record", async () => {
+    const { adapter, recorder, fixture } = await adapterWith(
+      [tokenResponder, channelResponder(), ownPlaylists([]), playlistCreate],
+      {},
+      failAudit("playlist-create", "outcome"),
+    );
+    await expect(adapter.bootstrapPlaylists("origin")).rejects.toThrow(/recoverable/);
+    expect(recorder.mutating()).toHaveLength(1);
+    const raw = await readFile(
+      join(fixture.profilesRoot, "youtube", "origin", "recovery.json"),
+      "utf8",
+    );
+    expect(JSON.parse(raw)).toEqual([
+      expect.objectContaining({ kind: "playlist-create", state: "applied" }),
+    ]);
+  });
+
+  it("reconciles an applied playlist-create without a second POST", async () => {
+    const { adapter, recorder, fixture } = await adapterWith([
+      tokenResponder,
+      channelResponder(),
+      ownPlaylists([
+        { id: "PLenRecovered", title: "Arcanada — English" },
+        { id: "PLruX", title: "Arcanada — Русский" },
+      ]),
+    ]);
+    const journal = new RecoveryJournal(
+      join(fixture.profilesRoot, "youtube", "origin", "recovery.json"),
+    );
+    const entry = await journal.begin("playlist-create", "canonical:en", { language: "en" });
+    await journal.markApplied(entry.operationId, { playlistId: "PLenRecovered" });
+    await expect(adapter.bootstrapPlaylists("origin")).resolves.toEqual({
+      en: "PLenRecovered",
+      ru: "PLruX",
+    });
+    expect(recorder.mutating()).toEqual([]);
+    expect(await journal.load()).toEqual([]);
+  });
+
+  it("fails closed when applied playlist-create id conflicts with the canonical remote id", async () => {
+    const { adapter, recorder, fixture } = await adapterWith([
+      tokenResponder,
+      channelResponder(),
+      ownPlaylists([
+        { id: "PLenCanonical", title: "Arcanada — English" },
+        { id: "PLruX", title: "Arcanada — Русский" },
+      ]),
+    ]);
+    const journal = new RecoveryJournal(
+      join(fixture.profilesRoot, "youtube", "origin", "recovery.json"),
+    );
+    const entry = await journal.begin("playlist-create", "canonical:en", { language: "en" });
+    await journal.markApplied(entry.operationId, { playlistId: "PLdifferent" });
+    await expect(adapter.bootstrapPlaylists("origin")).rejects.toThrow(/different id/i);
+    expect(recorder.mutating()).toEqual([]);
   });
 
   it("duplicate canonical-title playlists on the channel abort (operator must resolve)", async () => {
@@ -155,6 +233,62 @@ describe("edit contract", () => {
     };
     expect(body.snippet.categoryId).toBe("22");
     expect(body.snippet.title).toBe("Новый заголовок");
+  });
+
+  it("edit intent audit failure sends zero PUTs", async () => {
+    const { adapter, recorder } = await adapterWith(
+      [tokenResponder, channelResponder(), videoSnippet(), videosUpdate],
+      {},
+      failAudit("edit", "intent"),
+    );
+    await expect(
+      adapter.edit({ postUrl: WATCH, title: "Новый заголовок", profile: "origin" }),
+    ).rejects.toThrow(/intent audit failed/);
+    expect(recorder.requests.some((request) => request.method === "PUT")).toBe(false);
+  });
+
+  it("edit outcome audit failure leaves an applied recovery record", async () => {
+    const { adapter, recorder, fixture } = await adapterWith(
+      [tokenResponder, channelResponder(), videoSnippet(), videosUpdate],
+      {},
+      failAudit("edit", "outcome"),
+    );
+    await expect(
+      adapter.edit({ postUrl: WATCH, title: "Новый заголовок", profile: "origin" }),
+    ).rejects.toThrow(/recoverable/);
+    expect(recorder.requests.filter((request) => request.method === "PUT")).toHaveLength(1);
+    const raw = await readFile(
+      join(fixture.profilesRoot, "youtube", "origin", "recovery.json"),
+      "utf8",
+    );
+    expect(JSON.parse(raw)).toEqual([expect.objectContaining({ kind: "edit", state: "applied" })]);
+  });
+
+  it("reconciles an applied edit without a second PUT", async () => {
+    const nextTitle = "Новый заголовок";
+    const { adapter, recorder, fixture } = await adapterWith([
+      tokenResponder,
+      channelResponder(),
+      videoSnippet({ title: nextTitle }),
+    ]);
+    const key = createHash("sha256")
+      .update(JSON.stringify({ videoId: "vid00001", title: nextTitle, description: "Описание" }))
+      .digest("hex");
+    const journal = new RecoveryJournal(
+      join(fixture.profilesRoot, "youtube", "origin", "recovery.json"),
+    );
+    const entry = await journal.begin("edit", key, { videoId: "vid00001" });
+    await journal.markApplied(entry.operationId, { videoId: "vid00001" });
+    await expect(
+      adapter.edit({
+        postUrl: WATCH,
+        title: nextTitle,
+        expectedContent: "obsolete pre-edit content",
+        profile: "origin",
+      }),
+    ).resolves.toMatchObject({ edited: true });
+    expect(recorder.requests.some((request) => request.method === "PUT")).toBe(false);
+    expect(await journal.load()).toEqual([]);
   });
 
   it("unarmed edit → NOT_ARMED before any network call", async () => {

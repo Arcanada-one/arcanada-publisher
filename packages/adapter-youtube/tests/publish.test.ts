@@ -1,4 +1,4 @@
-// PUB-0035 publish orchestration (plan Phase 4.2, C16 mapping): terminal
+// PUB-0035 publish orchestre: "uploading",tion (plan Phase 4.2, C16 mapping): terminal
 // states, ordering (playlist insert only post-processed), read-back warnings,
 // private-lock detection, fail-closed audit, module-scope limiter persistence,
 // title-consistency guard, env non-override of the channel constant, duplicate
@@ -6,14 +6,16 @@
 
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
-import { ErrorCode, RateLimiter } from "@arcanada/publisher-core";
+import { ErrorCode, RateLimiter, appendAudit } from "@arcanada/publisher-core";
 import { afterEach, describe, expect, it } from "vitest";
 import { AuthManager } from "../src/auth.js";
 import { UploadLedger } from "../src/ledger.js";
+import { RecoveryJournal } from "../src/recovery-journal.js";
 import { publishYouTube, type PublishDeps } from "../src/publish.js";
 import { YouTubeAdapter } from "../src/index.js";
 import {
   CHANNEL_ID,
+  UPLOADS_ID,
   channelResponder,
   happyResponders,
   json,
@@ -41,12 +43,14 @@ async function makeDeps(responders: Responder[], envOver: Record<string, string 
     profilesRoot: fixture.profilesRoot,
   });
   const ledgerPath = join(dirname(auth.tokenPath()), "ledger.jsonl");
+  const journalPath = join(dirname(auth.tokenPath()), "recovery.json");
   const bytes = new Uint8Array(await readFile(fixture.videoPath));
   const deps: PublishDeps = {
     transport: recorder.transport,
     auth,
     env,
     ledger: new UploadLedger(ledgerPath),
+    journal: new RecoveryJournal(journalPath),
     loadSource: () =>
       Promise.resolve({
         bytes,
@@ -59,7 +63,7 @@ async function makeDeps(responders: Responder[], envOver: Record<string, string 
     limiter: new RateLimiter(),
     preflightLimiter: new RateLimiter(),
   };
-  return { deps, recorder, fixture, ledgerPath, env };
+  return { deps, recorder, fixture, ledgerPath, journalPath, env };
 }
 
 const input = (over: Record<string, unknown> = {}) => ({
@@ -70,6 +74,18 @@ const input = (over: Record<string, unknown> = {}) => ({
   privacyStatus: "private" as const,
   ...over,
 });
+
+type AuditAppend = typeof appendAudit;
+
+function failAudit(
+  action: Parameters<AuditAppend>[0]["action"],
+  phase: "intent" | "outcome",
+): AuditAppend {
+  return (input, options) =>
+    input.action === action && input.phase === phase
+      ? Promise.resolve(null)
+      : appendAudit(input, options);
+}
 
 describe("happy path", () => {
   it("uploads, inserts into the RU playlist only after processed, reads back, audits", async () => {
@@ -297,31 +313,153 @@ describe("read-back and playlist phase", () => {
     expect(recorder.requests.some((r) => r.url.includes("uploadType=resumable"))).toBe(false);
   });
 
-  it("expired pending session restarts fresh behind the ledger gate", async () => {
-    const { deps, ledgerPath } = await makeDeps([
+  it("uploaded retry probes first, proves uploads-playlist ownership, and never re-uploads", async () => {
+    const SESSION = "https://upload.googleapis.com/session/UPLOADED";
+    const { deps, recorder } = await makeDeps([
+      tokenResponder,
+      channelResponder(),
+      playlistsResponder(),
+      (req) =>
+        req.method === "PUT" && req.url === SESSION ? json(200, { id: "vid011" }) : undefined,
+      (req) =>
+        req.method === "GET" &&
+        req.url.includes(`playlistId=${UPLOADS_ID}`) &&
+        req.url.includes("videoId=vid011")
+          ? json(200, { items: [{ id: "uploads-item" }] })
+          : undefined,
+      videoStatusResponder(processedVideo(), "vid011"),
+      ...playlistItemsResponders(),
+    ]);
+    const loaded = await deps.loadSource("x");
+    const { sha256Bytes } = await import("../src/ledger.js");
+    await deps.ledger.append({
+      sha256: sha256Bytes(loaded.bytes ?? new Uint8Array()),
+      title: RU.title,
+      totalBytes: loaded.source.size,
+      startedAt: "2026-07-16T00:00:00Z",
+      sessionUri: SESSION,
+      state: "uploaded",
+      transferStarted: true,
+      videoId: "vid011",
+    });
+    const result = await publishYouTube(input(), deps);
+    expect(result.postUrl).toContain("vid011");
+    const probeIndex = recorder.requests.findIndex((request) => request.url === SESSION);
+    const proofIndex = recorder.requests.findIndex((request) =>
+      request.url.includes(`playlistId=${UPLOADS_ID}`),
+    );
+    expect(probeIndex).toBeGreaterThan(-1);
+    expect(proofIndex).toBeGreaterThan(probeIndex);
+    expect(recorder.requests.some((request) => request.url.includes("uploadType=resumable"))).toBe(
+      false,
+    );
+  });
+
+  it("uploaded state without a saved session URI is ambiguous and never re-uploads", async () => {
+    const { deps, recorder } = await makeDeps([
+      tokenResponder,
+      channelResponder(),
+      playlistsResponder(),
+    ]);
+    const loaded = await deps.loadSource("x");
+    const { sha256Bytes } = await import("../src/ledger.js");
+    await deps.ledger.append({
+      sha256: sha256Bytes(loaded.bytes ?? new Uint8Array()),
+      title: RU.title,
+      totalBytes: loaded.source.size,
+      startedAt: "2026-07-16T00:00:00Z",
+      state: "uploaded",
+      transferStarted: true,
+      videoId: "vid-no-session",
+    });
+    await expect(publishYouTube(input(), deps)).rejects.toThrow(/mandatory session URI|ambiguous/i);
+    expect(recorder.mutating()).toEqual([]);
+  });
+
+  it("missing uploads-playlist proof fails closed with no fresh upload", async () => {
+    const SESSION = "https://upload.googleapis.com/session/UPLOADED-MISSING";
+    const { deps, recorder } = await makeDeps([
+      tokenResponder,
+      channelResponder(),
+      playlistsResponder(),
+      (req) =>
+        req.method === "PUT" && req.url === SESSION ? json(200, { id: "vid012" }) : undefined,
+      (req) =>
+        req.method === "GET" && req.url.includes(`playlistId=${UPLOADS_ID}`)
+          ? json(200, { items: [] })
+          : undefined,
+    ]);
+    const loaded = await deps.loadSource("x");
+    const { sha256Bytes } = await import("../src/ledger.js");
+    await deps.ledger.append({
+      sha256: sha256Bytes(loaded.bytes ?? new Uint8Array()),
+      title: RU.title,
+      totalBytes: loaded.source.size,
+      startedAt: "2026-07-16T00:00:00Z",
+      sessionUri: SESSION,
+      state: "uploaded",
+      transferStarted: true,
+      videoId: "vid012",
+    });
+    await expect(publishYouTube(input(), deps)).rejects.toThrow(/uploads playlist|ownership/i);
+    expect(recorder.requests.some((request) => request.url.includes("uploadType=resumable"))).toBe(
+      false,
+    );
+  });
+
+  it("expired session after transfer started is ambiguous and never starts fresh", async () => {
+    const { deps, recorder } = await makeDeps([
       tokenResponder,
       channelResponder(),
       playlistsResponder(),
       (req) =>
         req.method === "PUT" && req.url.includes("session/DEAD") ? json(404, {}) : undefined,
-      ...uploadResponders("vid002"),
-      videoStatusResponder(processedVideo(), "vid002"),
-      ...playlistItemsResponders(),
+      ...uploadResponders("must-not-upload"),
     ]);
-    // Seed a pending entry with a dead session for the fixture file's hash.
     const loaded = await deps.loadSource("x");
     const { sha256Bytes } = await import("../src/ledger.js");
-    const sha = sha256Bytes(loaded.bytes ?? new Uint8Array());
     await deps.ledger.append({
-      sha256: sha,
+      sha256: sha256Bytes(loaded.bytes ?? new Uint8Array()),
       title: RU.title,
       totalBytes: loaded.source.size,
       startedAt: "2026-07-16T00:00:00Z",
       sessionUri: "https://upload.googleapis.com/session/DEAD",
+      state: "uploading",
+      transferStarted: true,
+    });
+    await expect(publishYouTube(input(), deps)).rejects.toThrow(/ambiguous|positive proof/i);
+    expect(recorder.requests.some((request) => request.url.includes("uploadType=resumable"))).toBe(
+      false,
+    );
+  });
+
+  it("expired session may restart only with positive proof that no data PUT began", async () => {
+    const { deps, recorder } = await makeDeps([
+      tokenResponder,
+      channelResponder(),
+      playlistsResponder(),
+      (req) =>
+        req.method === "PUT" && req.url.includes("session/UNUSED") ? json(404, {}) : undefined,
+      ...uploadResponders("vid002"),
+      videoStatusResponder(processedVideo(), "vid002"),
+      ...playlistItemsResponders(),
+    ]);
+    const loaded = await deps.loadSource("x");
+    const { sha256Bytes } = await import("../src/ledger.js");
+    await deps.ledger.append({
+      sha256: sha256Bytes(loaded.bytes ?? new Uint8Array()),
+      title: RU.title,
+      totalBytes: loaded.source.size,
+      startedAt: "2026-07-16T00:00:00Z",
+      sessionUri: "https://upload.googleapis.com/session/UNUSED",
+      state: "uploading",
+      transferStarted: false,
     });
     const result = await publishYouTube(input(), deps);
     expect(result.postUrl).toContain("vid002");
-    expect(await readFile(ledgerPath, "utf8")).not.toContain("session/DEAD"); // scrubbed on completion
+    expect(recorder.requests.some((request) => request.url.includes("uploadType=resumable"))).toBe(
+      true,
+    );
   });
 });
 
@@ -331,6 +469,83 @@ describe("fail-closed audit", () => {
     // Make the audit base dir an unwritable path: a file where the dir should be.
     await writeFile(fixture.auditBaseDir, "not-a-directory");
     await expect(publishYouTube(input(), deps)).rejects.toThrow(/audit append failed/);
+  });
+});
+
+describe("two-phase mutation audit", () => {
+  it("upload intent audit failure sends zero mutating requests", async () => {
+    const { deps, recorder } = await makeDeps(happyResponders());
+    deps.auditAppend = failAudit("publish", "intent");
+    await expect(publishYouTube(input(), deps)).rejects.toThrow(/intent audit failed/);
+    expect(recorder.mutating()).toEqual([]);
+  });
+
+  it("upload outcome audit failure preserves applied recovery state", async () => {
+    const { deps, recorder, journalPath } = await makeDeps(happyResponders());
+    deps.auditAppend = failAudit("publish", "outcome");
+    await expect(publishYouTube(input(), deps)).rejects.toMatchObject({
+      details: { recoverable: true, kind: "upload" },
+    });
+    expect(
+      recorder.mutating().some((request) => request.url.includes("uploadType=resumable")),
+    ).toBe(true);
+    const journal = JSON.parse(await readFile(journalPath, "utf8")) as Array<
+      Record<string, unknown>
+    >;
+    expect(journal).toEqual([expect.objectContaining({ kind: "upload", state: "applied" })]);
+  });
+
+  it("playlist-insert intent failure sends no playlist mutation", async () => {
+    const { deps, recorder } = await makeDeps(happyResponders());
+    deps.auditAppend = failAudit("playlist-insert", "intent");
+    await expect(publishYouTube(input(), deps)).rejects.toThrow(/intent audit failed/);
+    expect(
+      recorder.requests.filter(
+        (request) => request.method === "POST" && request.url.includes("/playlistItems"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("reconciles an applied playlist-insert without a second POST", async () => {
+    const { deps, recorder } = await makeDeps([
+      tokenResponder,
+      channelResponder(),
+      playlistsResponder(),
+      ...uploadResponders("vid001"),
+      videoStatusResponder(processedVideo(), "vid001"),
+      ...playlistItemsResponders(true),
+    ]);
+    const entry = await deps.journal.begin("playlist-insert", "PLru001:vid001", {
+      playlistId: "PLru001",
+      videoId: "vid001",
+    });
+    await deps.journal.markApplied(entry.operationId, { playlistId: "PLru001", videoId: "vid001" });
+    await expect(publishYouTube(input(), deps)).resolves.toMatchObject({ ok: true });
+    expect(
+      recorder.requests.filter(
+        (request) => request.method === "POST" && request.url.includes("/playlistItems"),
+      ),
+    ).toEqual([]);
+    expect(await deps.journal.load()).toEqual([]);
+  });
+
+  it("playlist-insert outcome failure preserves the applied playlist operation", async () => {
+    const { deps, recorder, journalPath } = await makeDeps(happyResponders());
+    deps.auditAppend = failAudit("playlist-insert", "outcome");
+    await expect(publishYouTube(input(), deps)).rejects.toMatchObject({
+      details: { recoverable: true, kind: "playlist-insert" },
+    });
+    expect(
+      recorder.requests.filter(
+        (request) => request.method === "POST" && request.url.includes("/playlistItems"),
+      ),
+    ).toHaveLength(1);
+    const journal = JSON.parse(await readFile(journalPath, "utf8")) as Array<
+      Record<string, unknown>
+    >;
+    expect(journal).toEqual([
+      expect.objectContaining({ kind: "playlist-insert", state: "applied" }),
+    ]);
   });
 });
 

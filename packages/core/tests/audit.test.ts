@@ -112,4 +112,25 @@ describe("appendAudit", () => {
     >;
     expect(rec.callerToken).toBe("agent-claude-01");
   });
+
+  it("persists the allowlisted mutation phase and operation id", async () => {
+    await appendAudit(
+      {
+        platform: "youtube",
+        account: "UCfixture",
+        action: "playlist-insert",
+        phase: "intent",
+        operationId: "youtube-playlist-insert-fixture",
+      },
+      { baseDir, now: new Date("2026-07-16T19:30:00.000Z") },
+    );
+    const rec = JSON.parse(
+      readFileSync(join(baseDir, "2026-07-16.jsonl"), "utf8").trim(),
+    ) as Record<string, unknown>;
+    expect(rec).toMatchObject({
+      action: "playlist-insert",
+      phase: "intent",
+      operationId: "youtube-playlist-insert-fixture",
+    });
+  });
 });

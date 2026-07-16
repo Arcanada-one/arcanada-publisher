@@ -1,4 +1,5 @@
 // YouTubeAdapter: API-first adapter for the Arcanada channel (PUB-0035).
+import { createHash } from "node:crypto";
 // No browser automation — YouTube ToS forbids it and the Data API covers every
 // requirement (see datarim INSIGHTS-PUB-0035). comment/delete are unsupported
 // by design; edit is metadata-only via videos.update.
@@ -25,7 +26,7 @@ import {
 import { AuthManager, type AuthDeps } from "./auth.js";
 import { ARCANADA_CHANNEL_ID, assertChannel } from "./channel-oracle.js";
 import { UploadLedger } from "./ledger.js";
-import { auditOrAbort, requireArmed } from "./gate.js";
+import { beginMutation, completeMutation, requireArmed, type AuditAppend } from "./gate.js";
 import { publishYouTube, VIDEOS_URL, type PublishDeps } from "./publish.js";
 import { bootstrapPlaylists, type PublishLanguage } from "./playlist-binding.js";
 import { validateDescriptionBytes, validateLanguagePurity, validateTitle } from "./templates.js";
@@ -57,6 +58,7 @@ export interface YouTubeAdapterOptions {
   openUrl?: AuthDeps["openUrl"];
   /** Consent-flow timeout override (default 10 min). */
   consentTimeoutMs?: number;
+  auditAppend?: AuditAppend;
 }
 
 export class YouTubeAdapter extends BaseAdapter {
@@ -88,6 +90,10 @@ export class YouTubeAdapter extends BaseAdapter {
     return new UploadLedger(join(dirname(auth.tokenPath()), "ledger.jsonl"));
   }
 
+  private journalFor(profile: string) {
+    return this.ledgerFor(profile).recoveryJournal();
+  }
+
   async login(options: LoginOptions): Promise<void> {
     await this.auth(options.profile).login();
   }
@@ -98,6 +104,8 @@ export class YouTubeAdapter extends BaseAdapter {
       auth: this.auth(input.profile),
       env: this.env,
       ledger: this.ledgerFor(input.profile),
+      journal: this.journalFor(input.profile),
+      ...(this.options.auditAppend ? { auditAppend: this.options.auditAppend } : {}),
       loadSource: async (videoPath) => {
         const bytes = new Uint8Array(await readFile(videoPath));
         return {
@@ -128,7 +136,7 @@ export class YouTubeAdapter extends BaseAdapter {
     );
   }
 
-  /** Metadata-only edit via videos.update — categoryId is ALWAYS re-sent (official gotcha). */
+  /** Metadata-only edit via videos.update - categoryId is always re-sent. */
   async edit(input: EditInput): Promise<EditResult> {
     requireArmed(this.env, "edit");
     const videoId = parseVideoId(input.postUrl);
@@ -142,48 +150,77 @@ export class YouTubeAdapter extends BaseAdapter {
       "edit read-before-update",
     )) as { items?: Array<{ snippet?: Record<string, unknown> }> };
     const snippet = current.items?.[0]?.snippet;
-    if (!snippet) {
+    if (!snippet)
       throw new AdapterError(ErrorCode.VERIFY_FAILED, `edit: video ${videoId} not found`);
-    }
-    // Read-before-edit oracle (same contract the browser adapters honour).
-    if (
-      input.expectedContent !== undefined &&
-      !String(snippet["description"] ?? "").includes(input.expectedContent)
-    ) {
-      throw new AdapterError(
-        ErrorCode.VERIFY_FAILED,
-        "edit: read-before-edit oracle mismatch — current description does not contain expectedContent",
-      );
-    }
-    // The same fail-closed metadata validation as publish (D-REQ-09).
     const nextTitle = input.title ?? String(snippet["title"] ?? "");
     const nextDescription = input.text ?? String(snippet["description"] ?? "");
     validateTitle(nextTitle);
     validateDescriptionBytes(nextDescription);
     const lang = snippet["defaultLanguage"];
-    if (lang === "en" || lang === "ru") {
-      validateLanguagePurity(lang, nextTitle, nextDescription);
-    }
-    const updated = {
-      ...snippet,
-      ...(input.title !== undefined ? { title: input.title } : {}),
-      ...(input.text !== undefined ? { description: input.text } : {}),
-      categoryId: snippet["categoryId"], // required whenever the snippet part is sent
+    if (lang === "en" || lang === "ru") validateLanguagePurity(lang, nextTitle, nextDescription);
+
+    const key = createHash("sha256")
+      .update(JSON.stringify({ videoId, title: nextTitle, description: nextDescription }))
+      .digest("hex");
+    const journal = this.journalFor(input.profile);
+    const spec = {
+      kind: "edit" as const,
+      key,
+      account: channel.channelId,
+      action: "edit" as const,
+      postUrl: input.postUrl,
+      intent: { videoId, title: nextTitle, description: nextDescription },
     };
-    await apiJson(
-      this.transport,
-      token,
-      {
-        method: "PUT",
-        url: `${VIDEOS_URL}?part=snippet`,
-        body: JSON.stringify({ id: videoId, snippet: updated }),
-      },
-      "videos.update",
-    );
-    const auditRef = await auditOrAbort(
-      { account: channel.channelId, action: "edit", postUrl: input.postUrl },
-      this.options.auditBaseDir ? { baseDir: this.options.auditBaseDir } : {},
-    );
+    const control = {
+      journal,
+      auditOptions: this.options.auditBaseDir ? { baseDir: this.options.auditBaseDir } : {},
+      ...(this.options.auditAppend ? { auditAppend: this.options.auditAppend } : {}),
+    };
+    const pending = await journal.find("edit", key);
+    const alreadyApplied =
+      pending !== undefined &&
+      String(snippet["title"] ?? "") === nextTitle &&
+      String(snippet["description"] ?? "") === nextDescription;
+    if (
+      !alreadyApplied &&
+      input.expectedContent !== undefined &&
+      !String(snippet["description"] ?? "").includes(input.expectedContent)
+    ) {
+      throw new AdapterError(
+        ErrorCode.VERIFY_FAILED,
+        "edit: read-before-edit oracle mismatch - current description does not contain expectedContent",
+      );
+    }
+    if (pending && !alreadyApplied) {
+      throw new AdapterError(
+        ErrorCode.VERIFY_FAILED,
+        "ambiguous edit recovery: intent exists but requested metadata is not proven remote",
+        { operationId: pending.operationId, recoverable: true },
+      );
+    }
+    const entry = await beginMutation(control, spec);
+    if (!alreadyApplied) {
+      const updated = {
+        ...snippet,
+        title: nextTitle,
+        description: nextDescription,
+        categoryId: snippet["categoryId"],
+      };
+      await apiJson(
+        this.transport,
+        token,
+        {
+          method: "PUT",
+          url: `${VIDEOS_URL}?part=snippet`,
+          body: JSON.stringify({ id: videoId, snippet: updated }),
+        },
+        "videos.update",
+      );
+    }
+    const auditRef = await completeMutation(control, spec, entry, {
+      videoId,
+      postUrl: input.postUrl,
+    });
     return EditResultSchema.parse({
       ok: true,
       platform: "youtube",
@@ -206,6 +243,8 @@ export class YouTubeAdapter extends BaseAdapter {
       accessToken: token,
       env: this.env,
       auditOptions: this.options.auditBaseDir ? { baseDir: this.options.auditBaseDir } : {},
+      journal: this.journalFor(profile),
+      ...(this.options.auditAppend ? { auditAppend: this.options.auditAppend } : {}),
     });
   }
 

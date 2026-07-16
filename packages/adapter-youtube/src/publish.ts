@@ -10,15 +10,14 @@ import {
   ErrorCode,
   PublishResultSchema,
   RateLimiter,
-  appendAudit,
   type AuditOptions,
   type PublishInput,
   type PublishResult,
 } from "@arcanada/publisher-core";
-import { auditOrAbort, requireArmed } from "./gate.js";
 import type { AuthManager } from "./auth.js";
 import { ARCANADA_CHANNEL_ID, assertChannel } from "./channel-oracle.js";
 import { UploadLedger, sha256Bytes, type LedgerEntry } from "./ledger.js";
+import { beginMutation, completeMutation, requireArmed, type AuditAppend } from "./gate.js";
 import {
   isVideoInPlaylist,
   insertIntoPlaylist,
@@ -63,6 +62,8 @@ export interface PublishDeps {
   auth: Pick<AuthManager, "getAccessToken" | "refreshAccessToken">;
   env: NodeJS.ProcessEnv;
   ledger: UploadLedger;
+  journal?: import("./recovery-journal.js").RecoveryJournal;
+  auditAppend?: AuditAppend;
   /** Byte source loader for the video file (injectable for tests). */
   loadSource: (
     videoPath: string,
@@ -148,6 +149,7 @@ export async function publishYouTube(
   }
 
   requireArmed(deps.env, "publish");
+  const journal = deps.journal ?? deps.ledger.recoveryJournal();
 
   const uploadDeps: UploadDeps = {
     transport: deps.transport,
@@ -155,8 +157,27 @@ export async function publishYouTube(
     refreshAccessToken: () => deps.auth.refreshAccessToken(),
     ...(deps.sleep ? { sleep: deps.sleep } : {}),
   };
-  // Serialize the gate→upload→complete window per ledger: two concurrent
-  // /publish calls for the same file must not both pass the duplicate gate.
+  const mutationControl = {
+    journal,
+    auditOptions: deps.auditOptions,
+    ...(deps.auditAppend ? { auditAppend: deps.auditAppend } : {}),
+  };
+  const uploadSpec = {
+    kind: "upload" as const,
+    key: sha256,
+    account: channel.channelId,
+    action: "publish" as const,
+    intent: { sha256, totalBytes: source.size },
+  };
+  const priorUploadOperation = await journal.find("upload", sha256);
+  const uploadEntry = await beginMutation(mutationControl, uploadSpec);
+  if (priorUploadOperation && !pending) {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "ambiguous upload recovery: durable intent exists without a resumable ledger state",
+      { operationId: priorUploadOperation.operationId, recoverable: true },
+    );
+  }
   const videoId = await deps.ledger.withLock(async () => {
     const pendingLocked = await deps.ledger.gate(sha256);
     const id = await runUpload(uploadDeps, deps, {
@@ -169,49 +190,77 @@ export async function publishYouTube(
       source,
       mime,
     });
-    await deps.ledger.complete(sha256, id);
+    await deps.ledger.markUploaded(sha256, id);
     return id;
   });
 
-  let readBack: VideosListItem;
-  try {
-    await pollProcessing(deps, videoId);
-
-    // Oracle re-assert before the playlist mutation (D-REQ-03: every mutating call).
-    const freshToken = await deps.auth.getAccessToken();
-    await assertChannel(deps.transport, freshToken);
-    if (!(await isVideoInPlaylist(deps.transport, freshToken, binding[language], videoId))) {
-      await insertIntoPlaylist(deps.transport, freshToken, binding[language], videoId);
-    }
-
-    readBack = await fetchVideo(deps, videoId);
-  } catch (error) {
-    // The upload itself already mutated YouTube: leave a BEST-EFFORT audit
-    // trace (fail-soft — the in-flight error matters more; if the audit sink
-    // is ALSO broken the trace drops and only the ledger videoId remains —
-    // accepted residual, see accepted-risk.yml).
-    const traceRef = await appendAudit(
-      {
-        platform: "youtube",
-        account: channel.channelId,
-        action: "publish",
-        postUrl: `https://www.youtube.com/watch?v=${videoId}`,
-      },
-      deps.auditOptions,
+  const postUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  await journal.markApplied(uploadEntry.operationId, { videoId, postUrl });
+  const proveUploadOwnership = async (): Promise<void> => {
+    const ownershipToken = await deps.auth.getAccessToken();
+    const ownershipChannel = await assertChannel(deps.transport, ownershipToken);
+    const owned = await isVideoInPlaylist(
+      deps.transport,
+      ownershipToken,
+      ownershipChannel.uploadsPlaylistId,
+      videoId,
     );
-    if (traceRef === null) {
-      console.error(
-        `youtube publish: post-upload failure AND audit sink unwritable — video ${videoId} traced only in the ledger`,
+    if (!owned) {
+      throw new AdapterError(
+        ErrorCode.VERIFY_FAILED,
+        `uploads playlist ownership proof failed for video ${videoId}; state is ambiguous`,
+        { videoId, uploadsPlaylistId: ownershipChannel.uploadsPlaylistId },
       );
     }
-    throw error;
-  }
-  const warnings = collectDivergences(readBack, { title, description, privacy });
-  const postUrl = `https://www.youtube.com/watch?v=${videoId}`;
-  const auditRef = await auditOrAbort(
-    { account: channel.channelId, action: "publish", postUrl },
-    deps.auditOptions,
+  };
+  const recoveringUploaded = pending?.state === "uploaded";
+  if (recoveringUploaded) await proveUploadOwnership();
+  await pollProcessing(deps, videoId);
+  if (!recoveringUploaded) await proveUploadOwnership();
+  const auditRef = await completeMutation(
+    mutationControl,
+    { ...uploadSpec, postUrl },
+    uploadEntry,
+    { videoId, postUrl },
   );
+  const freshToken = await deps.auth.getAccessToken();
+  await assertChannel(deps.transport, freshToken);
+  const playlistId = binding[language];
+  const insertKey = `${playlistId}:${videoId}`;
+  const insertSpec = {
+    kind: "playlist-insert" as const,
+    key: insertKey,
+    account: channel.channelId,
+    action: "playlist-insert" as const,
+    postUrl,
+    intent: { playlistId, videoId },
+  };
+  const pendingInsert = await journal.find("playlist-insert", insertKey);
+  const alreadyInPlaylist = await isVideoInPlaylist(
+    deps.transport,
+    freshToken,
+    playlistId,
+    videoId,
+  );
+  if (!alreadyInPlaylist) {
+    if (pendingInsert) {
+      throw new AdapterError(
+        ErrorCode.VERIFY_FAILED,
+        "ambiguous playlist-insert recovery: intent exists but remote insertion is not proven",
+        { operationId: pendingInsert.operationId, recoverable: true },
+      );
+    }
+    const insertEntry = await beginMutation(mutationControl, insertSpec);
+    await insertIntoPlaylist(deps.transport, freshToken, playlistId, videoId);
+    await completeMutation(mutationControl, insertSpec, insertEntry, { playlistId, videoId });
+  } else if (pendingInsert) {
+    const insertEntry = await beginMutation(mutationControl, insertSpec);
+    await completeMutation(mutationControl, insertSpec, insertEntry, { playlistId, videoId });
+  }
+
+  const readBack = await fetchVideo(deps, videoId);
+  await deps.ledger.finalize(sha256, videoId);
+  const warnings = collectDivergences(readBack, { title, description, privacy });
   limiter.record("youtube");
   return PublishResultSchema.parse({
     ok: true,
@@ -268,39 +317,62 @@ async function runUpload(
     });
     return uri;
   };
-  // Crash-resume of a pending session MUST probe first: the server may hold k
-  // bytes (resume from k, never from 0) or the whole file (crash after 200 but
-  // before ledger.complete — the probe returns the videoId with no transfer).
+  const transfer = async (sessionUri: string, offset: number): Promise<string> => {
+    await deps.ledger.markTransferStarted(plan.sha256);
+    return uploadFromOffset(uploadDeps, sessionUri, plan.source, offset);
+  };
+
+  if (plan.pending?.state === "uploaded" && plan.pending.videoId) {
+    if (!plan.pending.sessionUri) {
+      throw ambiguousSession(
+        "uploaded ledger state is missing its mandatory session URI",
+        plan.sha256,
+      );
+    }
+    const probe = await probeSession(uploadDeps, plan.pending.sessionUri, plan.source.size);
+    if (probe.kind === "done") {
+      if (probe.videoId !== plan.pending.videoId) {
+        throw new AdapterError(
+          ErrorCode.VERIFY_FAILED,
+          "resumable probe returned a different video id",
+          {
+            ledgerVideoId: plan.pending.videoId,
+            probeVideoId: probe.videoId,
+          },
+        );
+      }
+      return probe.videoId;
+    }
+    if (probe.kind === "expired") return plan.pending.videoId;
+    throw ambiguousSession("uploaded ledger state but resumable probe is incomplete", plan.sha256);
+  }
+
   if (plan.pending?.sessionUri) {
     const probe = await probeSession(uploadDeps, plan.pending.sessionUri, plan.source.size);
     if (probe.kind === "done") return probe.videoId;
     if (probe.kind === "incomplete") {
-      return uploadFromOffset(
-        uploadDeps,
-        plan.pending.sessionUri,
-        plan.source,
-        probe.receivedBytes,
+      return transfer(plan.pending.sessionUri, probe.receivedBytes);
+    }
+    if (plan.pending.transferStarted !== false) {
+      throw ambiguousSession(
+        "expired session without positive proof that no data PUT began",
+        plan.sha256,
       );
     }
-    // expired → fall through to a fresh session (ledger gate already passed).
-    return uploadFromOffset(uploadDeps, await freshSession(), plan.source, 0);
+    const replacement = await freshSession();
+    return transfer(replacement, 0);
   }
+
   const sessionUri = await freshSession();
-  try {
-    return await uploadFromOffset(uploadDeps, sessionUri, plan.source, 0);
-  } catch (error) {
-    // Session-expiry mid-flight (undocumented TTL): classified by CODE + the
-    // session-specific message — an AUTH_EXPIRED ("authorization expired")
-    // must NOT be misrouted into a fresh quota-spending session.
-    if (
-      error instanceof AdapterError &&
-      error.code === ErrorCode.INVALID_ARGS &&
-      /session expired/.test(error.message)
-    ) {
-      return uploadFromOffset(uploadDeps, await freshSession(), plan.source, 0);
-    }
-    throw error;
-  }
+  return transfer(sessionUri, 0);
+}
+
+function ambiguousSession(message: string, sha256: string): AdapterError {
+  return new AdapterError(
+    ErrorCode.INVALID_ARGS,
+    `ambiguous resumable upload: ${message}; reconcile against the uploads playlist before retry`,
+    { sha256, ambiguous: true },
+  );
 }
 
 async function fetchVideo(deps: PublishDeps, videoId: string): Promise<VideosListItem> {

@@ -6,7 +6,7 @@
 
 import { AdapterError, ErrorCode, type AuditOptions } from "@arcanada/publisher-core";
 import { ARCANADA_CHANNEL_ID } from "./channel-oracle.js";
-import { auditOrAbort, requireArmed } from "./gate.js";
+import { beginMutation, completeMutation, requireArmed, type AuditAppend } from "./gate.js";
 import { apiJson, type Transport } from "./transport.js";
 
 export type PublishLanguage = "en" | "ru";
@@ -136,6 +136,8 @@ export interface BootstrapDeps {
   env: NodeJS.ProcessEnv;
   /** Fail-closed audit destination — bootstrap calls auditOrAbort itself. */
   auditOptions: AuditOptions;
+  journal: import("./recovery-journal.js").RecoveryJournal;
+  auditAppend?: AuditAppend;
 }
 
 /** Paginated playlists.list mine=true (a >50-playlist channel must not miss the canonical title). */
@@ -174,10 +176,50 @@ export async function bootstrapPlaylists(
     if (matches.length > 1) {
       throw broken(`duplicate canonical-title playlists for ${language} — operator must resolve`);
     }
+    const key = `canonical:${language}`;
+    const spec = {
+      kind: "playlist-create" as const,
+      key,
+      account: ARCANADA_CHANNEL_ID,
+      action: "playlist-create" as const,
+      intent: { language, canonicalTitle: canonical },
+    };
+    const control = {
+      journal: deps.journal,
+      auditOptions: deps.auditOptions,
+      ...(deps.auditAppend ? { auditAppend: deps.auditAppend } : {}),
+    };
+    const pendingOperation = await deps.journal.find("playlist-create", key);
     if (matches.length === 1 && matches[0]?.id) {
-      result[language] = matches[0].id;
+      const existingId = matches[0].id;
+      if (pendingOperation) {
+        if (
+          pendingOperation.state === "applied" &&
+          pendingOperation.result?.["playlistId"] !== existingId
+        ) {
+          throw broken(
+            `applied playlist-create operation points to a different id than canonical ${existingId}`,
+          );
+        }
+        const entry = await beginMutation(control, spec);
+        await completeMutation(
+          control,
+          { ...spec, postUrl: `https://www.youtube.com/playlist?list=${existingId}` },
+          entry,
+          { playlistId: existingId },
+        );
+      }
+      result[language] = existingId;
       continue;
     }
+    if (pendingOperation) {
+      throw new AdapterError(
+        ErrorCode.PLAYLIST_BINDING_BROKEN,
+        `ambiguous playlist-create recovery for ${language}: intent exists but no canonical playlist is proven`,
+        { operationId: pendingOperation.operationId, recoverable: true },
+      );
+    }
+    const entry = await beginMutation(control, spec);
     const created = (await apiJson(
       deps.transport,
       deps.accessToken,
@@ -192,13 +234,11 @@ export async function bootstrapPlaylists(
       "playlist create",
     )) as { id?: string };
     if (!created.id) throw broken(`playlist create for ${language} returned no id`);
-    await auditOrAbort(
-      {
-        account: ARCANADA_CHANNEL_ID,
-        action: "playlist-create",
-        postUrl: `https://www.youtube.com/playlist?list=${created.id}`,
-      },
-      deps.auditOptions,
+    await completeMutation(
+      control,
+      { ...spec, postUrl: `https://www.youtube.com/playlist?list=${created.id}` },
+      entry,
+      { playlistId: created.id },
     );
     result[language] = created.id;
   }

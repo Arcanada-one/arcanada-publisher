@@ -115,10 +115,13 @@ export const processedVideo = (over: Record<string, unknown> = {}): Record<strin
 
 export function playlistItemsResponders(alreadyIn = false): Responder[] {
   return [
-    (req) =>
-      req.method === "GET" && req.url.includes("/playlistItems?part=id")
-        ? json(200, { items: alreadyIn ? [{ id: "pli1" }] : [] })
-        : undefined,
+    (req) => {
+      if (req.method !== "GET" || !req.url.includes("/playlistItems?part=id")) {
+        return undefined;
+      }
+      const uploadsProof = req.url.includes(`playlistId=${UPLOADS_ID}`);
+      return json(200, { items: uploadsProof || alreadyIn ? [{ id: "pli1" }] : [] });
+    },
     (req) =>
       req.method === "POST" && req.url.includes("/playlistItems?part=snippet")
         ? json(200, { id: "pli-new" })

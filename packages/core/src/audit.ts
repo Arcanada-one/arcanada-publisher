@@ -13,7 +13,13 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Platform } from "./platform.js";
 
-export type AuditAction = "publish" | "comment" | "edit" | "delete" | "playlist-create";
+export type AuditAction =
+  | "publish"
+  | "comment"
+  | "edit"
+  | "delete"
+  | "playlist-create"
+  | "playlist-insert";
 
 /** The fields an audit record may carry. Anything outside this set is dropped. */
 export interface AuditInput {
@@ -24,6 +30,10 @@ export interface AuditInput {
   postUrl?: string;
   /** Opaque correlation token an agent may pass to tie calls together. No secrets. */
   callerToken?: string;
+  /** Two-phase mutation audit marker; omitted for legacy single-record actions. */
+  phase?: "intent" | "outcome";
+  /** Correlates intent/outcome and the adapter recovery journal. Never a credential. */
+  operationId?: string;
 }
 
 export interface AuditOptions {
@@ -73,6 +83,8 @@ export async function appendAudit(
   };
   if (input.postUrl !== undefined) record.postUrl = input.postUrl;
   if (input.callerToken !== undefined) record.callerToken = input.callerToken;
+  if (input.phase !== undefined) record.phase = input.phase;
+  if (input.operationId !== undefined) record.operationId = input.operationId;
 
   const file = join(baseDir, `${dayStamp(now)}.jsonl`);
   try {
