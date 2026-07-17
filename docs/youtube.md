@@ -52,10 +52,21 @@ has its own 100-calls/day bucket since 2025-12/2026-06.
 ## 3. Private-lock interim flow
 
 Until the audit passes: publish with `--privacy private` (the default), then
-flip visibility **manually in YouTube Studio** after review. The adapter reads
-back the effective `privacyStatus` after processing and reports a divergence in
-`warnings` (the private-lock signal) — treat that warning as "manual Studio
-flip still required", not as an error.
+request the reviewed transition through Publisher:
+
+```
+arcanada-publisher edit --platform youtube --profile origin \
+  --target-url 'https://www.youtube.com/watch?v=VIDEO_ID' \
+  --privacy unlisted
+```
+
+The edit is armed and audited, preserves all mutable fields in the current
+`status` part, excludes read-only status fields, and verifies the requested
+privacy in the `videos.update` response. If Google still enforces the API
+project's private lock, the command fails closed with the official API error;
+do not bypass Publisher with a manual Studio change. The upload path also
+reads back the effective `privacyStatus` after processing and reports any
+divergence in `warnings`.
 
 ## 4. Token rotation / loss recovery
 
@@ -76,8 +87,10 @@ Live mutations (upload, playlist create, edit) require the operator-armed
 state: `YOUTUBE_LIVE_ARMED=1` in the **publisher process environment**.
 Procedure per publishing session:
 
-1. Run the exact command with `--dry-run` and review the emitted mutation plan
-   (channel, playlist, metadata, file sha256). Nothing is sent.
+1. For uploads, run the exact command with `--dry-run` and review the emitted
+   mutation plan (channel, playlist, metadata, file sha256). Nothing is sent.
+   Visibility edits use a read-before-update oracle and do not have a dry-run
+   mode; review the explicit `--target-url` and `--privacy` values instead.
 2. Arm for this session only: `export YOUTUBE_LIVE_ARMED=1` in the shell that
    runs the publisher (or the single API-server session). **Never** persist it
    in a systemd unit, shell profile, or `.env` — a permanently-armed loopback

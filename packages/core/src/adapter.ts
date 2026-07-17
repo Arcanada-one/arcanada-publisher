@@ -62,6 +62,8 @@ export interface EditInput {
   videoDuration?: number;
   /** YouTube-specific: metadata-only title update via videos.update. */
   title?: string;
+  /** YouTube-specific: requested visibility update via videos.update(part=status). */
+  privacyStatus?: "private" | "unlisted" | "public";
   profile: string;
 }
 

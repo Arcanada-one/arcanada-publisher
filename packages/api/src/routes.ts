@@ -133,11 +133,18 @@ async function handleEdit(body: Body, deps: RouteDeps): Promise<unknown> {
   const postUrl = typeof body.targetUrl === "string" ? body.targetUrl : "";
   const text = typeof body.text === "string" ? body.text : undefined;
   const title = typeof body.title === "string" ? body.title : undefined;
+  const privacyStatus =
+    body.privacyStatus === "private" ||
+    body.privacyStatus === "unlisted" ||
+    body.privacyStatus === "public"
+      ? body.privacyStatus
+      : undefined;
   return deps.makeAdapter(platform).edit({
     postUrl,
     profile,
     ...(text !== undefined ? { text } : {}),
     ...(title !== undefined ? { title } : {}),
+    ...(privacyStatus !== undefined ? { privacyStatus } : {}),
   });
 }
 

@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 // No browser automation — YouTube ToS forbids it and the Data API covers every
 // requirement (see datarim INSIGHTS-PUB-0035). comment/delete are unsupported
-// by design; edit is metadata-only via videos.update.
+// by design; edit covers metadata and visibility via videos.update.
 
 import { readFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
@@ -136,7 +136,7 @@ export class YouTubeAdapter extends BaseAdapter {
     );
   }
 
-  /** Metadata-only edit via videos.update - categoryId is always re-sent. */
+  /** Metadata/visibility edit via videos.update - mutable fields are preserved. */
   async edit(input: EditInput): Promise<EditResult> {
     requireArmed(this.env, "edit");
     const videoId = parseVideoId(input.postUrl);
@@ -146,21 +146,36 @@ export class YouTubeAdapter extends BaseAdapter {
     const current = (await apiJson(
       this.transport,
       token,
-      { method: "GET", url: `${VIDEOS_URL}?part=snippet&id=${videoId}` },
+      { method: "GET", url: `${VIDEOS_URL}?part=snippet,status&id=${videoId}` },
       "edit read-before-update",
-    )) as { items?: Array<{ snippet?: Record<string, unknown> }> };
-    const snippet = current.items?.[0]?.snippet;
-    if (!snippet)
+    )) as {
+      items?: Array<{
+        snippet?: Record<string, unknown>;
+        status?: Record<string, unknown>;
+      }>;
+    };
+    const currentItem = current.items?.[0];
+    const snippet = currentItem?.snippet;
+    const status = currentItem?.status;
+    if (!snippet || !status)
       throw new AdapterError(ErrorCode.VERIFY_FAILED, `edit: video ${videoId} not found`);
     const nextTitle = input.title ?? String(snippet["title"] ?? "");
     const nextDescription = input.text ?? String(snippet["description"] ?? "");
+    const nextPrivacy = input.privacyStatus ?? String(status["privacyStatus"] ?? "");
     validateTitle(nextTitle);
     validateDescriptionBytes(nextDescription);
     const lang = snippet["defaultLanguage"];
     if (lang === "en" || lang === "ru") validateLanguagePurity(lang, nextTitle, nextDescription);
 
     const key = createHash("sha256")
-      .update(JSON.stringify({ videoId, title: nextTitle, description: nextDescription }))
+      .update(
+        JSON.stringify({
+          videoId,
+          title: nextTitle,
+          description: nextDescription,
+          privacyStatus: nextPrivacy,
+        }),
+      )
       .digest("hex");
     const journal = this.journalFor(input.profile);
     const spec = {
@@ -169,7 +184,12 @@ export class YouTubeAdapter extends BaseAdapter {
       account: channel.channelId,
       action: "edit" as const,
       postUrl: input.postUrl,
-      intent: { videoId, title: nextTitle, description: nextDescription },
+      intent: {
+        videoId,
+        title: nextTitle,
+        description: nextDescription,
+        privacyStatus: nextPrivacy,
+      },
     };
     const control = {
       journal,
@@ -180,16 +200,24 @@ export class YouTubeAdapter extends BaseAdapter {
       const fresh = (await apiJson(
         this.transport,
         token,
-        { method: "GET", url: `${VIDEOS_URL}?part=snippet&id=${videoId}` },
+        { method: "GET", url: `${VIDEOS_URL}?part=snippet,status&id=${videoId}` },
         "edit lease read-before-update",
-      )) as { items?: Array<{ snippet?: Record<string, unknown> }> };
-      const freshSnippet = fresh.items?.[0]?.snippet;
-      if (!freshSnippet)
+      )) as {
+        items?: Array<{
+          snippet?: Record<string, unknown>;
+          status?: Record<string, unknown>;
+        }>;
+      };
+      const freshItem = fresh.items?.[0];
+      const freshSnippet = freshItem?.snippet;
+      const freshStatus = freshItem?.status;
+      if (!freshSnippet || !freshStatus)
         throw new AdapterError(ErrorCode.VERIFY_FAILED, `edit: video ${videoId} not found`);
       const pending = await journal.find("edit", key);
       const alreadyApplied =
         String(freshSnippet["title"] ?? "") === nextTitle &&
-        String(freshSnippet["description"] ?? "") === nextDescription;
+        String(freshSnippet["description"] ?? "") === nextDescription &&
+        String(freshStatus["privacyStatus"] ?? "") === nextPrivacy;
       if (
         !alreadyApplied &&
         input.expectedContent !== undefined &&
@@ -209,22 +237,49 @@ export class YouTubeAdapter extends BaseAdapter {
       }
       const entry = await beginMutation(control, spec);
       if (!alreadyApplied) {
-        const updated = {
-          ...freshSnippet,
-          title: nextTitle,
-          description: nextDescription,
-          categoryId: freshSnippet["categoryId"],
+        const updatesSnippet = input.title !== undefined || input.text !== undefined;
+        const updatesStatus = input.privacyStatus !== undefined;
+        const parts = [updatesSnippet ? "snippet" : "", updatesStatus ? "status" : ""]
+          .filter(Boolean)
+          .join(",");
+        const body = {
+          id: videoId,
+          ...(updatesSnippet
+            ? {
+                snippet: {
+                  ...freshSnippet,
+                  title: nextTitle,
+                  description: nextDescription,
+                  categoryId: freshSnippet["categoryId"],
+                },
+              }
+            : {}),
+          ...(updatesStatus ? { status: mutableStatus(freshStatus, input.privacyStatus!) } : {}),
         };
-        await apiJson(
+        const updated = (await apiJson(
           this.transport,
           token,
           {
             method: "PUT",
-            url: `${VIDEOS_URL}?part=snippet`,
-            body: JSON.stringify({ id: videoId, snippet: updated }),
+            url: `${VIDEOS_URL}?part=${parts}`,
+            body: JSON.stringify(body),
           },
           "videos.update",
-        );
+        )) as {
+          snippet?: Record<string, unknown>;
+          status?: Record<string, unknown>;
+        };
+        if (
+          (updatesSnippet &&
+            (String(updated.snippet?.["title"] ?? "") !== nextTitle ||
+              String(updated.snippet?.["description"] ?? "") !== nextDescription)) ||
+          (updatesStatus && String(updated.status?.["privacyStatus"] ?? "") !== input.privacyStatus)
+        ) {
+          throw new AdapterError(
+            ErrorCode.VERIFY_FAILED,
+            "edit: videos.update response does not prove the requested metadata",
+          );
+        }
       }
       const auditRef = await completeMutation(control, spec, entry, {
         videoId,
@@ -290,6 +345,26 @@ export class YouTubeAdapter extends BaseAdapter {
       account: ARCANADA_CHANNEL_ID,
     });
   }
+}
+
+function mutableStatus(
+  current: Record<string, unknown>,
+  privacyStatus: "private" | "unlisted" | "public",
+): Record<string, unknown> {
+  const result: Record<string, unknown> = { privacyStatus };
+  for (const key of [
+    "license",
+    "embeddable",
+    "publicStatsViewable",
+    "selfDeclaredMadeForKids",
+    "containsSyntheticMedia",
+  ] as const) {
+    if (current[key] !== undefined) result[key] = current[key];
+  }
+  if (privacyStatus === "private" && current["publishAt"] !== undefined) {
+    result["publishAt"] = current["publishAt"];
+  }
+  return result;
 }
 
 function parseVideoId(postUrl: string): string {
