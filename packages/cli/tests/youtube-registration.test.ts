@@ -24,7 +24,16 @@ vi.mock("@arcanada/publisher-youtube", () => ({
         postUrl: "https://www.youtube.com/watch?v=vid001",
         attachments: [],
         commentIds: [],
-        warnings: [],
+        warnings: input.dryRun
+          ? [
+              "dry-run: no mutation performed",
+              "plan: channel=UC2zUfwafsM2OxaidE0iNM7w",
+              "plan: playlist(ru)=PLR0V2_yIyldw",
+              "plan: privacyStatus=private",
+              "plan: sha256=abc123",
+              "plan: bytes=42",
+            ]
+          : [],
       });
     }
     edit(input: EditInput) {
@@ -104,6 +113,31 @@ describe("runPublish forwards the full field set", () => {
     expect(input.privacyStatus).toBe("private");
     expect(input.dryRun).toBe(true);
     expect(input.profile).toBe("origin");
+  });
+
+  it("surfaces the adapter mutation plan in dry-run output", async () => {
+    const result = await run([
+      "publish",
+      "--platform",
+      "youtube",
+      "--text-file",
+      textFile("Описание"),
+      "--title",
+      "Заголовок",
+      "--video",
+      "/videos/a.mp4",
+      "--language",
+      "ru",
+      "--privacy",
+      "private",
+      "--dry-run",
+    ]);
+
+    expect(result.message).toContain("dry-run: no mutation performed");
+    expect(result.message).toContain("plan: channel=UC2zUfwafsM2OxaidE0iNM7w");
+    expect(result.message).toContain("plan: playlist(ru)=PLR0V2_yIyldw");
+    expect(result.message).toContain("plan: sha256=abc123");
+    expect(result.message).toContain("plan: bytes=42");
   });
 });
 

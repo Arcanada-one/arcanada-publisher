@@ -350,7 +350,12 @@ async function runPublish(
       : {}),
   } as Parameters<ReturnType<typeof makeAdapter>["publish"]>[0]);
   const publishedUrls = res.postUrls ?? [res.postUrl];
-  return { code: ErrorCode.SUCCESS, message: `published: ${publishedUrls.join(", ")}` };
+  const warningLines = res.warnings.length > 0 ? `\n${res.warnings.join("\n")}` : "";
+  const outcome = args.dryRun ? "dry-run result" : "published";
+  return {
+    code: ErrorCode.SUCCESS,
+    message: `${outcome}: ${publishedUrls.join(", ")}${warningLines}`,
+  };
 }
 
 /**

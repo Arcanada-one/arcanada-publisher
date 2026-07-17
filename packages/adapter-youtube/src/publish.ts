@@ -482,7 +482,8 @@ function collectDivergences(
   }
   if (
     item.snippet?.description !== undefined &&
-    item.snippet.description !== requested.description
+    normalizeReadBackDescription(item.snippet.description) !==
+      normalizeReadBackDescription(requested.description)
   ) {
     warnings.push("read-back divergence: description differs from the requested metadata");
   }
@@ -493,4 +494,8 @@ function collectDivergences(
     warnings.push("read-back: duration not exposed by the API for this video");
   }
   return warnings;
+}
+
+function normalizeReadBackDescription(value: string): string {
+  return value.replace(/\r\n/g, "\n").replace(/\n$/, "");
 }
