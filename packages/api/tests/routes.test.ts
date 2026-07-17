@@ -208,6 +208,26 @@ describe("api routes — publish/comment/edit/delete over loopback", () => {
     expect(body.data.edited).toBe(true);
   });
 
+  it("POST /edit forwards a validated YouTube privacyStatus", async () => {
+    await start();
+    const res = await fetch(`${base()}/edit`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        platform: "youtube",
+        targetUrl: "https://www.youtube.com/watch?v=vid00001",
+        privacyStatus: "unlisted",
+        profile: "origin",
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(lastAdapter?.calls.edit[0]).toMatchObject({
+      postUrl: "https://www.youtube.com/watch?v=vid00001",
+      privacyStatus: "unlisted",
+      profile: "origin",
+    } satisfies Partial<EditInput>);
+  });
+
   it("POST /delete returns 200 with a DeleteResult", async () => {
     await start();
     const res = await fetch(`${base()}/delete`, {

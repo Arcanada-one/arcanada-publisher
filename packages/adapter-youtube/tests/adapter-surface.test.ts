@@ -193,9 +193,9 @@ describe("playlist bootstrap", () => {
 });
 
 const videoSnippet =
-  (over: Record<string, unknown> = {}): Responder =>
+  (over: Record<string, unknown> = {}, statusOver: Record<string, unknown> = {}): Responder =>
   (req) =>
-    req.method === "GET" && req.url.includes("/videos?part=snippet&id=")
+    req.method === "GET" && req.url.includes("/videos?part=snippet")
       ? json(200, {
           items: [
             {
@@ -207,19 +207,59 @@ const videoSnippet =
                 channelId: CHANNEL_ID,
                 ...over,
               },
+              status: {
+                privacyStatus: "private",
+                license: "youtube",
+                embeddable: true,
+                publicStatsViewable: true,
+                selfDeclaredMadeForKids: false,
+                containsSyntheticMedia: false,
+                uploadStatus: "processed",
+                madeForKids: false,
+                ...statusOver,
+              },
             },
           ],
         })
       : undefined;
 
 const videosUpdate: Responder = (req) =>
-  req.method === "PUT" && req.url.includes("/videos?part=snippet")
-    ? json(200, { id: "vid001" })
+  req.method === "PUT" && req.url.includes("/videos?part=")
+    ? json(200, { id: "vid001", ...JSON.parse(String(req.body)) })
     : undefined;
 
 const WATCH = "https://www.youtube.com/watch?v=vid00001";
 
 describe("edit contract", () => {
+  it("changes privacy Private→Unlisted while preserving every mutable status field", async () => {
+    const { adapter, recorder } = await adapterWith([
+      tokenResponder,
+      channelResponder(),
+      videoSnippet(),
+      videosUpdate,
+    ]);
+    await adapter.edit({
+      postUrl: WATCH,
+      privacyStatus: "unlisted",
+      profile: "origin",
+    });
+    const update = recorder.requests.find((request) => request.method === "PUT");
+    expect(update?.url).toContain("part=status");
+    const body = JSON.parse(update?.body as string) as {
+      status: Record<string, unknown>;
+    };
+    expect(body.status).toEqual({
+      privacyStatus: "unlisted",
+      license: "youtube",
+      embeddable: true,
+      publicStatsViewable: true,
+      selfDeclaredMadeForKids: false,
+      containsSyntheticMedia: false,
+    });
+    expect(body.status).not.toHaveProperty("uploadStatus");
+    expect(body.status).not.toHaveProperty("madeForKids");
+  });
+
   it("always re-sends categoryId with the snippet part (official gotcha)", async () => {
     const { adapter, recorder } = await adapterWith([
       tokenResponder,
@@ -278,7 +318,14 @@ describe("edit contract", () => {
       videoSnippet({ title: nextTitle }),
     ]);
     const key = createHash("sha256")
-      .update(JSON.stringify({ videoId: "vid00001", title: nextTitle, description: "Описание" }))
+      .update(
+        JSON.stringify({
+          videoId: "vid00001",
+          title: nextTitle,
+          description: "Описание",
+          privacyStatus: "private",
+        }),
+      )
       .digest("hex");
     const journal = new RecoveryJournal(
       join(fixture.profilesRoot, "youtube", "origin", "recovery.json"),
@@ -287,6 +334,7 @@ describe("edit contract", () => {
       videoId: "vid00001",
       title: nextTitle,
       description: "Описание",
+      privacyStatus: "private",
     });
     await journal.markApplied(entry.operationId, { videoId: "vid00001", postUrl: WATCH });
     await expect(

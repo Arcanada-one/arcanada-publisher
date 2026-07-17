@@ -121,10 +121,13 @@ async function runDelete(
 }
 
 async function runEdit(platform: Platform, profile: string, args: ParsedArgs): Promise<RunResult> {
-  if (!args.targetUrl || (!args.textFile && args.title === undefined)) {
+  if (
+    !args.targetUrl ||
+    (!args.textFile && args.title === undefined && args.privacy === undefined)
+  ) {
     return {
       code: ErrorCode.MISSING_INPUT,
-      message: "edit requires --target-url and --text-file (or --title for a metadata-only edit)",
+      message: "edit requires --target-url and at least one of --text-file, --title, or --privacy",
     };
   }
   if (
@@ -143,6 +146,9 @@ async function runEdit(platform: Platform, profile: string, args: ParsedArgs): P
     postUrl: args.targetUrl,
     ...(args.textFile ? { text: readText(args) } : {}),
     ...(args.title !== undefined ? { title: args.title } : {}),
+    ...(args.privacy !== undefined
+      ? { privacyStatus: args.privacy as "private" | "unlisted" | "public" }
+      : {}),
     ...(args.images[0] ? { imagePath: args.images[0] } : {}),
     ...(args.expectedContent || args.expectedContentFile
       ? {

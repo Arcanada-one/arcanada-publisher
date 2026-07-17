@@ -88,11 +88,19 @@ function validPayload(
           result["videoId"] === intent["videoId"]))
     );
   }
+  const editIntentKeys =
+    intent["privacyStatus"] === undefined
+      ? ["videoId", "title", "description"]
+      : ["videoId", "title", "description", "privacyStatus"];
   return (
-    hasOnly(intent, ["videoId", "title", "description"]) &&
+    hasOnly(intent, editIntentKeys) &&
     nonEmpty(intent["videoId"]) &&
     typeof intent["title"] === "string" &&
     typeof intent["description"] === "string" &&
+    (intent["privacyStatus"] === undefined ||
+      intent["privacyStatus"] === "private" ||
+      intent["privacyStatus"] === "unlisted" ||
+      intent["privacyStatus"] === "public") &&
     (!applied ||
       (result !== undefined &&
         hasOnly(result, ["videoId", "postUrl"]) &&
