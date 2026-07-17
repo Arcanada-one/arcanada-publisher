@@ -179,6 +179,14 @@ describe("terminal states and poll cap", () => {
 });
 
 describe("read-back and playlist phase", () => {
+  it("does not report a false description divergence when YouTube strips the text-file newline", async () => {
+    const { deps } = await makeDeps(happyResponders());
+    const result = await publishYouTube(input({ text: `${RU.text}\n` }), deps);
+    expect(result.warnings).not.toContain(
+      "read-back divergence: description differs from the requested metadata",
+    );
+  });
+
   it("private-lock: effective private vs requested public surfaces in warnings", async () => {
     const { deps } = await makeDeps([
       tokenResponder,
