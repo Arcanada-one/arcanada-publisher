@@ -228,6 +228,15 @@ const videosUpdate: Responder = (req) =>
     ? json(200, { id: "vid001", ...JSON.parse(String(req.body)) })
     : undefined;
 
+const videosUpdateStripsTerminalLineBreak: Responder = (req) => {
+  if (req.method !== "PUT" || !req.url.includes("/videos?part=")) return undefined;
+  const body = JSON.parse(String(req.body)) as { snippet?: { description?: string } };
+  if (body.snippet?.description !== undefined) {
+    body.snippet.description = body.snippet.description.replace(/[\r\n]+$/, "");
+  }
+  return json(200, { id: "vid001", ...body });
+};
+
 const WATCH = "https://www.youtube.com/watch?v=vid00001";
 
 describe("edit contract", () => {
@@ -279,6 +288,18 @@ describe("edit contract", () => {
     };
     expect(body.snippet.categoryId).toBe("22");
     expect(body.snippet.title).toBe("Новый заголовок");
+  });
+
+  it("accepts YouTube's removal of a terminal description line break", async () => {
+    const { adapter } = await adapterWith([
+      tokenResponder,
+      channelResponder(),
+      videoSnippet(),
+      videosUpdateStripsTerminalLineBreak,
+    ]);
+    await expect(
+      adapter.edit({ postUrl: WATCH, text: "Описание для проверки\n", profile: "origin" }),
+    ).resolves.toMatchObject({ edited: true });
   });
 
   it("edit intent audit failure sends zero PUTs", async () => {

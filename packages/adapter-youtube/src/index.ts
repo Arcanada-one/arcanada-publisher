@@ -216,7 +216,7 @@ export class YouTubeAdapter extends BaseAdapter {
       const pending = await journal.find("edit", key);
       const alreadyApplied =
         String(freshSnippet["title"] ?? "") === nextTitle &&
-        String(freshSnippet["description"] ?? "") === nextDescription &&
+        sameYouTubeDescription(String(freshSnippet["description"] ?? ""), nextDescription) &&
         String(freshStatus["privacyStatus"] ?? "") === nextPrivacy;
       if (
         !alreadyApplied &&
@@ -272,7 +272,10 @@ export class YouTubeAdapter extends BaseAdapter {
         if (
           (updatesSnippet &&
             (String(updated.snippet?.["title"] ?? "") !== nextTitle ||
-              String(updated.snippet?.["description"] ?? "") !== nextDescription)) ||
+              !sameYouTubeDescription(
+                String(updated.snippet?.["description"] ?? ""),
+                nextDescription,
+              ))) ||
           (updatesStatus && String(updated.status?.["privacyStatus"] ?? "") !== input.privacyStatus)
         ) {
           throw new AdapterError(
@@ -365,6 +368,15 @@ function mutableStatus(
     result["publishAt"] = current["publishAt"];
   }
   return result;
+}
+
+/**
+ * YouTube removes terminal line breaks from a video description. They do not
+ * change rendered content, so normalize only that transport-level difference
+ * for idempotent edit verification; all interior whitespace remains exact.
+ */
+function sameYouTubeDescription(actual: string, expected: string): boolean {
+  return actual.replace(/[\r\n]+$/, "") === expected.replace(/[\r\n]+$/, "");
 }
 
 function parseVideoId(postUrl: string): string {
