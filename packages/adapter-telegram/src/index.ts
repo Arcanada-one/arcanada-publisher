@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import { basename } from "node:path";
 import { readFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import {
   BaseAdapter,
   AdapterError,
@@ -32,11 +34,25 @@ export const TELEGRAM_TEST_CHAT_ID = "-1003855619081";
 const TELEGRAM_CAPTION_LIMIT = 1_024;
 const TELEGRAM_MESSAGE_LIMIT = 4_096;
 const TELEGRAM_PATTERN_A_LIMIT = 5_096;
+const execFileAsync = promisify(execFile);
+
+export interface TelegramVideoMetadata {
+  width: number;
+  height: number;
+  duration: number;
+}
+
+export type TelegramFfprobeRunner = (
+  executable: string,
+  args: readonly string[],
+) => Promise<string>;
+
 export interface TelegramAdapterOptions {
   botToken?: string;
   transport?: TelegramTransport;
   nonce?: () => string;
   allowedLiveChatIds?: string[];
+  probeVideoMetadata?: (filePath: string) => Promise<TelegramVideoMetadata>;
 }
 
 export interface TelegramInspection {
@@ -53,6 +69,7 @@ export class TelegramAdapter extends BaseAdapter {
   private readonly transport: TelegramTransport;
   private readonly nonce: () => string;
   private readonly allowedLiveChatIds: Set<string>;
+  private readonly probeVideoMetadata: (filePath: string) => Promise<TelegramVideoMetadata>;
 
   constructor(options: TelegramAdapterOptions = {}) {
     super();
@@ -60,6 +77,7 @@ export class TelegramAdapter extends BaseAdapter {
       throw new AdapterError(ErrorCode.MISSING_INPUT, "Telegram bot token is required");
     this.transport = options.transport ?? createTransport(options.botToken!);
     this.nonce = options.nonce ?? randomUUID;
+    this.probeVideoMetadata = options.probeVideoMetadata ?? ffprobeVideoMetadata;
     this.allowedLiveChatIds = new Set([
       TELEGRAM_TEST_CHAT_ID,
       ...(options.allowedLiveChatIds ?? []),
@@ -127,6 +145,9 @@ export class TelegramAdapter extends BaseAdapter {
       });
     }
 
+    const videoMetadata =
+      media && kind === "video" ? await this.loadVideoMetadata(media) : undefined;
+
     if (!this.allowedLiveChatIds.has(chatId))
       throw new AdapterError(
         ErrorCode.NETWORK_GUARD,
@@ -170,6 +191,7 @@ export class TelegramAdapter extends BaseAdapter {
       mediaBody.set(kind === "image" ? "photo" : "video", new Blob([bytes]), basename(media!));
       mediaBody.set("caption", bundleCaption!);
       mediaBody.set("parse_mode", "HTML");
+      if (videoMetadata) setTelegramVideoMetadata(mediaBody, videoMetadata);
       const first = requireMessage(await this.transport(mediaMethod, mediaBody), mediaMethod);
       await this.assertReadBack(
         first,
@@ -179,6 +201,7 @@ export class TelegramAdapter extends BaseAdapter {
         telegramVisibleText(bundleCaption!),
         media,
         true,
+        videoMetadata,
       );
 
       const textBody = jsonBody({ chat_id: chatId, text, parse_mode: "HTML" });
@@ -238,10 +261,20 @@ export class TelegramAdapter extends BaseAdapter {
       method = attachmentKind === "video" ? "sendVideo" : "sendPhoto";
       body.set(attachmentKind === "image" ? "photo" : "video", new Blob([bytes]), basename(media));
       body.set("caption", heroText);
+      if (videoMetadata) setTelegramVideoMetadata(body, videoMetadata);
     } else body.set("text", heroText);
 
     const message = requireMessage(await this.transport(method, body), method);
-    await this.assertReadBack(message, chatId, baseline, bot.id, heroText, media);
+    await this.assertReadBack(
+      message,
+      chatId,
+      baseline,
+      bot.id,
+      heroText,
+      media,
+      false,
+      videoMetadata,
+    );
     if (pattern.reply) {
       const reply = requireMessage(
         await this.transport(
@@ -639,6 +672,7 @@ export class TelegramAdapter extends BaseAdapter {
     expectedText: string,
     media?: string,
     ordinaryOnly = false,
+    expectedVideoMetadata?: TelegramVideoMetadata,
   ): Promise<void> {
     const actual = message.caption ?? message.text ?? "";
     if (
@@ -654,17 +688,51 @@ export class TelegramAdapter extends BaseAdapter {
         "publish: Telegram returned artifact failed identity/content read-back",
         { messageId: message.message_id, baseline },
       );
+    if (media && mediaKind(media) === "video" && !message.video)
+      throw new AdapterError(ErrorCode.VERIFY_FAILED, "publish: returned artifact is not a video");
+    if (media && mediaKind(media) === "video" && message.video?.file_name !== basename(media))
+      throw new AdapterError(ErrorCode.VERIFY_FAILED, "publish: returned video filename mismatch");
     if (
-      media &&
-      mediaKind(media) === "video" &&
-      (!message.video || message.video.file_name !== basename(media))
+      expectedVideoMetadata &&
+      message.video &&
+      (message.video.width !== expectedVideoMetadata.width ||
+        message.video.height !== expectedVideoMetadata.height ||
+        message.video.duration !== expectedVideoMetadata.duration)
     )
       throw new AdapterError(
         ErrorCode.VERIFY_FAILED,
-        "publish: returned video does not match sent filename",
+        "publish: returned video metadata does not match ffprobe",
+        { expected: expectedVideoMetadata, returned: message.video },
       );
     if (media && mediaKind(media) === "image" && !message.photo?.length)
       throw new AdapterError(ErrorCode.VERIFY_FAILED, "publish: returned artifact is not a photo");
+  }
+
+  private async loadVideoMetadata(filePath: string): Promise<TelegramVideoMetadata> {
+    let metadata: TelegramVideoMetadata;
+    try {
+      metadata = await this.probeVideoMetadata(filePath);
+    } catch (cause) {
+      throw new AdapterError(
+        ErrorCode.INVALID_ARGS,
+        `telegram: ffprobe failed for '${basename(filePath)}'`,
+        { cause: cause instanceof Error ? cause.message : String(cause) },
+      );
+    }
+    if (
+      !Number.isInteger(metadata.width) ||
+      metadata.width <= 0 ||
+      !Number.isInteger(metadata.height) ||
+      metadata.height <= 0 ||
+      !Number.isInteger(metadata.duration) ||
+      metadata.duration <= 0
+    )
+      throw new AdapterError(
+        ErrorCode.INVALID_ARGS,
+        `telegram: ffprobe returned invalid video metadata for '${basename(filePath)}'`,
+        { metadata },
+      );
+    return metadata;
   }
 }
 
@@ -693,6 +761,52 @@ function escapeTelegramHtml(value: string): string {
 }
 function telegramUnits(value: string): number {
   return Buffer.byteLength(value, "utf16le") / 2;
+}
+function setTelegramVideoMetadata(body: FormData, metadata: TelegramVideoMetadata): void {
+  body.set("width", String(metadata.width));
+  body.set("height", String(metadata.height));
+  body.set("duration", String(metadata.duration));
+  body.set("supports_streaming", "true");
+}
+
+export async function ffprobeVideoMetadata(
+  filePath: string,
+  run: TelegramFfprobeRunner = runFfprobe,
+): Promise<TelegramVideoMetadata> {
+  const stdout = await run("ffprobe", [
+    "-v",
+    "error",
+    "-select_streams",
+    "v:0",
+    "-show_entries",
+    "stream=width,height,duration:format=duration",
+    "-of",
+    "json",
+    filePath,
+  ]);
+  const parsed = JSON.parse(stdout) as {
+    streams?: Array<{ width?: number; height?: number; duration?: string | number }>;
+    format?: { duration?: string | number };
+  };
+  const stream = parsed.streams?.[0];
+  const streamDuration = Number(stream?.duration);
+  const formatDuration = Number(parsed.format?.duration);
+  const rawDuration =
+    Number.isFinite(streamDuration) && streamDuration > 0 ? streamDuration : formatDuration;
+  return {
+    width: Number(stream?.width),
+    height: Number(stream?.height),
+    duration: Number.isFinite(rawDuration) ? Math.max(1, Math.round(rawDuration)) : 0,
+  };
+}
+
+async function runFfprobe(executable: string, args: readonly string[]): Promise<string> {
+  const { stdout } = await execFileAsync(executable, [...args], {
+    encoding: "utf8",
+    timeout: 30_000,
+    maxBuffer: 1_048_576,
+  });
+  return String(stdout);
 }
 function patternAText(text: string, heroLimit: number): { hero: string; reply?: string } {
   if (text.length <= heroLimit) return { hero: text };
