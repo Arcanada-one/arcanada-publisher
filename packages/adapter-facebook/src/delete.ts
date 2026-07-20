@@ -89,10 +89,31 @@ async function runDeleteFlow(
 }
 
 async function defaultReadContent(page: Page, input: DeleteInput): Promise<string> {
+  // PUB-0037: on a permalink page the first `[role="article"]` is not always the
+  // post body — Facebook renders navigation/related-content articles that can
+  // sort ahead of the target, so `.first()` read the wrong node and the
+  // read-before-delete oracle mismatched (fail-closed, no deletion). Mirror the
+  // LinkedIn PUB-0032 remedy: try the structural article read first; if it does
+  // not render OR does not contain the oracle text, fall back to a body-wide
+  // innerText read. The oracle compares `expectedContent` against this string —
+  // a superset (whole body) is safe (a false match would need the exact post
+  // text to appear elsewhere on the permalink, which is the post itself), a miss
+  // is not. Fail-closed remains intact: if neither read contains the oracle, the
+  // caller aborts without deleting.
   await page.goto(input.targetUrl);
   const article = page.locator('[role="article"]').first();
-  await article.waitFor({ state: "visible", timeout: 10_000 });
-  return (await article.innerText()) ?? "";
+  try {
+    await article.waitFor({ state: "visible", timeout: 10_000 });
+    const articleText = (await article.innerText()) ?? "";
+    if (articleText.includes(input.expectedContent)) {
+      return articleText;
+    }
+  } catch {
+    // fall through to the body-wide read below
+  }
+  const body = page.locator("body").first();
+  await body.waitFor({ state: "visible", timeout: 5_000 });
+  return (await body.innerText()) ?? "";
 }
 
 async function defaultPerformDelete(page: Page, _input: DeleteInput): Promise<void> {
@@ -103,6 +124,11 @@ async function defaultPerformDelete(page: Page, _input: DeleteInput): Promise<vo
   await actions.waitFor({ state: "visible", timeout: 10_000 });
   await actions.click();
 
+  // PUB-0037: the delete item («Удалить публикацию» / "Delete post") sits
+  // directly in the kebab menu — the earlier assumption of an intermediate
+  // «Редактировать или удалить» item was wrong. The `deleteMenuItem` selector
+  // now covers the «…публикацию»/"…post" label variant, so a direct click is
+  // sufficient.
   const deleteItem = page.getByRole("menuitem", { name: selectors.deleteMenuItem }).first();
   await deleteItem.waitFor({ state: "visible", timeout: 5_000 });
   await deleteItem.click();

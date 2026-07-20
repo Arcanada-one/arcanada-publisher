@@ -36,7 +36,17 @@ const ACTIVITY_URL = "https://www.linkedin.com/feed/update/urn:li:activity:74629
  * passes; `collectVisibleHrefs` returns the activity URL so extraction succeeds.
  * shadow-walk button clicks (ADD_MEDIA / NEXT_DONE / POST) all return true.
  */
-function fakeVideoPublishPage(): never {
+function fakeVideoPublishPage(
+  pressedKeys: string[] = [],
+  options: {
+    scopedVideoCount?: number;
+    mediaFilename?: string;
+    waits?: number[];
+    visibleHref?: string;
+    expectedHref?: string;
+    rolePostClicks?: number[];
+  } = {},
+): never {
   const visibleLocator = {
     first: () => visibleLocator,
     waitFor: async () => {},
@@ -44,14 +54,50 @@ function fakeVideoPublishPage(): never {
     count: async () => 1,
     click: async () => {},
   };
+  const filenameLocator = {
+    first: () => filenameLocator,
+    waitFor: async () => {},
+    isVisible: async () => pressedKeys.length >= 2,
+    count: async () => (pressedKeys.length >= 2 ? 1 : 0),
+    click: async () => {},
+  };
+  const emptyLocator = {
+    first: () => emptyLocator,
+    waitFor: async () => {},
+    isVisible: async () => false,
+    count: async () => 0,
+    click: async () => {},
+  };
   const page = {
     goto: async () => {},
-    getByRole: () => visibleLocator,
+    getByRole: (_role: string, roleOptions?: { name?: unknown }) => {
+      if (roleOptions?.name instanceof RegExp) {
+        const postLocator = {
+          first: () => postLocator,
+          last: () => postLocator,
+          waitFor: async () => {},
+          isVisible: async () => true,
+          isEnabled: async () => true,
+          count: async () => 1,
+          click: async () => {
+            options.rolePostClicks?.push(1);
+          },
+        };
+        return postLocator;
+      }
+      return visibleLocator;
+    },
+    getByText: (text: string) =>
+      text === options.mediaFilename ? filenameLocator : emptyLocator,
     locator: () => visibleLocator,
     isClosed: () => false,
-    waitForTimeout: async () => {},
+    waitForTimeout: async (ms: number) => {
+      options.waits?.push(ms);
+    },
     keyboard: {
-      press: async () => {},
+      press: async (key: string) => {
+        pressedKeys.push(key);
+      },
       insertText: async () => {},
     },
     waitForResponse: async () => null,
@@ -59,9 +105,10 @@ function fakeVideoPublishPage(): never {
       // shadow-walk button clicks return true (control found + clicked).
       if (source.includes("hit.click()")) return true;
       // scoped video count (composer-side) → 1 (attached).
-      if (source.includes("scopeSels")) return 1;
+      if (source.includes("scopeSels")) return options.scopedVideoCount ?? 1;
       // visible href collector → the activity URL (extraction succeeds).
-      if (source.includes("offsetParent")) return [ACTIVITY_URL];
+      if (source.includes("expectedFragment")) return options.expectedHref ?? ACTIVITY_URL;
+      if (source.includes("offsetParent")) return [options.visibleHref ?? ACTIVITY_URL];
       // generic shadow count (post-publish oracle path, if ever reached) → 0.
       return 0;
     },
@@ -70,6 +117,102 @@ function fakeVideoPublishPage(): never {
 }
 
 describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
+  it("clicks the exact role Post button in the normal trigger-opened composer", async () => {
+    const vid = makeVideo();
+    const rolePostClicks: number[] = [];
+    await publish(
+      { text: "narration video", imagePath: vid, profile: "p1" },
+      {
+        profileManager: makeProfiles(),
+        page: fakeVideoPublishPage([], { rolePostClicks }),
+        __verifyPostVideo: vi.fn(async () => true),
+        __prepareMediaClipboard: vi.fn(),
+      },
+    );
+
+    expect(rolePostClicks).toHaveLength(1);
+  });
+
+  it("does not accept a stale visible activity URL when the published title differs", async () => {
+    const oldUrl = "https://www.linkedin.com/feed/update/urn:li:activity:7000000000000000000/";
+    const vid = makeVideo();
+    const res = await publish(
+      { text: "Cubrim-2: The Global Addresser\n\nBody", imagePath: vid, profile: "p1" },
+      {
+        profileManager: makeProfiles(),
+        page: fakeVideoPublishPage([], {
+          visibleHref: oldUrl,
+          expectedHref: ACTIVITY_URL,
+        }),
+        __verifyPostVideo: vi.fn(async () => true),
+        __prepareMediaClipboard: vi.fn(),
+      },
+    );
+
+    expect(res.postUrl).toBe(ACTIVITY_URL);
+  });
+
+  it("keeps the Publisher page open for the post-submit video upload window", async () => {
+    const vid = makeVideo();
+    const waits: number[] = [];
+    await publish(
+      { text: "narration video", imagePath: vid, profile: "p1" },
+      {
+        profileManager: makeProfiles(),
+        page: fakeVideoPublishPage([], { waits }),
+        __verifyPostVideo: vi.fn(async () => true),
+        __prepareMediaClipboard: vi.fn(),
+      },
+    );
+
+    expect(Math.max(...waits)).toBeGreaterThanOrEqual(120_000);
+  });
+
+  it("accepts LinkedIn's exact filename attachment card when no video element renders", async () => {
+    const vid = makeVideo();
+    const pressedKeys: string[] = [];
+    const res = await publish(
+      { text: "narration video", imagePath: vid, profile: "p1" },
+      {
+        profileManager: makeProfiles(),
+        page: fakeVideoPublishPage(pressedKeys, {
+          scopedVideoCount: 0,
+          mediaFilename: "cover.mp4",
+        }),
+        __verifyPostVideo: vi.fn(async () => true),
+        __prepareMediaClipboard: vi.fn(),
+      },
+    );
+
+    expect(res.ok).toBe(true);
+    expect(pressedKeys).toHaveLength(2);
+  });
+
+  it("re-prepares the media clipboard at paste time and uses the concrete OS shortcut", async () => {
+    const vid = makeVideo();
+    const pressedKeys: string[] = [];
+    const prepareClipboard = vi.fn();
+    const focusBrowser = vi.fn(() => true);
+    const pasteClipboard = vi.fn(() => true);
+
+    await publish(
+      { text: "narration video", imagePath: vid, profile: "p1" },
+      {
+        profileManager: makeProfiles(),
+        page: fakeVideoPublishPage(pressedKeys),
+        __verifyPostVideo: vi.fn(async () => true),
+        __prepareMediaClipboard: prepareClipboard,
+        __focusPublisherBrowser: focusBrowser,
+        __pasteMediaClipboard: pasteClipboard,
+      } as never,
+    );
+
+    expect(prepareClipboard).toHaveBeenCalledWith(vid);
+    expect(focusBrowser).toHaveBeenCalled();
+    expect(pasteClipboard).toHaveBeenCalled();
+    expect(pressedKeys).toHaveLength(0);
+  });
+
   it("throws VERIFY_FAILED when the published post carries NO video (oracle=false)", async () => {
     const verify = vi.fn(async () => false);
     const vid = makeVideo();
@@ -120,6 +263,9 @@ describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
           count: async () => 1,
           click: async () => {},
         }),
+      }),
+      getByText: () => ({
+        first: () => ({ isVisible: async () => false }),
       }),
       locator: () => ({
         first: () => ({

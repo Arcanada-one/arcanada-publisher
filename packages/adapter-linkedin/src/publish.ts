@@ -16,7 +16,7 @@
 // construction.
 
 import { statSync, existsSync } from "node:fs";
-import { extname, resolve as resolvePath } from "node:path";
+import { basename, extname, resolve as resolvePath } from "node:path";
 import { type Page } from "playwright";
 import {
   AdapterError,
@@ -31,6 +31,11 @@ import { launchSession, withScreenshotOnFail } from "./context.js";
 import { ACTIVITY_URN_RE, extractActivityUrn, pickFirstActivityHref } from "./url-extraction.js";
 import { classifyLiError, mapLiError } from "./errors.js";
 import { shadowClickButtonJs, scopedVideoCountJs, shadowCountJs } from "./dom-shadow.js";
+import {
+  focusPublisherBrowserNative,
+  pasteMediaClipboardNative,
+  prepareMediaClipboard,
+} from "./media-clipboard.js";
 
 // PUB-0031: .mp4 and .mov added so the generated cover+narration video attaches
 // via the same --image path on LinkedIn, mirroring the X adapter (PUB-0027).
@@ -117,6 +122,12 @@ export interface PublishOptions {
    * with a headed browser so the operator can watch the composer populate.
    */
   abortBeforePost?: boolean;
+  /** Test seam and point-of-use clipboard ownership hook. */
+  __prepareMediaClipboard?: (path: string) => unknown;
+  /** Test seam for the real OS-level paste command used on macOS. */
+  __pasteMediaClipboard?: () => boolean;
+  /** Test seam for making the Publisher browser the foreground macOS app. */
+  __focusPublisherBrowser?: () => boolean;
 }
 
 export async function publish(
@@ -146,6 +157,11 @@ export async function publish(
       attachments: attachmentsFor(safeImagePaths),
       commentIds: [],
     });
+  }
+
+  const clipboardPreparer = options.__prepareMediaClipboard ?? prepareMediaClipboard;
+  if (safeImagePaths.length > 0 && (!options.page || options.__prepareMediaClipboard)) {
+    clipboardPreparer(safeImagePaths[0]);
   }
 
   const profiles = options.profileManager ?? new ProfileManager();
@@ -191,7 +207,7 @@ async function runPublishFlow(
     // logged in and on the feed.
     const startPostCss = page.locator(cssSelectors.startPostButton).first();
     const startPostText = page.getByRole("button", { name: selectors.startPostButton }).first();
-    let startPost = startPostCss;
+    let startPost: typeof startPostCss | null = startPostCss;
     try {
       await startPostCss.waitFor({ state: "visible", timeout: 10_000 });
     } catch {
@@ -199,9 +215,44 @@ async function runPublishFlow(
         await startPostText.waitFor({ state: "visible", timeout: 10_000 });
         startPost = startPostText;
       } catch (cause) {
-        const blob = await safeContent(page);
-        const klass = classifyLiError(blob);
-        throw mapLiError(klass === "unknown" ? "not_logged_in" : klass, { cause });
+        // PUB-0037: on some sessions (observed on a Finnish-UI feed) the top-of-feed
+        // share-box composer trigger is NOT rendered in the DOM at all — neither the
+        // aria-label CSS hook nor the localized button text resolves, and the old
+        // flow threw composer_not_found even though the account is logged in and can
+        // post. LinkedIn exposes the share composer directly via the
+        // `?shareActive=true` feed query param, which opens the share-creation modal
+        // without needing the trigger. Fall back to it: navigate, confirm the Quill
+        // editor is reachable (a logged-in signal + composer-open signal), and set
+        // startPost=null so the flow below skips the trigger click and works with the
+        // already-open composer. Only if the editor is ALSO unreachable do we treat
+        // it as a genuine not-logged-in / hard drift and raise the original error.
+        try {
+          await page.goto(`${LINKEDIN_FEED}?shareActive=true`, { waitUntil: "domcontentloaded" });
+          // PUB-0037: the shareActive composer needs the feed to settle AND a
+          // generous post-load pause before its Quill editor initialises — a
+          // shorter wait finds the editor intermittently and, worse, a subsequent
+          // clipboard video-paste lands nowhere (the editor is present but not yet
+          // ready to ingest media, so no <video> preview appears and the flow
+          // fails at `video_paste_no_preview`). Verified live: networkidle + ~6s
+          // makes both the editor probe AND the later video paste deterministic.
+          await page
+            .waitForLoadState("networkidle", { timeout: 20_000 })
+            .catch(() => {});
+          if (typeof page.waitForTimeout === "function") {
+            await page.waitForTimeout(6_000);
+          }
+          const probeEditor = page
+            .locator(cssSelectors.editor)
+            .or(page.getByRole("textbox", { name: selectors.editor }))
+            .first();
+          await probeEditor.waitFor({ state: "visible", timeout: 15_000 });
+          startPost = null; // composer already open — skip the trigger click below
+          if (process.env["LI_DEBUG"]) process.stderr.write("[LI_DEBUG] shareActive fallback: composer open, startPost=null\n");
+        } catch {
+          const blob = await safeContent(page);
+          const klass = classifyLiError(blob);
+          throw mapLiError(klass === "unknown" ? "not_logged_in" : klass, { cause });
+        }
       }
     }
 
@@ -227,7 +278,9 @@ async function runPublishFlow(
     //      and Post button are located AFTERWARDS).
     //   - text-only post: click «Start a post» to open the composer, then type.
     // So we only click `startPost` up front for the text-only case.
-    if (imagePaths.length === 0) {
+    // PUB-0037: startPost is null when the composer was already opened via the
+    // ?shareActive=true fallback — no trigger to click, the modal is already up.
+    if (imagePaths.length === 0 && startPost !== null) {
       await startPost.click();
     }
 
@@ -257,7 +310,11 @@ async function runPublishFlow(
     // final «Post» is driven via the shadow-walk click.
     const POST_RE = "/^(Post|Posten|Veröffentlichen|Опубликовать|Julkaise|Teilen)$/i";
 
-    await startPost.click();
+    // PUB-0037: skip the trigger click when the composer is already open via the
+    // ?shareActive=true fallback (startPost === null).
+    if (startPost !== null) {
+      await startPost.click();
+    }
 
     // Locate the Quill editor in the open composer. CSS hook first
     // (locale-independent), localized textbox name as fallback.
@@ -291,7 +348,29 @@ async function runPublishFlow(
       // file as media (a <video>/<img> preview appears, Post enables) with no
       // picker. ControlOrMeta is platform-neutral (Cmd on macOS, Ctrl elsewhere).
       await editor.click();
-      await page.keyboard.press("ControlOrMeta+v");
+      // Re-establish and verify the exact media file at point of use. On macOS
+      // Chromium, the abstract ControlOrMeta alias does not deliver a POSIX-file
+      // clipboard item; use the concrete Meta shortcut instead.
+      if (!options.page || options.__prepareMediaClipboard) {
+        (options.__prepareMediaClipboard ?? prepareMediaClipboard)(imagePaths[0]);
+      }
+      const pasteMedia = async (): Promise<void> => {
+        const useNativePaste =
+          process.platform === "darwin" && (!options.page || options.__pasteMediaClipboard);
+        if (useNativePaste) {
+          (options.__focusPublisherBrowser ?? focusPublisherBrowserNative)();
+          if (typeof page.bringToFront === "function") await page.bringToFront();
+          await editor.click();
+          await page.waitForTimeout(200);
+        }
+        const pastedNatively = useNativePaste
+          ? (options.__pasteMediaClipboard ?? pasteMediaClipboardNative)()
+          : false;
+        if (!pastedNatively) {
+          await page.keyboard.press(process.platform === "darwin" ? "Meta+v" : "Control+v");
+        }
+      };
+      await pasteMedia();
       // Wait for ingest: a <video> (or <img> for a still) preview appears. Video
       // transcodes server-side, much longer than an image — bounded poll.
       await page.waitForTimeout(hasVideo ? 6_000 : 3_000);
@@ -311,11 +390,54 @@ async function runPublishFlow(
       const maxPolls = hasVideo ? videoPreviewPolls : 40; // video default ≤180s, image ≤20s
       const imagePreviewSel =
         "img[src^='blob:'], img[src*='media'], [data-test-media-preview], .share-images";
+      // PUB-0037: the shadow-scoped detector (`scopedVideoCountJs`) does NOT find
+      // the <video> preview inside the `?shareActive=true` fallback composer — a
+      // live diag mirroring the exact adapter flow confirmed the paste DOES attach
+      // (page-level `video` count = 1) but the <video> sits OUTSIDE the composer
+      // dialog subtree (`[role='dialog'] video` = 0) and outside the scoped-walk
+      // scope, so both structural detectors miss it and the poll burned its full
+      // budget → `video_paste_no_preview`. In the shareActive fallback path the
+      // page is the standalone share-creation view — it does NOT render the feed,
+      // so there is no foreign feed/profile <video> to false-positive against.
+      // Therefore a plain page-level <video> count is the correct, safe signal for
+      // this path only (startPost === null). The trigger-opened path keeps the
+      // strict scoped detector (a full feed IS present there → false-positive risk).
+      const pageVideo = page.locator("video");
+      // LinkedIn may render a validated file attachment card (filename + size)
+      // instead of a <video> element in the composer. Match the exact basename
+      // of our just-pasted file; unlike a page-wide video selector, this cannot
+      // be satisfied by unrelated feed media.
+      const mediaFilenameCard = page.getByText(basename(imagePaths[0]), { exact: true }).first();
       for (let i = 0; i < maxPolls; i++) {
+        // The macOS file clipboard occasionally loses the first paste while the
+        // Quill editor is still settling. Before failing the long bounded poll,
+        // retry the reversible clipboard handoff exactly once after ~10s.
+        if (hasVideo && i === 20) {
+          await editor.click();
+          if (!options.page || options.__prepareMediaClipboard) {
+            (options.__prepareMediaClipboard ?? prepareMediaClipboard)(imagePaths[0]);
+          }
+          await pasteMedia();
+          if (process.env["LI_DEBUG"])
+            process.stderr.write("[LI_DEBUG] retried media paste after focus settle\n");
+        }
         if (hasVideo) {
           const n = (await page.evaluate(scopedVideoCountJs())) as number;
           if (n > 0) {
             attached = true;
+            break;
+          }
+          // Fallback composer path: scoped detector misses; the shareActive view has
+          // no feed, so a page-level <video> is our just-pasted media.
+          if (startPost === null && (await pageVideo.count()) > 0) {
+            attached = true;
+            if (process.env["LI_DEBUG"]) process.stderr.write(`[LI_DEBUG] video attached via pageVideo at poll ${i}\n`);
+            break;
+          }
+          if (await mediaFilenameCard.isVisible().catch(() => false)) {
+            attached = true;
+            if (process.env["LI_DEBUG"])
+              process.stderr.write(`[LI_DEBUG] video attached via exact filename card at poll ${i}\n`);
             break;
           }
         } else if ((await page.locator(imagePreviewSel).count()) > 0) {
@@ -325,11 +447,13 @@ async function runPublishFlow(
         await page.waitForTimeout(500);
       }
       if (!attached) {
+        if (process.env["LI_DEBUG"]) process.stderr.write(`[LI_DEBUG] media attach FAILED (hasVideo=${hasVideo}, startPost null=${startPost === null})\n`);
         throw mapLiError("composer_not_found", {
           extra: { stage: hasVideo ? "video_paste_no_preview" : "image_paste_no_preview" },
         });
       }
       mediaAttached = true;
+      if (process.env["LI_DEBUG"]) process.stderr.write("[LI_DEBUG] mediaAttached=true, proceeding to text+Post\n");
 
       // PUB-0033: with the direct-paste-into-editor flow the media lands straight
       // in the composer — there is NO media sub-modal and therefore NO «Next»/
@@ -375,8 +499,44 @@ async function runPublishFlow(
       ? Number(process.env["LINKEDIN_POST_BUTTON_POLLS"] ?? 120)
       : 20; // ~60s / ~10s @ 500ms
     let posted = false;
+    // PUB-0037: in the ?shareActive=true fallback composer the final «Post» /
+    // «Julkaise» button lives in a shadow subtree that the `shadowClickJs` walk
+    // does not reach (it found only the feed's «Julkaise uudelleen» repost button
+    // and never our composer Post), so the poll exhausted and mapped to
+    // composer_not_found even though media+text were staged. A Playwright role
+    // locator DOES pierce shadow and resolves the composer Post button (verified
+    // live: getByRole count = 1). For the fallback path, try the role locator
+    // first (exact name so «Julkaise uudelleen» never matches), then fall back to
+    // the shadow-walk for the trigger-opened path.
+    // Built lazily and only for the fallback path — the unit-test fake page does
+    // not implement getByRole().last(), and the trigger-opened path never needs it.
+    const clickPostViaRole = async (): Promise<boolean> => {
+      if (typeof page.getByRole !== "function") return false;
+      const loc = page.getByRole("button", {
+        name: /^(Post|Posten|Veröffentlichen|Опубликовать|Julkaise|Teilen)$/,
+        exact: true,
+      });
+      const target = typeof loc.last === "function" ? loc.last() : loc.first();
+      try {
+        if (await target.isEnabled({ timeout: 500 }).catch(() => false)) {
+          await target.click({ timeout: 2_000 });
+          return true;
+        }
+      } catch {
+        // fall through
+      }
+      return false;
+    };
     const clickPost = async (): Promise<void> => {
       for (let i = 0; i < postMaxPolls; i++) {
+        // The exact role locator is authoritative in both composer variants and
+        // cannot match feed actions such as Repost. Try it before the broad
+        // shadow walk so `posted=true` means the real composer Post was clicked.
+        if (await clickPostViaRole()) {
+          posted = true;
+          if (process.env["LI_DEBUG"]) process.stderr.write(`[LI_DEBUG] Post clicked via role at poll ${i}\n`);
+          return;
+        }
         posted = (await page.evaluate(shadowClickJs(POST_RE))) as boolean;
         if (posted) return;
         await page.waitForTimeout(500);
@@ -398,9 +558,42 @@ async function runPublishFlow(
     if (!posted) {
       throw mapLiError("publish_button_disabled");
     }
-    await page.waitForTimeout(publishingVideo ? 9_000 : 6_000);
+    // LinkedIn uploads native video only after Post. Keep the original page and
+    // browser context alive long enough for that background transfer; navigating
+    // to recent activity after the old 9s delay aborts a multi-minute upload and
+    // makes URL extraction fall back to the previous post. The bounded settle is
+    // configurable for smaller test media but fail-safe by default.
+    const postUploadSettleMs = publishingVideo
+      ? Number(process.env["LINKEDIN_POST_UPLOAD_SETTLE_MS"] ?? 300_000)
+      : 6_000;
+    if (publishingVideo && process.env["LI_DEBUG"]) {
+      const stepMs = 5_000;
+      let sawUploadIndicator = false;
+      for (let elapsed = 0; elapsed < postUploadSettleMs; elapsed += stepMs) {
+        const bodyText = await page
+          .locator("body")
+          .innerText()
+          .catch(() => "");
+        const uploadInProgress =
+          /uploading|keep this page open|ladataan|загрузк|wird hochgeladen/i.test(bodyText);
+        if (uploadInProgress) sawUploadIndicator = true;
+        if (elapsed % 10_000 === 0) {
+          const progressBars = await page.locator('[role="progressbar"]').count().catch(() => 0);
+          process.stderr.write(
+            `[LI_DEBUG] post-upload elapsed=${elapsed}ms indicator=${uploadInProgress} progressbars=${progressBars}\n`,
+          );
+        }
+        if (sawUploadIndicator && !uploadInProgress) {
+          await page.waitForTimeout(5_000);
+          break;
+        }
+        await page.waitForTimeout(stepMs);
+      }
+    } else {
+      await page.waitForTimeout(postUploadSettleMs);
+    }
 
-    const postUrl = await extractPublishedUrl(page);
+    const postUrl = await extractPublishedUrl(page, input.text);
 
     // PUB-0031 fail-closed post-publish re-verify: when we attached a video, the
     // composer-side check (scopedVideoCountJs above) can still be fooled if the
@@ -464,7 +657,49 @@ async function defaultVerifyPostVideo(page: Page, postUrl: string): Promise<bool
  * attribute (most reliable signal — author-scoped article container).
  * Throws `urn_not_found` if neither source yields a clean activity URL.
  */
-async function extractPublishedUrl(page: Page): Promise<string> {
+async function extractPublishedUrl(page: Page, expectedText?: string): Promise<string> {
+  const expectedFragment = expectedText
+    ?.split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0)
+    ?.slice(0, 80);
+
+  // A feed page contains many valid activity URLs. When publishing, accepting
+  // the first visible one silently returns the previous post if the new video
+  // is still uploading. Require the article that contains our title fragment.
+  if (expectedFragment) {
+    const findExpected = async (): Promise<string> => {
+      const script = `(function(){
+        const expectedFragment = ${JSON.stringify(expectedFragment)};
+        const nodes = Array.from(document.querySelectorAll(
+          "[data-urn*='urn:li:activity'], [data-id*='urn:li:activity']"
+        ));
+        const node = nodes.find((el) => (el.textContent || "").includes(expectedFragment));
+        if (!node) return "";
+        const urn = node.getAttribute("data-urn") || node.getAttribute("data-id") || "";
+        return /^urn:li:activity:\\d+$/.test(urn)
+          ? "https://www.linkedin.com/feed/update/" + urn + "/"
+          : "";
+      })()`;
+      const found = (await page.evaluate(script)) as string;
+      return ACTIVITY_URN_RE.test(found) ? found : "";
+    };
+
+    const current = await findExpected();
+    if (current) return current;
+
+    await page.goto(RECENT_ACTIVITY, { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(4_000);
+    await page.evaluate(`window.scrollBy(0, 600)`);
+    await page.waitForTimeout(2_000);
+    const fromActivity = await findExpected();
+    if (fromActivity) return fromActivity;
+
+    throw mapLiError("urn_not_found", {
+      extra: { expectedFragmentFound: false },
+    });
+  }
+
   // Toast / inline links: collect href list from visible <a> nodes, then pick.
   // The page.evaluate callback runs in the browser context — DOM types live
   // there. We cast through `unknown` to avoid pulling DOM lib into the

@@ -29,7 +29,12 @@ export const selectors = {
   // comment block (FB 2026 aria-label, RU/EN variants).
   commentActionsMenu:
     /(Редактировать, удалить или пожаловаться|Comment actions|Действия для комментария)/,
-  deleteMenuItem: /^(Удалить|Move to trash|Delete)$/,
+  // PUB-0037: on the 2026 profile-post kebab menu the delete item is labelled
+  // «Удалить публикацию» / "Delete post" (not the bare «Удалить»), and it lives
+  // directly in the kebab menu (no intermediate «Редактировать или удалить»).
+  // Cover the bare and the «…публикацию»/"…post" variants; the trailing token
+  // is optional so both older and current UIs match.
+  deleteMenuItem: /^(Удалить публикацию|Удалить|Delete post|Move to trash|Delete)$/,
   confirmDelete: /^(Удалить|Переместить|Move|Delete)$/,
   editedMarker: /^(Отредактировано|Edited)$/,
   loginEmail: /^(Эл\. адрес или номер мобильного телефона|Email or phone number)$/,

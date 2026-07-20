@@ -41,8 +41,14 @@ export const cssSelectors = {
   // accessible-name match misses (e.g. DE «Kommentar hinzufügen»). LinkedIn
   // renders the comment box as a Quill contenteditable inside a comments box
   // wrapper; these class/attribute hooks are locale-independent.
+  // PUB-0037: the 2026 LinkedIn comment composer migrated from Quill (.ql-editor)
+  // to TipTap/ProseMirror (`div.tiptap.ProseMirror[contenteditable='true']`,
+  // observed placeholder «Tekstieditori kommentin luomiseen» on the FI UI). The
+  // old .ql-editor / .comments-comment-box hooks no longer match, so the composer
+  // timed out and the first comment never posted. Add the TipTap hook first, keep
+  // the legacy Quill hooks as fallback for older UIs.
   commentEditor:
-    "div.comments-comment-box__form .ql-editor[contenteditable='true'], div[class*='comments-comment-box'] div[role='textbox'][contenteditable='true'], div.ql-editor[contenteditable='true'][data-placeholder]",
+    "div.tiptap.ProseMirror[contenteditable='true'], div[class*='comments-comment'] div.tiptap[contenteditable='true'], div.comments-comment-box__form .ql-editor[contenteditable='true'], div[class*='comments-comment-box'] div[role='textbox'][contenteditable='true'], div.ql-editor[contenteditable='true'][data-placeholder]",
 } as const;
 
 export const selectors = {
@@ -61,13 +67,18 @@ export const selectors = {
   // 2026 composer on a DE-locale account did not match the prior set → comment
   // composer timed out). Finnish «Lisää kommentti» added alongside.
   commentBox:
-    /^(Добавить комментарий|Написать комментарий|Add a comment|Write a comment|Kommentar hinzufügen|Kommentar schreiben|Lisää kommentti|Текстовое поле комментария|Comment text field)/,
+    /^(Добавить комментарий|Написать комментарий|Add a comment|Write a comment|Kommentar hinzufügen|Kommentar schreiben|Lisää kommentti|Tekstieditori kommentin luomiseen|Text editor for creating content|Текстовое поле комментария|Comment text field)/,
   editPostActionRu: /^(Открыть меню|Действия|Параметры|Открыть панель управления|Дополнительно)/,
   // PUB-0032: the post control-menu («...») drifted/localized. Added DE «Mehr
   // Aktionen / Steuerungsmenü öffnen» and FI «Lisää toimintoja» so the delete +
   // comment flows find the kebab regardless of UI language.
+  // PUB-0037: the real FI kebab aria-label is «Avaa hallintavalikko …» (verified
+  // by DOM dump on the live post: "Avaa hallintavalikko tekijän Pavel Valentov
+  // julkaisulle") — the earlier «Lisää toimintoja» guess was wrong and the delete
+  // flow failed at `delete_control_menu`. Add the correct FI open-control-menu
+  // phrase (prefix match, the per-author tail varies).
   editPostActionEn:
-    /^(Open control menu|Open options menu|More actions|More|Mehr Aktionen|Steuerungsmenü öffnen|Lisää toimintoja)/,
+    /^(Open control menu|Open options menu|More actions|More|Mehr Aktionen|Steuerungsmenü öffnen|Avaa hallintavalikko|Lisää toimintoja)/,
   editPostMenuItem: /^(Редактировать публикацию|Редактировать пост|Edit post|Beitrag bearbeiten)$/,
   // R10: LinkedIn tolerates in-place comment edit (unlike Facebook). The kebab
   // on a comment carries a per-author aria-label; `Edit` opens the inline editor
@@ -102,7 +113,7 @@ export const selectors = {
 // `confirmDelete`.
 export const shadowClickPatterns = {
   postControlMenu:
-    "/(Open control menu|Open options menu|More actions|More|Mehr Aktionen|Steuerungsmenü öffnen|Lisää toimintoja|Открыть меню|Действия|Параметры|Открыть панель управления|Дополнительно)/i",
+    "/(Open control menu|Open options menu|More actions|More|Mehr Aktionen|Steuerungsmenü öffnen|Avaa hallintavalikko|Lisää toimintoja|Открыть меню|Действия|Параметры|Открыть панель управления|Дополнительно)/i",
   deleteMenuItem:
     "/^(Delete post|Delete|Beitrag löschen|Löschen|Poista julkaisu|Poista|Удалить публикацию|Удалить пост|Удалить)$/i",
   confirmDelete: "/^(Delete|Löschen|Poista|Удалить)$/i",

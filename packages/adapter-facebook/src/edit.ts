@@ -76,30 +76,96 @@ export async function edit(
 
 async function editPostFlow(page: Page, input: FacebookEditInput): Promise<EditResult> {
   return withScreenshotOnFail(page, "edit-post", async () => {
-    await page.goto(input.postUrl);
+    await page.goto(input.postUrl, { waitUntil: "domcontentloaded" });
+    // PUB-0062: FB profile-post permalinks hydrate the surrounding feed
+    // asynchronously; the per-post "Actions" kebab can take well over 10s to
+    // become visible. Settle briefly and give it a generous window.
+    await page.waitForTimeout(4_000);
+    // PUB-0062: FB permalinks occasionally auto-open a stray overlay (e.g. the
+    // "no more stories" modal) that covers the per-post kebab and blocks the
+    // Actions button. Dismiss it via its own OK/Close button ONLY — do NOT press
+    // Escape, which collapses the post-permalink modal itself and drops the page
+    // back to the news feed (the kebab then belongs to some other feed post).
+    for (let i = 0; i < 3; i++) {
+      const dialogClose = page
+        .getByRole("button", { name: /^(OK|ОК)$/, exact: true })
+        .first();
+      if (await dialogClose.isVisible({ timeout: 1_000 }).catch(() => false)) {
+        await dialogClose.click().catch(() => {});
+        await page.waitForTimeout(800);
+      } else {
+        break;
+      }
+    }
+    await page.waitForTimeout(500);
     const actions = page
       .getByRole("button", { name: selectors.editPostAction })
       .or(page.getByRole("button", { name: selectors.editPostActionEn }))
       .first();
-    await actions.waitFor({ state: "visible", timeout: 10_000 });
-    await actions.click();
+    await actions.waitFor({ state: "visible", timeout: 30_000 });
 
     const editItem = page
       .getByRole("menuitem", { name: selectors.editPostMenuItem })
       .or(page.getByRole("menuitem", { name: selectors.editPostMenuItemFallback }))
       .first();
-    await editItem.waitFor({ state: "visible", timeout: 5_000 });
+    // PUB-0062: the kebab menu sometimes fails to open on the first click (a
+    // hover/focus race); retry the Actions click until the Edit menu item shows.
+    let editVisible = false;
+    for (let attempt = 0; attempt < 3 && !editVisible; attempt++) {
+      await actions.click();
+      editVisible = await editItem.isVisible({ timeout: 6_000 }).catch(() => false);
+      if (!editVisible) {
+        // Re-click the kebab to toggle the (wrong/partial) menu closed instead of
+        // pressing Escape, which would collapse the post-permalink modal itself.
+        await actions.click().catch(() => {});
+        await page.waitForTimeout(600);
+      }
+    }
+    if (!editVisible) {
+      await editItem.waitFor({ state: "visible", timeout: 6_000 });
+    }
     await editItem.click();
 
     if (input.text) {
       const textbox = page.getByRole("textbox").first();
       await textbox.click();
-      await page.keyboard.press("Control+A");
-      await page.keyboard.press("Delete");
+      await page.waitForTimeout(400);
+      // PUB-0062: the 2026 FB post-edit composer is a Lexical contenteditable that
+      // ignores Control/Meta+A → Delete/Backspace and swallows a following
+      // insertText (it appends to the un-cleared body and then stalls, leaving the
+      // old text in place). The reliable clear is per-character Backspace from the
+      // end; only once the field is genuinely empty does insertText commit the full
+      // body. Verify the field is empty before typing so we never edit-append.
+      const existing = ((await textbox.innerText().catch(() => "")) || "").trim();
+      await page.keyboard.press("End").catch(() => {});
+      for (let i = 0; i < existing.length + 40; i++) {
+        await page.keyboard.press("Backspace");
+      }
+      await page.waitForTimeout(300);
+      const cleared = ((await textbox.innerText().catch(() => "")) || "").trim();
+      if (cleared.length > 0) {
+        throw new AdapterError(ErrorCode.VERIFY_FAILED, "edit-post: composer would not clear", {
+          postUrl: input.postUrl,
+        });
+      }
       await page.keyboard.insertText(input.text);
+      await page.waitForTimeout(800);
     }
 
-    const save = page.getByRole("button", { name: selectors.saveButton, exact: true });
+    // PUB-0062: the 2026 FB "Редактировать публикацию" dialog turned edit into a
+    // multi-step composer flow — a post that carries media shows a «Далее» / "Next"
+    // button first, and the «Сохранить» / "Save" button only appears on the next
+    // screen. Advance through «Далее» (if present and no Save yet) before looking
+    // for Save, so we don't fail with "save button absent" on media posts.
+    let save = page.getByRole("button", { name: selectors.saveButton, exact: true });
+    if ((await save.count()) === 0) {
+      const next = page.getByRole("button", { name: selectors.nextButton, exact: true });
+      if ((await next.count()) > 0) {
+        await next.first().click();
+        await page.waitForTimeout(2_000);
+        save = page.getByRole("button", { name: selectors.saveButton, exact: true });
+      }
+    }
     if ((await save.count()) === 0) {
       throw new AdapterError(ErrorCode.PUBLISH_BUTTON_ABSENT, "edit-post: save button absent", {
         postUrl: input.postUrl,

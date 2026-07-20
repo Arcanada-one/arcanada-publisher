@@ -13,9 +13,19 @@ import { type ParsedArgs } from "./parse-args.js";
 export function makeAdapter(platform: Platform, args: ParsedArgs): Adapter {
   switch (platform) {
     case "facebook":
-      return new FacebookAdapter();
+      return args.headed
+        ? new FacebookAdapter({
+            publishOptions: { headed: true },
+            commentOptions: { headed: true },
+          })
+        : new FacebookAdapter();
     case "linkedin":
-      return new LinkedInAdapter();
+      return args.headed
+        ? new LinkedInAdapter({
+            publishOptions: { headed: true },
+            commentOptions: { headed: true },
+          })
+        : new LinkedInAdapter();
     case "x":
       // PUB-0033: --headed runs a visible browser so large video uploads settle
       // reliably; default (no flag) keeps the headless behaviour.

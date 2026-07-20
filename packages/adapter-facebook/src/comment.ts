@@ -68,9 +68,23 @@ export async function comment(
 
 async function runCommentFlow(page: Page, input: CommentInput): Promise<CommentResult> {
   return withScreenshotOnFail(page, "comment", async () => {
-    await page.goto(input.parentPostUrl);
+    await page.goto(input.parentPostUrl, { waitUntil: "domcontentloaded" });
+    // PUB-0062: FB permalinks hydrate slowly and can auto-open a stray overlay
+    // (e.g. the "no more stories" modal) that covers the comment composer.
+    // Dismiss it via its own OK button ONLY (never Escape — that collapses the
+    // post-permalink modal itself), then give the composer a generous window.
+    await page.waitForTimeout(4_000);
+    for (let i = 0; i < 3; i++) {
+      const ok = page.getByRole("button", { name: /^(OK|ОК)$/, exact: true }).first();
+      if (await ok.isVisible({ timeout: 1_000 }).catch(() => false)) {
+        await ok.click().catch(() => {});
+        await page.waitForTimeout(800);
+      } else {
+        break;
+      }
+    }
     const composer = page.getByRole("textbox", { name: selectors.commentComposer }).first();
-    await composer.waitFor({ state: "visible", timeout: 10_000 });
+    await composer.waitFor({ state: "visible", timeout: 30_000 });
     await composer.click();
     // R6: a multi-line first comment (CTA links + TG cross-link) must use
     // Shift+Enter between lines — a raw "\n" makes FB submit on the first line,
@@ -123,9 +137,17 @@ function assertParentHost(parentPostUrl: string): void {
 }
 
 async function defaultVerifyParent(parentPostUrl: string): Promise<boolean> {
+  // PUB-0062: an unauthenticated HEAD to a FB profile-post permalink is redirected
+  // to the login wall and comes back non-ok (or 400), so this gate produced a
+  // false "parent post is not reachable" for posts that ARE reachable under the
+  // logged-in browser session. FB permalinks are not anonymously fetchable by
+  // design — reachability is instead proven inside runCommentFlow, where the
+  // comment composer must render (composer.waitFor) before we type. Only reject
+  // here on a hard network failure (DNS/connection), never on an HTTP status the
+  // login wall produces.
   try {
-    const response = await fetch(parentPostUrl, { method: "HEAD", redirect: "follow" });
-    return response.ok;
+    await fetch(parentPostUrl, { method: "HEAD", redirect: "follow" });
+    return true;
   } catch {
     return false;
   }

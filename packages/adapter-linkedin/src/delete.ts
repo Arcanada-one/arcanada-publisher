@@ -89,34 +89,58 @@ async function runDeleteFlow(
 }
 
 async function defaultReadContent(page: Page, input: DeleteInput): Promise<string> {
-  await page.goto(input.targetUrl);
-  // PUB-0032: the post container selector `[data-urn*="urn:li:activity"],
-  // article` drifted on the 2026 UI (locator.waitFor timed out). Try the
-  // structural locator first; if it does not render, fall back to a body-wide
-  // innerText read so the read-before-delete oracle still has text to match
-  // (the oracle compares `expectedContent` against this — a superset is safe,
-  // a miss is not). A shadow-aware probe confirms the activity container exists
-  // before we commit to the body-wide read.
+  // PUB-0037: the 2026 LinkedIn permalink is a client-rendered SPA that needs a
+  // real settle before the post text exists, and it NO LONGER stamps a
+  // `data-urn` attribute on the post element (probe: permalink renders the full
+  // post — hasCubrim/hasMechty true, main ~1.7k chars — yet zero
+  // `[data-urn*="urn:li:activity"]` nodes). The old flow therefore failed twice:
+  // the structural `[data-urn]`/`article` selector never matched, and the
+  // shadow-URN probe returned null so the fallback threw «container not found»
+  // even though the post was on screen. Fix: (1) wait for network to settle so
+  // the SPA has painted the post; (2) prefer the structural read but fall back
+  // to a body/`main`-wide innerText read WITHOUT gating on a URN. The oracle
+  // compares `expectedContent` against this string — a superset (whole main) is
+  // safe, a miss is not; fail-closed is preserved because a truly-missing post
+  // yields text that does not contain `expectedContent` and the caller aborts.
+  await page.goto(input.targetUrl, { waitUntil: "domcontentloaded" });
+  await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
+  await page.waitForTimeout(4_000);
+
   const article = page.locator('[data-urn*="urn:li:activity"], article').first();
   try {
-    await article.waitFor({ state: "visible", timeout: 10_000 });
-    return (await article.innerText()) ?? "";
-  } catch {
-    // Structural fallback: confirm the activity URN is present somewhere in the
-    // (possibly shadow-nested) DOM, then read the whole document body. This keeps
-    // the read-before-delete guard intact when the article wrapper class drifts.
-    const urn = (await page.evaluate(shadowFindActivityUrnJs())) as string;
-    if (!urn) {
-      throw new AdapterError(
-        ErrorCode.VERIFY_FAILED,
-        "delete: post container not found — cannot run read-before-delete oracle",
-        { targetUrl: input.targetUrl, liErrorType: "verify_mismatch" },
-      );
+    await article.waitFor({ state: "visible", timeout: 5_000 });
+    const t = (await article.innerText()) ?? "";
+    if (t.includes(input.expectedContent)) {
+      return t;
     }
-    const body = page.locator("body").first();
-    await body.waitFor({ state: "visible", timeout: 5_000 });
-    return (await body.innerText()) ?? "";
+  } catch {
+    // fall through to the main/body-wide read below
   }
+
+  // Prefer <main> (the post-detail region) over <body> to avoid the global nav
+  // chrome; fall back to <body> if <main> is absent. A shadow-URN probe is kept
+  // only as a best-effort structural signal — its ABSENCE no longer blocks the
+  // read (the 2026 UI drops data-urn), so we never throw on a rendered post.
+  const main = page.locator("main").first();
+  const hasMain = (await main.count()) > 0;
+  const region = hasMain ? main : page.locator("body").first();
+  await region.waitFor({ state: "visible", timeout: 5_000 });
+  const text = (await region.innerText()) ?? "";
+
+  if (!text.includes(input.expectedContent)) {
+    // Distinguish «post genuinely absent / deleted» from «drift»: a
+    // best-effort shadow-URN probe adds context to the fail-closed error but is
+    // NOT required for a successful read above.
+    const urn = (await page.evaluate(shadowFindActivityUrnJs()).catch(() => null)) as string | null;
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      urn
+        ? "delete: rendered post does not match expectedContent — aborting without deletion"
+        : "delete: post not found or not rendered (no matching text, no activity urn) — aborting without deletion",
+      { targetUrl: input.targetUrl, liErrorType: "verify_mismatch" },
+    );
+  }
+  return text;
 }
 
 async function defaultPerformDelete(page: Page, _input: DeleteInput): Promise<void> {
