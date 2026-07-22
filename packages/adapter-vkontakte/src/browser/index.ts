@@ -35,6 +35,7 @@ import { WALL_PATH_RE } from "./url-extraction.js";
 import { uploadMediaAfterComposerSettles } from "./media-upload.js";
 import { waitForFinalMediaPreview } from "./final-media-preview.js";
 import { enterAndSettleComposerText, waitForFinalTextPreview } from "./composer-text.js";
+import { runVkDelete, type VkDeleteSteps } from "./delete.js";
 
 /** Preview settle ceiling and publish-enabled ceiling (video transcoding). */
 const VIDEO_PREVIEW_TIMEOUT_MS = 120_000;
@@ -408,6 +409,71 @@ function commentSteps(page: Page, parentPostUrl: string): VkCommentSteps {
   };
 }
 
+function deleteSteps(page: Page, targetUrl: string): VkDeleteSteps {
+  const expectedWallId = wallIdFromPermalink(targetUrl);
+  const exactPost = () =>
+    page.locator(`${POST_SELECTOR}[data-post-id="${expectedWallId}"]`).first();
+
+  return {
+    readSession: () => readSessionState(page),
+    async readTarget() {
+      await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
+      const post = exactPost();
+      await post.waitFor({ state: "visible", timeout: 20_000 });
+      const wallId = (await post.getAttribute("data-post-id")) ?? "";
+      const author =
+        (await post
+          .locator('[data-testid="post-header-title"]')
+          .first()
+          .innerText()
+          .catch(() => "")) || "";
+      const renderedContent = (await post.innerText().catch(() => "")) || "";
+      const deleted =
+        /^(Post deleted|Пост удалён)/i.test(await page.title()) ||
+        /(^|\n)(Post deleted|Пост удалён)(\n|$)/i.test(renderedContent);
+      return { wallId, author, renderedContent, deleted };
+    },
+    async performDelete() {
+      const post = exactPost();
+      if ((await post.count()) !== 1) {
+        throw new AdapterError(
+          ErrorCode.VERIFY_FAILED,
+          "vk delete: exact target post is absent or ambiguous — aborting without deletion",
+          { targetUrl, expectedWallId },
+        );
+      }
+      const menuToggle = post.locator('[data-testid="post_context_menu_toggle"]');
+      await menuToggle.waitFor({ state: "visible", timeout: 10_000 });
+      await menuToggle.click();
+      const menu = page.locator('[data-testid="post_context_menu"][role="dialog"]');
+      await menu.waitFor({ state: "visible", timeout: 5_000 });
+      const deleteItem = menu.locator('[data-testid="post_context_menu_item_delete"]');
+      if ((await deleteItem.count()) !== 1) {
+        throw new AdapterError(
+          ErrorCode.VERIFY_FAILED,
+          "vk delete: exact one-click delete item is absent or ambiguous — aborting",
+          { targetUrl, expectedWallId },
+        );
+      }
+      // Current VK desktop performs a soft-delete immediately: there is no
+      // confirmation dialog after this click. The orchestrator MUST read back.
+      await deleteItem.click();
+    },
+    async readAfter() {
+      await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
+      await page.waitForTimeout(1_000);
+      const post = exactPost();
+      const present = (await post.count().catch(() => 0)) === 1;
+      const rendered = present ? await post.innerText().catch(() => "") : "";
+      const title = await page.title().catch(() => "");
+      const deleted =
+        /^(Post deleted|Пост удалён)/i.test(title) ||
+        /(^|\n)(Post deleted|Пост удалён)(\n|$)/i.test(rendered);
+      return { wallId: expectedWallId, deleted };
+    },
+  };
+}
+
 /** Expected operator account for identity-assertion (from options or env). */
 function resolveExpectedAccount(fromInput: { id?: string; name?: string }): {
   accountId?: string;
@@ -520,10 +586,26 @@ export class VKontakteBrowserAdapter extends BaseAdapter {
     );
   }
 
-  async delete(_input: DeleteInput): Promise<DeleteResult> {
-    throw new AdapterError(
-      ErrorCode.INVALID_ARGS,
-      "vk browser: delete is not supported in browser mode (operator deletes in the VK UI)",
+  async delete(input: DeleteInput): Promise<DeleteResult> {
+    if (input.kind !== "post") {
+      throw new AdapterError(
+        ErrorCode.UNSUPPORTED_OPERATION,
+        "vk browser delete: comment deletion is not supported",
+      );
+    }
+    const expectedAccount = resolveExpectedAccount({});
+    return this.withPage(input.profile, (page) =>
+      withScreenshotOnFail(page, "vk-delete", () =>
+        runVkDelete(
+          {
+            targetUrl: input.targetUrl,
+            expectedContent: input.expectedContent,
+            profile: input.profile,
+            expectedAccount,
+          },
+          deleteSteps(page, input.targetUrl),
+        ),
+      ),
     );
   }
 
@@ -546,6 +628,7 @@ export class VKontakteBrowserAdapter extends BaseAdapter {
 
 export { runVkPublish, type VkPublishSteps } from "./publish.js";
 export { runVkComment, type VkCommentSteps } from "./comment.js";
+export { runVkDelete, type VkDeleteSteps } from "./delete.js";
 export { assertAuthorized, detectExpiredFromUrl, type SessionState } from "./session-guard.js";
 export { preflightPostText, sanitizeComposerText, POST_MAX_CHARS } from "./sanitize.js";
 export {
