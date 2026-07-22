@@ -272,7 +272,12 @@ function publishSteps(page: Page, kind: "image" | "video"): VkPublishSteps {
       await composerTitle.waitFor({ state: "visible", timeout: 15_000 });
 
       const fileInput = page.locator('[data-testid="posting_base_screen_download_from_device"]');
-      await fileInput.setInputFiles(mediaPath);
+      // VK now ignores direct setInputFiles on the hidden React input. Trigger
+      // the visible label and satisfy the resulting native chooser so the
+      // composer owns the upload event.
+      const uploadLabel = fileInput.locator("xpath=ancestor::label").first();
+      const [chooser] = await Promise.all([page.waitForEvent("filechooser"), uploadLabel.click()]);
+      await chooser.setFiles(mediaPath);
       await page
         .locator('[data-testid="posting_attachment_item"]')
         .first()
