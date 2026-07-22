@@ -6,9 +6,14 @@ describe("vk browser — final media preview", () => {
     const previewWait = vi.fn(async () => undefined);
     const preview = { waitFor: previewWait };
     const previewCollection = { first: vi.fn(() => preview) };
+    const persistedWait = vi.fn(async () => undefined);
+    const persisted = { waitFor: persistedWait };
+    const persistedCollection = { first: vi.fn(() => persisted) };
     const modal = {
       waitFor: vi.fn(async () => undefined),
-      locator: vi.fn(() => previewCollection),
+      locator: vi.fn((selector: string) =>
+        selector.includes(':not([src^="blob:"])') ? persistedCollection : previewCollection,
+      ),
     };
     const modalCollection = { first: vi.fn(() => modal) };
     const publishButton = {
@@ -26,5 +31,10 @@ describe("vk browser — final media preview", () => {
     );
     expect(previewCollection.first).toHaveBeenCalledOnce();
     expect(previewWait).toHaveBeenCalledWith({ state: "visible", timeout: 30_000 });
+    expect(modal.locator).toHaveBeenCalledWith(
+      '[data-testid="primary-attachment-image-content"]:not([src^="blob:"]):not([src^="data:"]), [data-testid="primary-attachment-photo"] img:not([src^="blob:"]):not([src^="data:"])',
+    );
+    expect(persistedCollection.first).toHaveBeenCalledOnce();
+    expect(persistedWait).toHaveBeenCalledWith({ state: "visible", timeout: 30_000 });
   });
 });
