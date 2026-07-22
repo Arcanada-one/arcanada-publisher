@@ -173,13 +173,6 @@ export async function publish(
       "inspectMediaAttachment: exactly one media path is required",
     );
   }
-  if (options.abortAfterMedia && !isVideoPath(safeImagePaths[0])) {
-    throw new AdapterError(
-      ErrorCode.INVALID_ARGS,
-      "inspectMediaAttachment: attachment-only smoke currently requires one video",
-    );
-  }
-
   // Dry-run validates inputs but performs no IO — no profile store, no browser.
   // (A page-injected test still exercises the dry-run branch in runPublishFlow.)
   if (input.dryRun && !options.page) {
@@ -410,11 +403,11 @@ async function runPublishFlow(
         }
         await page.waitForTimeout(500);
       }
-      if (!attached && hasVideo) {
+      if (!attached) {
         if (imagePaths.length !== 1) {
           throw new AdapterError(
             ErrorCode.INVALID_ARGS,
-            "LinkedIn CDP video drag fallback requires exactly one video",
+            "LinkedIn CDP media drag fallback requires exactly one attachment",
           );
         }
         await (options.__dispatchVideoDragDrop ?? dispatchVideoDragDrop)(
