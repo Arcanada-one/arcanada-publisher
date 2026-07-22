@@ -25,6 +25,7 @@ function el(opts: {
   disabled?: boolean;
   ariaDisabled?: boolean;
   dataUrn?: string;
+  src?: string;
   children?: FakeEl[];
   shadow?: FakeEl[];
   clicks?: { n: number };
@@ -41,6 +42,7 @@ interface ElOpts {
   disabled?: boolean;
   ariaDisabled?: boolean;
   dataUrn?: string;
+  src?: string;
   children?: FakeEl[];
   shadow?: FakeEl[];
   clicks?: { n: number };
@@ -56,6 +58,7 @@ class FakeEl {
   disabled: boolean;
   ariaDisabled: boolean;
   dataUrn?: string;
+  src?: string;
   children: FakeEl[];
   shadowRoot: FakeRoot | null;
   clicks: { n: number };
@@ -71,6 +74,7 @@ class FakeEl {
     this.disabled = o.disabled ?? false;
     this.ariaDisabled = o.ariaDisabled ?? false;
     this.dataUrn = o.dataUrn;
+    this.src = o.src;
     this.children = o.children ?? [];
     this.shadowRoot = o.shadow ? new FakeRoot(o.shadow) : null;
     this.clicks = o.clicks ?? { n: 0 };
@@ -81,6 +85,8 @@ class FakeEl {
     if (name === "aria-disabled") return this.ariaDisabled ? "true" : null;
     if (name === "data-urn") return this.dataUrn ?? null;
     if (name === "data-id") return null;
+    if (name === "src") return this.src ?? null;
+    if (name === "class") return null;
     return null;
   }
 
@@ -338,6 +344,17 @@ describe("dom-shadow — scopedMediaAttachmentCountJs", () => {
       ],
     });
     expect(run(scopedMediaAttachmentCountJs("x-linkedin-en.mp4"), [scope])).toBe(0);
+  });
+
+  it("accepts a blob-backed image preview only inside the marked composer", () => {
+    const preview = el({ tag: "img", src: "blob:https://www.linkedin.com/hero" });
+    const scope = el({
+      tag: "div",
+      text: "scope:[data-arcanada-publish-composer='true']",
+      children: [preview],
+    });
+    expect(run(scopedMediaAttachmentCountJs("hero.jpg"), [scope])).toBe(1);
+    expect(run(scopedMediaAttachmentCountJs("hero.jpg"), [preview])).toBe(0);
   });
 });
 

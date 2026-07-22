@@ -384,8 +384,6 @@ async function runPublishFlow(
       // via LINKEDIN_VIDEO_PREVIEW_POLLS (× 500ms). Default 360 = 180s.
       const videoPreviewPolls = Number(process.env["LINKEDIN_VIDEO_PREVIEW_POLLS"] ?? 360);
       const maxPolls = hasVideo ? videoPreviewPolls : 40; // video default ≤180s, image ≤20s
-      const imagePreviewSel =
-        "img[src^='blob:'], img[src*='media'], [data-test-media-preview], .share-images";
       const countScopedVideoAttachment = async (): Promise<number> => {
         // LinkedIn replaces the composer subtree after accepting a dropped file.
         // Re-bind the marker to the current editor locator before every readback;
@@ -402,9 +400,13 @@ async function runPublishFlow(
             options.__onStage?.("scoped_preview");
             break;
           }
-        } else if ((await page.locator(imagePreviewSel).count()) > 0) {
-          attached = true;
-          break;
+        } else {
+          const n = await countScopedVideoAttachment();
+          if (n > 0) {
+            attached = true;
+            options.__onStage?.("scoped_preview");
+            break;
+          }
         }
         await page.waitForTimeout(500);
       }
@@ -432,13 +434,13 @@ async function runPublishFlow(
         }
       }
       if (!attached) {
-        const attachmentDiagnostics = hasVideo
-          ? await page.evaluate(scopedMediaAttachmentDiagnosticsJs(expectedMediaName))
-          : undefined;
+        const attachmentDiagnostics = await page.evaluate(
+          scopedMediaAttachmentDiagnosticsJs(expectedMediaName),
+        );
         throw mapLiError("composer_not_found", {
           extra: {
             stage: hasVideo ? "video_paste_no_preview" : "image_paste_no_preview",
-            ...(attachmentDiagnostics !== undefined ? { attachmentDiagnostics } : {}),
+            attachmentDiagnostics,
           },
         });
       }

@@ -4,6 +4,14 @@ All notable changes to this package are documented here. The format is loosely
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Image pre-submit verification is now scoped to the marked composer. Images
+  elsewhere in the LinkedIn feed can no longer produce a false attachment
+  success and a text-only public post.
+
 ## [0.1.0] — 2026-05-21
 
 ### Added
