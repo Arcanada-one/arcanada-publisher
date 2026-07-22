@@ -11,13 +11,14 @@ export interface PostReadBack {
   account: string;
   text: string;
   hasVideo: boolean;
+  hasImage: boolean;
 }
 
 export interface ExpectedPost {
   account: string;
   /** The canonical body the adapter typed (from the pinned article asset). */
   text: string;
-  requireVideo: boolean;
+  requireMediaKind: "image" | "video";
 }
 
 function normalize(text: string): string {
@@ -43,10 +44,16 @@ export function assertPostReadBack(actual: PostReadBack, expected: ExpectedPost)
       "vk read-back: rendered text does not contain the full expected body (truncated?) — STOP",
     );
   }
-  if (expected.requireVideo && !actual.hasVideo) {
+  if (expected.requireMediaKind === "video" && !actual.hasVideo) {
     throw new AdapterError(
       ErrorCode.VERIFY_FAILED,
       "vk read-back: video is not attached to the published post — STOP",
+    );
+  }
+  if (expected.requireMediaKind === "image" && !actual.hasImage) {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "vk read-back: image is not attached to the published post — STOP",
     );
   }
 }

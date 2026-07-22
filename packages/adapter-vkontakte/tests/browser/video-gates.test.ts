@@ -24,7 +24,7 @@ function recorderSteps(overrides: Partial<VkPublishSteps> = {}): {
       calls.push("readRecentPosts");
       return [];
     },
-    uploadVideoAndAwaitReady: async () => {
+    uploadMediaAndAwaitReady: async () => {
       calls.push("uploadVideo");
     },
     typeText: async () => {
@@ -32,7 +32,7 @@ function recorderSteps(overrides: Partial<VkPublishSteps> = {}): {
     },
     preSubmitSnapshot: async () => {
       calls.push("preSubmitSnapshot");
-      return { hasText: true, hasVideo: true };
+      return { hasText: true, hasMedia: true };
     },
     submit: async () => {
       calls.push("submit");
@@ -40,7 +40,12 @@ function recorderSteps(overrides: Partial<VkPublishSteps> = {}): {
     },
     readBack: async () => {
       calls.push("readBack");
-      return { account: "Pavel Valentov", text: "полный текст", hasVideo: true };
+      return {
+        account: "Pavel Valentov",
+        text: "полный текст",
+        hasVideo: true,
+        hasImage: false,
+      };
     },
     ...overrides,
   };
@@ -49,10 +54,10 @@ function recorderSteps(overrides: Partial<VkPublishSteps> = {}): {
 
 const INPUT = {
   text: "полный текст",
-  videoPath: "/tmp/x.mp4",
+  mediaPath: "/tmp/x.mp4",
+  mediaKind: "video" as const,
   profile: "vika",
   expectedAccount: { accountId: "12345" },
-  requireVideo: true,
 };
 
 describe("vk browser — media-first ordering (video before text, gate before submit)", () => {
@@ -78,7 +83,7 @@ describe("vk browser — media-first ordering (video before text, gate before su
 
   it("ABORTS with VERIFY_FAILED (never submits) if the pre-submit snapshot lacks the video", async () => {
     const { steps, calls } = recorderSteps({
-      preSubmitSnapshot: async () => ({ hasText: true, hasVideo: false }),
+      preSubmitSnapshot: async () => ({ hasText: true, hasMedia: false }),
     });
     await expect(runVkPublish(INPUT, steps)).rejects.toMatchObject({
       code: ErrorCode.VERIFY_FAILED,
@@ -88,7 +93,7 @@ describe("vk browser — media-first ordering (video before text, gate before su
 
   it("ABORTS with VERIFY_FAILED if the pre-submit snapshot lacks the text", async () => {
     const { steps } = recorderSteps({
-      preSubmitSnapshot: async () => ({ hasText: false, hasVideo: true }),
+      preSubmitSnapshot: async () => ({ hasText: false, hasMedia: true }),
     });
     await expect(runVkPublish(INPUT, steps)).rejects.toMatchObject({
       code: ErrorCode.VERIFY_FAILED,

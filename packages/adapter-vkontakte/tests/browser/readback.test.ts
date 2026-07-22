@@ -36,7 +36,7 @@ describe("vk browser — post read-back oracle", () => {
   const expected = {
     account: "Pavel Valentov",
     text: "Глобальный  Адресатор\n\nполный текст статьи",
-    requireVideo: true,
+    requireMediaKind: "video" as const,
   };
 
   it("passes when author, normalized text and video all match", () => {
@@ -46,6 +46,7 @@ describe("vk browser — post read-back oracle", () => {
           account: "Pavel Valentov",
           text: "Глобальный Адресатор полный текст статьи",
           hasVideo: true,
+          hasImage: false,
         },
         expected,
       ),
@@ -59,6 +60,7 @@ describe("vk browser — post read-back oracle", () => {
           account: "Someone Else",
           text: "Глобальный Адресатор полный текст статьи",
           hasVideo: true,
+          hasImage: false,
         },
         expected,
       ),
@@ -68,7 +70,12 @@ describe("vk browser — post read-back oracle", () => {
   it("STOPs with VERIFY_FAILED when the rendered text is truncated (missing tail)", () => {
     expect(() =>
       assertPostReadBack(
-        { account: "Pavel Valentov", text: "Глобальный Адресатор", hasVideo: true },
+        {
+          account: "Pavel Valentov",
+          text: "Глобальный Адресатор",
+          hasVideo: true,
+          hasImage: false,
+        },
         expected,
       ),
     ).toThrowError(expect.objectContaining({ code: ErrorCode.VERIFY_FAILED }));
@@ -81,8 +88,34 @@ describe("vk browser — post read-back oracle", () => {
           account: "Pavel Valentov",
           text: "Глобальный Адресатор полный текст статьи",
           hasVideo: false,
+          hasImage: false,
         },
         expected,
+      ),
+    ).toThrowError(expect.objectContaining({ code: ErrorCode.VERIFY_FAILED }));
+  });
+
+  it("passes for an image campaign only when a published image is present", () => {
+    expect(() =>
+      assertPostReadBack(
+        {
+          account: "Pavel Valentov",
+          text: "Глобальный Адресатор полный текст статьи",
+          hasVideo: false,
+          hasImage: true,
+        },
+        { ...expected, requireMediaKind: "image" },
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertPostReadBack(
+        {
+          account: "Pavel Valentov",
+          text: "Глобальный Адресатор полный текст статьи",
+          hasVideo: false,
+          hasImage: false,
+        },
+        { ...expected, requireMediaKind: "image" },
       ),
     ).toThrowError(expect.objectContaining({ code: ErrorCode.VERIFY_FAILED }));
   });

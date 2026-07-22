@@ -19,18 +19,17 @@ import { assertPostReadBack } from "./readback.js";
 export interface VkBrowserPublishInput {
   /** Full post body (already read from the pinned article asset). */
   text: string;
-  /** Path to the native video to attach. */
-  videoPath: string;
+  /** Path to the native image or video to attach. */
+  mediaPath: string;
+  mediaKind: "image" | "video";
   profile: string;
   /** The operator account the profile MUST be logged in as. */
   expectedAccount: ExpectedAccount;
-  /** Require the video to be attached in read-back (media-first). */
-  requireVideo: boolean;
 }
 
 export interface PreSubmitSnapshot {
   hasText: boolean;
-  hasVideo: boolean;
+  hasMedia: boolean;
 }
 
 /** Injectable DOM steps (test seam). */
@@ -38,12 +37,17 @@ export interface VkPublishSteps {
   readSession(): Promise<SessionState>;
   readRecentPosts(): Promise<WallPostSummary[]>;
   /** Upload the video and BLOCK until it is ready (preview visible + composer publishable). */
-  uploadVideoAndAwaitReady(videoPath: string): Promise<void>;
+  uploadMediaAndAwaitReady(mediaPath: string): Promise<void>;
   typeText(text: string): Promise<void>;
   preSubmitSnapshot(): Promise<PreSubmitSnapshot>;
   /** Submit and return the canonical permalink from the live DOM. */
   submit(): Promise<string>;
-  readBack(permalink: string): Promise<{ account: string; text: string; hasVideo: boolean }>;
+  readBack(permalink: string): Promise<{
+    account: string;
+    text: string;
+    hasVideo: boolean;
+    hasImage: boolean;
+  }>;
 }
 
 /**
@@ -64,10 +68,10 @@ export async function runVkPublish(
 
   // 3. Read-before-post duplicate guard.
   const recent = await steps.readRecentPosts();
-  assertNotDuplicate({ text: body, hasVideo: true }, recent);
+  assertNotDuplicate({ text: body, hasVideo: input.mediaKind === "video" }, recent);
 
   // 4. Media-first: video upload must complete BEFORE text is typed.
-  await steps.uploadVideoAndAwaitReady(input.videoPath);
+  await steps.uploadMediaAndAwaitReady(input.mediaPath);
   await steps.typeText(body);
 
   // 5. Pre-submit snapshot: both text and video must be present, else ABORT.
@@ -78,10 +82,10 @@ export async function runVkPublish(
       "vk publish: pre-submit snapshot found no text — ABORT (never submit)",
     );
   }
-  if (!snap.hasVideo) {
+  if (!snap.hasMedia) {
     throw new AdapterError(
       ErrorCode.VERIFY_FAILED,
-      "vk publish: pre-submit snapshot found no video — ABORT (never submit)",
+      "vk publish: pre-submit snapshot found no media — ABORT (never submit)",
     );
   }
 
@@ -95,7 +99,7 @@ export async function runVkPublish(
     assertPostReadBack(rendered, {
       account: expectedAuthor,
       text: body,
-      requireVideo: input.requireVideo,
+      requireMediaKind: input.mediaKind,
     });
   }
 
@@ -104,7 +108,7 @@ export async function runVkPublish(
     platform: "vkontakte",
     account: rendered.account,
     postUrl: permalink,
-    attachments: [{ kind: "video" as const, src: input.videoPath }],
+    attachments: [{ kind: input.mediaKind, src: input.mediaPath }],
     commentIds: [],
   });
 }

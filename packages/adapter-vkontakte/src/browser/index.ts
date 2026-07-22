@@ -44,6 +44,10 @@ function extractUrls(text: string): string[] {
   return text.match(/https?:\/\/[^\s]+/g)?.map((url) => url.replace(/[),.;]+$/, "")) ?? [];
 }
 
+function mediaKind(path: string): "image" | "video" {
+  return /\.(?:avi|m4v|mkv|mov|mp4|webm)$/i.test(path) ? "video" : "image";
+}
+
 async function openOwnProfile(page: Page): Promise<void> {
   const profileLink = page
     .locator('[data-testid="leftmenu"] a')
@@ -98,7 +102,7 @@ async function renderedPostText(post: ReturnType<Page["locator"]>): Promise<stri
 }
 
 export interface VkBrowserPublishInput extends PublishInput {
-  /** Path to the native video (passed via --image on the CLI). */
+  /** Path to the native image or video (passed via --image on the CLI). */
   videoPath?: string;
   /** Expected operator account id/name (identity-assertion target). */
   expectedAccountId?: string;
@@ -221,7 +225,7 @@ export async function resolveSavedDraft(page: Page, allowReset: boolean): Promis
 }
 
 /** Build the concrete publish steps over a live page. */
-function publishSteps(page: Page): VkPublishSteps {
+function publishSteps(page: Page, kind: "image" | "video"): VkPublishSteps {
   let composerBody = "";
   return {
     readSession: () => readSessionState(page),
@@ -252,7 +256,7 @@ function publishSteps(page: Page): VkPublishSteps {
       }
       return out;
     },
-    async uploadVideoAndAwaitReady(videoPath: string): Promise<void> {
+    async uploadMediaAndAwaitReady(mediaPath: string): Promise<void> {
       const create = page.locator(PROFILE_READY_SELECTOR).first();
       await create.click();
 
@@ -268,7 +272,7 @@ function publishSteps(page: Page): VkPublishSteps {
       await composerTitle.waitFor({ state: "visible", timeout: 15_000 });
 
       const fileInput = page.locator('[data-testid="posting_base_screen_download_from_device"]');
-      await fileInput.setInputFiles(videoPath);
+      await fileInput.setInputFiles(mediaPath);
       await page
         .locator('[data-testid="posting_attachment_item"]')
         .first()
@@ -289,15 +293,19 @@ function publishSteps(page: Page): VkPublishSteps {
         .locator('[data-testid="posting_base_screen_input_message"]')
         .innerText()
         .catch(() => "");
-      const hasVideo = (await page.locator('[data-testid="posting_attachment_item"]').count()) > 0;
-      return { hasText: composerText.trim().length > 0, hasVideo };
+      const hasMedia = (await page.locator('[data-testid="posting_attachment_item"]').count()) > 0;
+      return { hasText: composerText.trim().length > 0, hasMedia };
     },
     async submit(): Promise<string> {
       await page.locator('[data-testid="posting_base_screen_next"]').click();
       const publishBtn = page.locator('[data-testid="posting_submit_button"]');
       await publishBtn.waitFor({ state: "visible", timeout: PUBLISH_READY_TIMEOUT_MS });
       await page
-        .locator('[data-testid="primary-attachment-video"]')
+        .locator(
+          kind === "video"
+            ? '[data-testid="primary-attachment-video"]'
+            : '[data-testid="primary-attachment-photo"], [data-testid="primary-attachment-image-content"]',
+        )
         .waitFor({ state: "visible", timeout: PUBLISH_READY_TIMEOUT_MS });
       if (!(await publishBtn.isEnabled())) {
         throw new AdapterError(
@@ -328,13 +336,19 @@ function publishSteps(page: Page): VkPublishSteps {
       const text = await renderedPostText(article);
       const hasVideo =
         (await article.locator('video, [data-testid="primary-attachment-video"]').count()) > 0;
+      const hasImage =
+        (await article
+          .locator(
+            '[data-testid="primary-attachment-photo"], [data-testid="primary-attachment-image-content"]',
+          )
+          .count()) > 0;
       const authorName =
         (await article
           .locator('[data-testid="post-header-title"]')
           .first()
           .innerText()
           .catch(() => "")) || "";
-      return { account: authorName, text, hasVideo };
+      return { account: authorName, text, hasVideo, hasImage };
     },
   };
 }
@@ -417,13 +431,14 @@ export class VKontakteBrowserAdapter extends BaseAdapter {
 
   async publish(input: PublishInput): Promise<PublishResult> {
     const vi = input as VkBrowserPublishInput;
-    const videoPath = vi.videoPath ?? vi.imagePaths?.[0] ?? vi.imagePath;
-    if (!videoPath) {
+    const mediaPath = vi.videoPath ?? vi.imagePaths?.[0] ?? vi.imagePath;
+    if (!mediaPath) {
       throw new AdapterError(
         ErrorCode.MISSING_INPUT,
-        "vk browser publish: a video (--image) is required",
+        "vk browser publish: an image or video (--image) is required",
       );
     }
+    const kind = mediaKind(mediaPath);
     // Dry-run validates inputs (text preflight + video presence) with no browser IO.
     if (input.dryRun) {
       preflightPostText(input.text);
@@ -432,7 +447,7 @@ export class VKontakteBrowserAdapter extends BaseAdapter {
         platform: "vkontakte",
         account: "dry-run",
         postUrl: "https://vk.com/wall0_0",
-        attachments: [{ kind: "video" as const, src: videoPath }],
+        attachments: [{ kind, src: mediaPath }],
         commentIds: [],
       });
     }
@@ -445,12 +460,12 @@ export class VKontakteBrowserAdapter extends BaseAdapter {
         runVkPublish(
           {
             text: input.text,
-            videoPath,
+            mediaPath,
+            mediaKind: kind,
             profile: input.profile,
             expectedAccount,
-            requireVideo: true,
           },
-          publishSteps(page),
+          publishSteps(page, kind),
         ),
       ),
     );
