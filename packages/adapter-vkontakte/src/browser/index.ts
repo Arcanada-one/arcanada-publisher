@@ -34,6 +34,7 @@ import { type WallPostSummary } from "./duplicate-guard.js";
 import { WALL_PATH_RE } from "./url-extraction.js";
 import { uploadMediaAfterComposerSettles } from "./media-upload.js";
 import { waitForFinalMediaPreview } from "./final-media-preview.js";
+import { enterAndSettleComposerText, waitForFinalTextPreview } from "./composer-text.js";
 
 /** Preview settle ceiling and publish-enabled ceiling (video transcoding). */
 const VIDEO_PREVIEW_TIMEOUT_MS = 120_000;
@@ -291,8 +292,8 @@ function publishSteps(page: Page, kind: "image" | "video"): VkPublishSteps {
     },
     async typeText(text: string): Promise<void> {
       const box = page.locator('[data-testid="posting_base_screen_input_message"]');
-      await box.click();
-      await page.keyboard.insertText(text);
+      const blurTarget = page.locator(COMPOSER_TITLE_SELECTOR).filter({ hasText: "Новый пост" });
+      await enterAndSettleComposerText(page, box, blurTarget, text);
       composerBody = text;
     },
     async preSubmitSnapshot() {
@@ -307,6 +308,7 @@ function publishSteps(page: Page, kind: "image" | "video"): VkPublishSteps {
       await page.locator('[data-testid="posting_base_screen_next"]').click();
       const publishBtn = page.locator('[data-testid="posting_submit_button"]');
       await publishBtn.waitFor({ state: "visible", timeout: PUBLISH_READY_TIMEOUT_MS });
+      await waitForFinalTextPreview(publishBtn, composerBody, PUBLISH_READY_TIMEOUT_MS);
       await waitForFinalMediaPreview(publishBtn, kind, PUBLISH_READY_TIMEOUT_MS);
       if (!(await publishBtn.isEnabled())) {
         throw new AdapterError(
