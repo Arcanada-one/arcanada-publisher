@@ -1,39 +1,45 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { dispatchMediaDragDrop } from "../../src/browser/media-drag.js";
+import { uploadMediaAfterComposerSettles } from "../../src/browser/media-upload.js";
 
-describe("vk browser — scoped media drag", () => {
-  it("dispatches enter, over, and drop to the exact bounded composer target", async () => {
+describe("vk browser — composer media upload", () => {
+  it("waits for VK callbacks before selecting the validated file once", async () => {
     const dir = mkdtempSync(join(tmpdir(), "vk-drag-"));
     const media = join(dir, "hero.jpg");
     writeFileSync(media, Buffer.from("jpeg"));
-    const send = vi.fn(async () => undefined);
-    const detach = vi.fn(async () => undefined);
+    const order: string[] = [];
     const page = {
-      context: () => ({ newCDPSession: async () => ({ send, detach }) }),
+      waitForTimeout: vi.fn(async () => {
+        order.push("settled");
+      }),
     } as never;
-    const target = {
-      boundingBox: async () => ({ x: 10, y: 20, width: 100, height: 50 }),
+    const input = {
+      setInputFiles: vi.fn(async () => {
+        order.push("selected");
+      }),
     } as never;
 
-    await dispatchMediaDragDrop(page, target, media);
+    await uploadMediaAfterComposerSettles(page, input, media);
 
-    expect(send.mock.calls.map((call) => call[1]?.type)).toEqual(["dragEnter", "dragOver", "drop"]);
-    expect(detach).toHaveBeenCalledOnce();
+    expect(order).toEqual(["settled", "selected"]);
+    expect(page.waitForTimeout).toHaveBeenCalledWith(500);
+    expect(input.setInputFiles).toHaveBeenCalledOnce();
+    expect(input.setInputFiles).toHaveBeenCalledWith(realpathSync(media));
   });
 
-  it("fails closed before dispatch when the target is not bounded", async () => {
+  it("fails closed before selecting an unreadable file", async () => {
     const dir = mkdtempSync(join(tmpdir(), "vk-drag-"));
-    const media = join(dir, "hero.jpg");
-    writeFileSync(media, Buffer.from("jpeg"));
+    const media = join(dir, "missing.jpg");
+    const setInputFiles = vi.fn();
     await expect(
-      dispatchMediaDragDrop(
-        { context: vi.fn() } as never,
-        { boundingBox: async () => null } as never,
+      uploadMediaAfterComposerSettles(
+        { waitForTimeout: vi.fn() } as never,
+        { setInputFiles } as never,
         media,
       ),
-    ).rejects.toMatchObject({ details: { stage: "media_drag_target" } });
+    ).rejects.toMatchObject({ details: { stage: "media_upload_preflight" } });
+    expect(setInputFiles).not.toHaveBeenCalled();
   });
 });

@@ -32,7 +32,7 @@ import { runVkComment, type VkCommentSteps } from "./comment.js";
 import { type SessionState } from "./session-guard.js";
 import { type WallPostSummary } from "./duplicate-guard.js";
 import { WALL_PATH_RE } from "./url-extraction.js";
-import { dispatchMediaDragDrop } from "./media-drag.js";
+import { uploadMediaAfterComposerSettles } from "./media-upload.js";
 
 /** Preview settle ceiling and publish-enabled ceiling (video transcoding). */
 const VIDEO_PREVIEW_TIMEOUT_MS = 120_000;
@@ -274,7 +274,11 @@ function publishSteps(page: Page, kind: "image" | "video"): VkPublishSteps {
 
       const dropZone = page.locator('[data-testid="posting_base_screen_draganddrop"]').first();
       await dropZone.waitFor({ state: "visible", timeout: 15_000 });
-      await dispatchMediaDragDrop(page, dropZone, mediaPath);
+      const fileInput = dropZone
+        .locator('[data-testid="posting_base_screen_download_from_device"]')
+        .first();
+      await fileInput.waitFor({ state: "attached", timeout: 15_000 });
+      await uploadMediaAfterComposerSettles(page, fileInput, mediaPath);
       await page
         .locator('[data-testid="posting_attachment_item"]')
         .first()
