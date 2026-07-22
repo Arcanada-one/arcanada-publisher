@@ -8,6 +8,10 @@ All notable changes to this package are documented here. The format is loosely
 
 ### Fixed
 
+- Facebook image uploads now open the composer `Photo/video` control and
+  satisfy its file chooser. Pre-submit verification uses the rendered
+  attachment control because Facebook clears the backing file input after a
+  successful upload.
 - Facebook first-comment replacement now requires the exact numeric comment id,
   exact parent post, stable header profile-link identity, and complete current
   comment body before delete. Body mentions/links cannot satisfy author proof.
