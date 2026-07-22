@@ -42,6 +42,7 @@
    never success and never a retryable failure.
 4. On UNKNOWN, do **not** re-send blindly. Generic single-post flows reconcile against the pre-publish baseline and idempotency marker. Article bundles reconcile against the baseline and any ordered IDs already returned, then stop for inspection; never invent the missing half of the pair.
 5. For a Telegram article bundle, capture both ordered `message_id` values from exactly two sequential ordinary posts in the same `chat_id`. Post 1 is media plus bold title; post 2 is title plus complete RU text plus the final linked RU CTA. Neither request may contain `reply_to_message_id`, `message_thread_id`, discussion-group, or comment fields. If either state is UNKNOWN, stop without blind retry.
+   5a. When the operator explicitly approves a text-only single-article post, send exactly one ordinary `sendMessage` request with `parse_mode=HTML` and link previews enabled. The complete text must fit the 4096 UTF-16-unit limit, contain no Publisher idempotency marker, and end with the embedded article CTA. `--single-article` forbids `--image` and `--title`; no reply/thread/comment fields are allowed. This exception does not authorize production: the normal test read-back and explicit smoke-to-prod gate still apply.
 
 ### C. Message identity (own vs. foreign)
 
@@ -64,7 +65,7 @@
 11. Prove the video is **our freshly generated file**: `file_size`, `duration`,
     `width`×`height`, `file_name` read from the platform MUST match the file
     actually sent this cycle. A mismatch = "possibly foreign/old video" = FAIL.
-12. For an article bundle, verify the final CTA hidden-link `url` in post 2, verify both posts use the intended `chat.id` (test channel `-1003855619081` on smoke; prod only on go), and verify both responses have no reply/thread linkage.
+12. For an article bundle, verify the final CTA hidden-link `url` in post 2, verify both posts use the intended `chat.id` (test channel `-1003855619081` on smoke; prod only on go), and verify both responses have no reply/thread linkage. For an explicitly approved single-article post, perform the same checks against its sole returned message and verify the API read-back exposes the expected website link preview.
 13. Compare the channel state with the captured baseline and both returned IDs. Pre-existing messages remain foreign to this run and are not deleted by guessed IDs. Any unexpected new message after the baseline is an ambiguity: stop and inspect.
 
 ### E. Reporting & gates (source ≠ result)

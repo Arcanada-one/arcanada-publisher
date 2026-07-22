@@ -149,3 +149,24 @@ describe("cli run — Telegram two-post article dry-run", () => {
     expect(res.message).toContain("part=2");
   });
 });
+
+describe("cli run — Telegram single-article dry-run", () => {
+  it("reports exactly one planned text post", async () => {
+    const res = await run([
+      "publish",
+      "--platform",
+      "telegram",
+      "--chat-id",
+      "-1003855619081",
+      "--text-file",
+      TEXT_279,
+      "--single-article",
+      "--dry-run",
+    ]);
+
+    expect(res.code).toBe(0);
+    expect(res.message).toBe("dry-run result: https://t.me/-1003855619081/0");
+    expect(res.message).not.toContain("part=1");
+    expect(res.message).not.toContain("part=2");
+  });
+});

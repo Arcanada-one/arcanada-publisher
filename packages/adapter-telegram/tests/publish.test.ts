@@ -865,3 +865,111 @@ describe("TelegramAdapter two-post channel contract", () => {
     expect(transport).toHaveBeenCalledTimes(4);
   });
 });
+
+describe("TelegramAdapter single-article channel contract", () => {
+  const html =
+    '<b>Plugin for Chrome</b>\n\nFull article body\n\n<a href="https://arcanada.ai/ru/blog/chatgpt-codex-conversation-export">Статья и исходный код</a>';
+  const visible = "Plugin for Chrome\n\nFull article body\n\nСтатья и исходный код";
+
+  it("publishes exactly one clean HTML message with link previews enabled", async () => {
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, result: { id: 42 } })
+      .mockResolvedValueOnce({ ok: true, result: [] })
+      .mockImplementationOnce(async (method: string, body: URLSearchParams) => {
+        expect(method).toBe("sendMessage");
+        expect(body.get("chat_id")).toBe(TELEGRAM_TEST_CHAT_ID);
+        expect(body.get("text")).toBe(html);
+        expect(body.get("parse_mode")).toBe("HTML");
+        expect(JSON.parse(String(body.get("link_preview_options")))).toEqual({
+          is_disabled: false,
+        });
+        expect(body.get("text")).not.toContain("#PUB_0029");
+        for (const key of ["reply_to_message_id", "reply_parameters", "message_thread_id"])
+          expect(body.has(key)).toBe(false);
+        return {
+          ok: true,
+          result: {
+            message_id: 8,
+            chat: { id: Number(TELEGRAM_TEST_CHAT_ID), username: "test" },
+            sender_chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
+            text: visible,
+          },
+        };
+      });
+    const adapter = new TelegramAdapter({ transport, nonce: () => "must-not-be-used" });
+
+    const result = await adapter.publish({
+      text: html,
+      singleArticle: true,
+      profile: "",
+      chatId: TELEGRAM_TEST_CHAT_ID,
+    });
+
+    expect(result.postUrl).toBe("https://t.me/test/8");
+    expect(result.postUrls).toBeUndefined();
+    expect(result.attachments).toEqual([]);
+    expect(transport).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    { field: "title", input: { title: "Duplicate title" } },
+    { field: "image", input: { imagePaths: ["hero.jpg"] } },
+  ])("rejects a $field in single-article mode", async ({ input }) => {
+    const adapter = new TelegramAdapter({ transport: vi.fn() });
+    await expect(
+      adapter.publish({
+        text: html,
+        singleArticle: true,
+        profile: "",
+        chatId: TELEGRAM_TEST_CHAT_ID,
+        ...input,
+      }),
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
+  });
+
+  it("rejects content above Telegram's 4096 UTF-16-unit message limit", async () => {
+    const adapter = new TelegramAdapter({ transport: vi.fn() });
+    await expect(
+      adapter.publish({
+        text: "😀".repeat(2_049),
+        singleArticle: true,
+        profile: "",
+        chatId: TELEGRAM_TEST_CHAT_ID,
+      }),
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
+  });
+
+  it.each([
+    {
+      name: "reply",
+      linkage: { reply_to_message: { message_id: 7, chat: { id: Number(TELEGRAM_TEST_CHAT_ID) } } },
+    },
+    { name: "thread", linkage: { message_thread_id: 9 } },
+  ])("rejects unexpected $name linkage in returned read-back", async ({ linkage }) => {
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, result: { id: 42 } })
+      .mockResolvedValueOnce({ ok: true, result: [] })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: {
+          message_id: 8,
+          chat: { id: Number(TELEGRAM_TEST_CHAT_ID), username: "test" },
+          from: { id: 42 },
+          text: visible,
+          ...linkage,
+        },
+      });
+    const adapter = new TelegramAdapter({ transport });
+
+    await expect(
+      adapter.publish({
+        text: html,
+        singleArticle: true,
+        profile: "",
+        chatId: TELEGRAM_TEST_CHAT_ID,
+      }),
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+  });
+});
