@@ -247,10 +247,20 @@ const defaultSteps: PublishStepRecorder = {
   },
 
   async uploadImages(page: Page, imagePaths: string[]): Promise<void> {
-    const fileInput = page.locator('input[type="file"]').first();
-    await fileInput.setInputFiles(imagePaths);
+    // Facebook now clears the backing file input immediately after accepting
+    // the upload. Open the composer media control and satisfy the resulting
+    // file chooser instead of targeting the first (often feed-level) input.
+    const mediaButton = page.getByRole("button", { name: /^(?:Photo\/video|Фото\/видео)$/ }).last();
+    const [chooser] = await Promise.all([page.waitForEvent("filechooser"), mediaButton.click()]);
+    await chooser.setFiles(imagePaths);
     // R8/R11: wait for the composer to re-render around the media layer.
     await page.waitForTimeout(IMAGE_RERENDER_SETTLE_MS);
+    await page
+      .getByRole("button", {
+        name: /^(?:Remove attachment from your post|Удалить вложение из публикации)$/,
+      })
+      .first()
+      .waitFor({ state: "visible", timeout: 10_000 });
   },
 
   async typeBody(page: Page, text: string): Promise<void> {
@@ -269,14 +279,20 @@ const defaultSteps: PublishStepRecorder = {
       .innerText()
       .catch(() => "");
     const normalizedBody = normalizeFacebookText(composerText);
-    const attachments = await page
-      .locator('input[type="file"]')
-      .first()
-      .evaluate((input) => {
-        const files = (input as unknown as { files?: ArrayLike<{ name: string; size: number }> })
-          .files;
-        return files ? Array.from(files).map((file) => ({ name: file.name, size: file.size })) : [];
-      });
+    // The upload input is ephemeral and is empty after Facebook accepts the
+    // file. The stable pre-submit oracle is the composer's visible attachment
+    // removal control. Preserve the metadata contract only when every expected
+    // image has a corresponding rendered attachment.
+    const renderedAttachmentCount = await page
+      .getByRole("button", {
+        name: /^(?:Remove attachment from your post|Удалить вложение из публикации)$/,
+      })
+      .count();
+    const imagePaths = collectImagePaths(_input);
+    const attachments =
+      renderedAttachmentCount === imagePaths.length
+        ? imagePaths.map((path) => ({ name: basename(path), size: statSync(path).size }))
+        : [];
     return { normalizedBody, attachments };
   },
 
