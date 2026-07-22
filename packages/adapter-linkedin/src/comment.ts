@@ -207,6 +207,13 @@ interface RenderedCommentMatch {
   id: string;
 }
 
+export const commentContainerSelector =
+  "[data-id^='urn:li:comment'], .comments-comment-item, [class*='comments-comment-item'], [data-testid='expandable-text-box']";
+
+export function normalizeRenderedCommentText(value: string): string {
+  return value.replace(/\n\s*(?:…|\.\.\.)\s*more\s*$/i, "").trim();
+}
+
 async function waitForExactComment(page: Page, text: string): Promise<RenderedCommentMatch> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const matches = await readExactCommentMatches(page, text);
@@ -220,11 +227,11 @@ async function waitForExactComment(page: Page, text: string): Promise<RenderedCo
   );
 }
 
-async function readExactCommentMatches(
+export async function readExactCommentMatches(
   page: Page,
   expectedText: string,
 ): Promise<RenderedCommentMatch[]> {
-  return page.evaluate((expected) => {
+  return page.evaluate(({ expected, containerSelector, normalizerSource }) => {
     interface BrowserElement {
       innerText: string;
       closest(selector: string): BrowserElement | null;
@@ -236,10 +243,11 @@ async function readExactCommentMatches(
         document: { querySelectorAll(selector: string): ArrayLike<BrowserElement> };
       }
     ).document;
+    const normalize = new Function(`return (${normalizerSource})`)() as (
+      value: string,
+    ) => string;
     const containers = Array.from(
-      browserDocument.querySelectorAll(
-        "[data-id^='urn:li:comment'], .comments-comment-item, [class*='comments-comment-item']",
-      ),
+      browserDocument.querySelectorAll(containerSelector),
     );
     const seen = new Set<BrowserElement>();
     const matches: Array<{ text: string; id: string }> = [];
@@ -254,13 +262,17 @@ async function readExactCommentMatches(
           ),
         ),
       ];
-      if (!bodies.some((body) => body.innerText === expected)) continue;
+      if (!bodies.some((body) => normalize(body.innerText) === expected)) continue;
       const raw = container.closest("[data-id^='urn:li:comment']")?.getAttribute("data-id") ?? "";
       const id = /urn:li:comment:\(.*?,(\d+)\)/.exec(raw)?.[1] ?? "";
       matches.push({ text: expected, id });
     }
     return matches;
-  }, expectedText);
+  }, {
+    expected: expectedText,
+    containerSelector: commentContainerSelector,
+    normalizerSource: normalizeRenderedCommentText.toString(),
+  });
 }
 
 function verifiedEvidenceId(activityId: string, text: string): string {

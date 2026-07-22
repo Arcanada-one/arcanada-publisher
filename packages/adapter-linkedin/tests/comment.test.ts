@@ -76,6 +76,17 @@ describe("comment — parent verify round-trip", () => {
 describe("comment — TipTap submit and exact post verification", () => {
   const text = "Exact first comment\nhttps://example.com/article";
 
+  it("recognizes the live hashed comment body and removes LinkedIn's collapsed suffix", async () => {
+    const module = (await import("../src/comment.js")) as unknown as {
+      commentContainerSelector?: string;
+      normalizeRenderedCommentText?: (value: string) => string;
+    };
+    expect(module.commentContainerSelector ?? "").toContain(
+      "[data-testid='expandable-text-box']",
+    );
+    expect(module.normalizeRenderedCommentText?.(`${text}\n\n… more`)).toBe(text);
+  });
+
   it("submits the Finnish TipTap composer without requiring an ancestor form", async () => {
     const harness = makeCommentPage({
       mode: "tiptap",
@@ -276,15 +287,19 @@ function makeCommentPage(options: CommentPageOptions): {
     },
     keyboard: { insertText: vi.fn(async () => {}), press: keyboardPress },
     waitForTimeout: vi.fn(async () => {}),
-    evaluate: vi.fn(async (source: unknown, expected?: string) => {
+    evaluate: vi.fn(
+      async (source: unknown, expectedArg?: string | { expected: string }) => {
       if (typeof source === "string") {
         return submitted ? (options.legacyExtractedId ?? options.postMatches?.[0]?.id ?? "") : "";
       }
+      const expected =
+        typeof expectedArg === "string" ? expectedArg : (expectedArg?.expected ?? "");
       const matches = submitted
         ? (options.postMatches ?? [])
         : (options.preSubmitSnapshots?.[preSubmitRead++] ?? options.baselineMatches ?? []);
       return matches.filter((match) => match.text === expected);
-    }),
+      },
+    ),
     isClosed: vi.fn(() => true),
   };
   return {
