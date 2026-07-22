@@ -32,6 +32,7 @@ import { runVkComment, type VkCommentSteps } from "./comment.js";
 import { type SessionState } from "./session-guard.js";
 import { type WallPostSummary } from "./duplicate-guard.js";
 import { WALL_PATH_RE } from "./url-extraction.js";
+import { dispatchMediaDragDrop } from "./media-drag.js";
 
 /** Preview settle ceiling and publish-enabled ceiling (video transcoding). */
 const VIDEO_PREVIEW_TIMEOUT_MS = 120_000;
@@ -271,13 +272,9 @@ function publishSteps(page: Page, kind: "image" | "video"): VkPublishSteps {
       await resolveSavedDraft(page, process.env.VK_DISCARD_SAVED_DRAFT === "1");
       await composerTitle.waitFor({ state: "visible", timeout: 15_000 });
 
-      const fileInput = page.locator('[data-testid="posting_base_screen_download_from_device"]');
-      // VK now ignores direct setInputFiles on the hidden React input. Trigger
-      // the visible label and satisfy the resulting native chooser so the
-      // composer owns the upload event.
-      const uploadLabel = fileInput.locator("xpath=ancestor::label").first();
-      const [chooser] = await Promise.all([page.waitForEvent("filechooser"), uploadLabel.click()]);
-      await chooser.setFiles(mediaPath);
+      const dropZone = page.locator('[data-testid="posting_base_screen_draganddrop"]').first();
+      await dropZone.waitFor({ state: "visible", timeout: 15_000 });
+      await dispatchMediaDragDrop(page, dropZone, mediaPath);
       await page
         .locator('[data-testid="posting_attachment_item"]')
         .first()
