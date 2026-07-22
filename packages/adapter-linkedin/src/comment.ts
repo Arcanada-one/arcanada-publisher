@@ -231,48 +231,47 @@ export async function readExactCommentMatches(
   page: Page,
   expectedText: string,
 ): Promise<RenderedCommentMatch[]> {
-  return page.evaluate(({ expected, containerSelector, normalizerSource }) => {
-    interface BrowserElement {
-      innerText: string;
-      closest(selector: string): BrowserElement | null;
-      getAttribute(name: string): string | null;
-      querySelectorAll(selector: string): ArrayLike<BrowserElement>;
-    }
-    const browserDocument = (
-      globalThis as unknown as {
-        document: { querySelectorAll(selector: string): ArrayLike<BrowserElement> };
+  return page.evaluate(
+    ({ expected, containerSelector, normalizerSource }) => {
+      interface BrowserElement {
+        innerText: string;
+        closest(selector: string): BrowserElement | null;
+        getAttribute(name: string): string | null;
+        querySelectorAll(selector: string): ArrayLike<BrowserElement>;
       }
-    ).document;
-    const normalize = new Function(`return (${normalizerSource})`)() as (
-      value: string,
-    ) => string;
-    const containers = Array.from(
-      browserDocument.querySelectorAll(containerSelector),
-    );
-    const seen = new Set<BrowserElement>();
-    const matches: Array<{ text: string; id: string }> = [];
-    for (const container of containers) {
-      if (seen.has(container)) continue;
-      seen.add(container);
-      const bodies = [
-        container,
-        ...Array.from(
-          container.querySelectorAll(
-            ".comments-comment-item__main-content, .comments-comment-item-content-body, .update-components-text, [data-testid='comment-content'], span[dir='ltr'], p",
+      const browserDocument = (
+        globalThis as unknown as {
+          document: { querySelectorAll(selector: string): ArrayLike<BrowserElement> };
+        }
+      ).document;
+      const normalize = new Function(`return (${normalizerSource})`)() as (value: string) => string;
+      const containers = Array.from(browserDocument.querySelectorAll(containerSelector));
+      const seen = new Set<BrowserElement>();
+      const matches: Array<{ text: string; id: string }> = [];
+      for (const container of containers) {
+        if (seen.has(container)) continue;
+        seen.add(container);
+        const bodies = [
+          container,
+          ...Array.from(
+            container.querySelectorAll(
+              ".comments-comment-item__main-content, .comments-comment-item-content-body, .update-components-text, [data-testid='comment-content'], span[dir='ltr'], p",
+            ),
           ),
-        ),
-      ];
-      if (!bodies.some((body) => normalize(body.innerText) === expected)) continue;
-      const raw = container.closest("[data-id^='urn:li:comment']")?.getAttribute("data-id") ?? "";
-      const id = /urn:li:comment:\(.*?,(\d+)\)/.exec(raw)?.[1] ?? "";
-      matches.push({ text: expected, id });
-    }
-    return matches;
-  }, {
-    expected: expectedText,
-    containerSelector: commentContainerSelector,
-    normalizerSource: normalizeRenderedCommentText.toString(),
-  });
+        ];
+        if (!bodies.some((body) => normalize(body.innerText) === expected)) continue;
+        const raw = container.closest("[data-id^='urn:li:comment']")?.getAttribute("data-id") ?? "";
+        const id = /urn:li:comment:\(.*?,(\d+)\)/.exec(raw)?.[1] ?? "";
+        matches.push({ text: expected, id });
+      }
+      return matches;
+    },
+    {
+      expected: expectedText,
+      containerSelector: commentContainerSelector,
+      normalizerSource: normalizeRenderedCommentText.toString(),
+    },
+  );
 }
 
 function verifiedEvidenceId(activityId: string, text: string): string {

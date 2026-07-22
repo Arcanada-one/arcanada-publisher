@@ -81,9 +81,7 @@ describe("comment — TipTap submit and exact post verification", () => {
       commentContainerSelector?: string;
       normalizeRenderedCommentText?: (value: string) => string;
     };
-    expect(module.commentContainerSelector ?? "").toContain(
-      "[data-testid='expandable-text-box']",
-    );
+    expect(module.commentContainerSelector ?? "").toContain("[data-testid='expandable-text-box']");
     expect(module.normalizeRenderedCommentText?.(`${text}\n\n… more`)).toBe(text);
   });
 
@@ -287,8 +285,7 @@ function makeCommentPage(options: CommentPageOptions): {
     },
     keyboard: { insertText: vi.fn(async () => {}), press: keyboardPress },
     waitForTimeout: vi.fn(async () => {}),
-    evaluate: vi.fn(
-      async (source: unknown, expectedArg?: string | { expected: string }) => {
+    evaluate: vi.fn(async (source: unknown, expectedArg?: string | { expected: string }) => {
       if (typeof source === "string") {
         return submitted ? (options.legacyExtractedId ?? options.postMatches?.[0]?.id ?? "") : "";
       }
@@ -298,8 +295,7 @@ function makeCommentPage(options: CommentPageOptions): {
         ? (options.postMatches ?? [])
         : (options.preSubmitSnapshots?.[preSubmitRead++] ?? options.baselineMatches ?? []);
       return matches.filter((match) => match.text === expected);
-      },
-    ),
+    }),
     isClosed: vi.fn(() => true),
   };
   return {
