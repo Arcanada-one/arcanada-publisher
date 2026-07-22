@@ -941,7 +941,10 @@ describe("TelegramAdapter single-article channel contract", () => {
   });
 
   it.each([
-    { name: "reply", linkage: { reply_to_message: { message_id: 7, chat: { id: Number(TELEGRAM_TEST_CHAT_ID) } } } },
+    {
+      name: "reply",
+      linkage: { reply_to_message: { message_id: 7, chat: { id: Number(TELEGRAM_TEST_CHAT_ID) } } },
+    },
     { name: "thread", linkage: { message_thread_id: 9 } },
   ])("rejects unexpected $name linkage in returned read-back", async ({ linkage }) => {
     const transport = vi
