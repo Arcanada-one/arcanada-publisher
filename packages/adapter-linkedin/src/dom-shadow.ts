@@ -125,14 +125,20 @@ export function scopedMediaAttachmentCountJs(expectedBasename: string): string {
     if(scopes.size!==1) return 0;
     var nodes=new Set(); collectDeep(Array.from(scopes)[0], nodes);
     var expected=${JSON.stringify(expectedBasename)};
-    var hasVideo=false, hasExactName=false;
+    var hasVideo=false, hasImagePreview=false, hasExactName=false;
     nodes.forEach(function(node){
-      if((node.tagName||'').toLowerCase()==='video') hasVideo=true;
+      var tag=(node.tagName||node.tag||'').toLowerCase();
+      if(tag==='video') hasVideo=true;
+      if(tag==='img'){
+        var src=(node.getAttribute&&node.getAttribute('src'))||node.currentSrc||node.src||'';
+        var cls=(node.getAttribute&&node.getAttribute('class'))||'';
+        if(/^blob:/i.test(src)||/media|share-image|image-preview/i.test(src+' '+cls)) hasImagePreview=true;
+      }
       var text=(node.textContent||node.innerText||'').trim();
       var lines=text.split(/\\r?\\n/).map(function(line){ return line.trim(); });
       if(lines.indexOf(expected)!==-1) hasExactName=true;
     });
-    return hasVideo||hasExactName ? 1 : 0;
+    return hasVideo||hasImagePreview||hasExactName ? 1 : 0;
   })()`;
 }
 
