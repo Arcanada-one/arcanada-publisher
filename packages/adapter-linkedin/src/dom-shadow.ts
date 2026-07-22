@@ -132,7 +132,11 @@ export function scopedMediaAttachmentCountJs(expectedBasename: string): string {
       if(tag==='img'){
         var src=(node.getAttribute&&node.getAttribute('src'))||node.currentSrc||node.src||'';
         var cls=(node.getAttribute&&node.getAttribute('class'))||'';
-        if(/^blob:/i.test(src)||/media|share-image|image-preview/i.test(src+' '+cls)) hasImagePreview=true;
+        if(
+          /^blob:/i.test(src)||
+          (src.toLowerCase().indexOf('data:image/')===0&&/update-components-image__image/i.test(cls))||
+          /media|share-image|image-preview/i.test(src+' '+cls)
+        ) hasImagePreview=true;
       }
       var text=(node.textContent||node.innerText||'').trim();
       var lines=text.split(/\\r?\\n/).map(function(line){ return line.trim(); });

@@ -28,6 +28,13 @@ function makeVideo(): string {
   return file;
 }
 
+function makeImage(): string {
+  const dir = mkdtempSync(join(tmpdir(), "pub-linkedin-image-"));
+  const file = join(dir, "cover.jpg");
+  writeFileSync(file, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+  return file;
+}
+
 const ACTIVITY_URL = "https://www.linkedin.com/feed/update/urn:li:activity:7462962260978642944/";
 
 /**
@@ -207,16 +214,34 @@ describe("publish — PUB-0031 fail-closed post-publish video verify", () => {
     ).rejects.toMatchObject({ code: ErrorCode.MISSING_INPUT });
   });
 
-  it("abortAfterMedia rejects image smoke until scoped image detection exists", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "li-image-smoke-"));
-    const image = join(dir, "cover.png");
-    writeFileSync(image, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-    await expect(
-      publish(
-        { text: "unused", imagePath: image, profile: "p1" },
-        { profileManager: makeProfiles(), page: fakeVideoPublishPage(), abortAfterMedia: true },
-      ),
-    ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
+  it("uses the scoped CDP fallback for an image when clipboard paste has no preview", async () => {
+    const image = makeImage();
+    const page = fakeVideoPublishPage() as unknown as {
+      evaluate(source: string | ((...args: never[]) => unknown)): Promise<unknown>;
+    };
+    let dragged = false;
+    const originalEvaluate = page.evaluate.bind(page);
+    page.evaluate = async (source) => {
+      if (
+        typeof source === "string" &&
+        (source.includes("scopeSel") || source.includes("var expected="))
+      ) {
+        return dragged ? 1 : 0;
+      }
+      return originalEvaluate(source);
+    };
+    const result = await publish(
+      { text: "unused", imagePath: image, profile: "p1" },
+      {
+        profileManager: makeProfiles(),
+        page: page as never,
+        abortAfterMedia: true,
+        __dispatchVideoDragDrop: async () => {
+          dragged = true;
+        },
+      },
+    );
+    expect(result).toMatchObject({ aborted: true, mediaAttached: true });
   });
 
   it("abortAfterMedia returns before text insertion or Post", async () => {

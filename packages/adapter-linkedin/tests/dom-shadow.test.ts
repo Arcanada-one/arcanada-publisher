@@ -26,6 +26,7 @@ function el(opts: {
   ariaDisabled?: boolean;
   dataUrn?: string;
   src?: string;
+  className?: string;
   children?: FakeEl[];
   shadow?: FakeEl[];
   clicks?: { n: number };
@@ -43,6 +44,7 @@ interface ElOpts {
   ariaDisabled?: boolean;
   dataUrn?: string;
   src?: string;
+  className?: string;
   children?: FakeEl[];
   shadow?: FakeEl[];
   clicks?: { n: number };
@@ -59,6 +61,7 @@ class FakeEl {
   ariaDisabled: boolean;
   dataUrn?: string;
   src?: string;
+  className?: string;
   children: FakeEl[];
   shadowRoot: FakeRoot | null;
   clicks: { n: number };
@@ -75,6 +78,7 @@ class FakeEl {
     this.ariaDisabled = o.ariaDisabled ?? false;
     this.dataUrn = o.dataUrn;
     this.src = o.src;
+    this.className = o.className;
     this.children = o.children ?? [];
     this.shadowRoot = o.shadow ? new FakeRoot(o.shadow) : null;
     this.clicks = o.clicks ?? { n: 0 };
@@ -86,7 +90,7 @@ class FakeEl {
     if (name === "data-urn") return this.dataUrn ?? null;
     if (name === "data-id") return null;
     if (name === "src") return this.src ?? null;
-    if (name === "class") return null;
+    if (name === "class") return this.className ?? null;
     return null;
   }
 
@@ -348,6 +352,22 @@ describe("dom-shadow — scopedMediaAttachmentCountJs", () => {
 
   it("accepts a blob-backed image preview only inside the marked composer", () => {
     const preview = el({ tag: "img", src: "blob:https://www.linkedin.com/hero" });
+    const scope = el({
+      tag: "div",
+      text: "scope:[data-arcanada-publish-composer='true']",
+      children: [preview],
+    });
+    expect(run(scopedMediaAttachmentCountJs("hero.jpg"), [scope])).toBe(1);
+    expect(run(scopedMediaAttachmentCountJs("hero.jpg"), [preview])).toBe(0);
+  });
+
+  it("accepts LinkedIn's live data-URL image preview class inside the marked composer", () => {
+    const preview = el({
+      tag: "img",
+      src: "data:image/jpeg;base64,/9j/2wBDAA",
+      className:
+        "ivm-view-attr__img update-components-image__image evi-image lazy-image ember-view",
+    });
     const scope = el({
       tag: "div",
       text: "scope:[data-arcanada-publish-composer='true']",
