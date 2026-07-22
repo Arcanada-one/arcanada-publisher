@@ -250,13 +250,8 @@ const defaultSteps: PublishStepRecorder = {
     // Facebook now clears the backing file input immediately after accepting
     // the upload. Open the composer media control and satisfy the resulting
     // file chooser instead of targeting the first (often feed-level) input.
-    const mediaButton = page
-      .getByRole("button", { name: /^(?:Photo\/video|Фото\/видео)$/ })
-      .last();
-    const [chooser] = await Promise.all([
-      page.waitForEvent("filechooser"),
-      mediaButton.click(),
-    ]);
+    const mediaButton = page.getByRole("button", { name: /^(?:Photo\/video|Фото\/видео)$/ }).last();
+    const [chooser] = await Promise.all([page.waitForEvent("filechooser"), mediaButton.click()]);
     await chooser.setFiles(imagePaths);
     // R8/R11: wait for the composer to re-render around the media layer.
     await page.waitForTimeout(IMAGE_RERENDER_SETTLE_MS);
