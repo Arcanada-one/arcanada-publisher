@@ -75,6 +75,8 @@ export interface ParsedArgs {
   ownerId: number | undefined;
   /** Telegram-specific: target chat/channel id or @username. */
   chatId: string | undefined;
+  /** Telegram-specific: clean one-message HTML article mode. */
+  singleArticle: boolean;
   /** YouTube-specific: path to the video file to upload. */
   videoPath: string | undefined;
   /** YouTube-specific: content language ('en' | 'ru') driving playlist routing. */
@@ -173,6 +175,7 @@ const BOOL_FLAGS = new Set([
   "--premium",
   "--headed",
   "--browser",
+  "--single-article",
   "--no-waveform",
 ]);
 
@@ -214,6 +217,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     title: undefined,
     ownerId: undefined,
     chatId: undefined,
+    singleArticle: false,
     videoPath: undefined,
     language: undefined,
     privacy: undefined,
@@ -253,6 +257,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
     if (flag === "--browser") {
       out.browser = true;
+      continue;
+    }
+    if (flag === "--single-article") {
+      out.singleArticle = true;
       continue;
     }
     if (flag === "--no-waveform") {

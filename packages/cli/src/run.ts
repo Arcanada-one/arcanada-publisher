@@ -346,6 +346,7 @@ async function runPublish(
     ...(args.title !== undefined ? { title: args.title } : {}),
     ...(args.ownerId !== undefined ? { ownerId: args.ownerId } : {}),
     ...(args.chatId !== undefined ? { chatId: args.chatId } : {}),
+    ...(args.singleArticle ? { singleArticle: true } : {}),
     ...(args.videoPath !== undefined ? { videoPath: args.videoPath } : {}),
     ...(args.language !== undefined ? { language: args.language } : {}),
     ...(args.privacy !== undefined

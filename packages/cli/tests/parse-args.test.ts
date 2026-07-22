@@ -17,6 +17,21 @@ describe("cli parse-args (V-AC-11 flag contract)", () => {
     expect(on.premium).toBe(true);
   });
 
+  it("parses Telegram --single-article as an explicit boolean publish mode", () => {
+    const off = parseArgs(["publish", "--platform", "telegram", "--text-file", "article.html"]);
+    expect(off.singleArticle).toBe(false);
+
+    const on = parseArgs([
+      "publish",
+      "--platform",
+      "telegram",
+      "--text-file",
+      "article.html",
+      "--single-article",
+    ]);
+    expect(on.singleArticle).toBe(true);
+  });
+
   it("PUB-0033: --headed defaults to false and flips to true when present", () => {
     const off = parseArgs(["publish", "--platform", "x", "--text-file", "f"]);
     expect(off.headed).toBe(false);

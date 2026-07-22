@@ -23,6 +23,8 @@ export interface PublishInput {
   ownerId?: number;
   /** Telegram target chat/channel id or @username. */
   chatId?: string;
+  /** Telegram-specific clean one-message HTML article mode (no attachment or service marker). */
+  singleArticle?: boolean;
   /**
    * PUB-0033: opt-in X Premium long-form mode. When true, the X adapter gates
    * the body on the 25 000 UTF-16-unit Premium ceiling instead of the free-tier

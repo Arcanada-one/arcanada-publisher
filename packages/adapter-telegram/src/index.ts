@@ -77,6 +77,17 @@ export class TelegramAdapter extends BaseAdapter {
     const media = input.imagePaths?.[0] ?? input.imagePath;
     const kind = media ? mediaKind(media) : undefined;
     const title = input.title?.trim();
+    const singleArticle = input.singleArticle === true;
+    if (singleArticle && (media || title))
+      throw new AdapterError(
+        ErrorCode.INVALID_ARGS,
+        "telegram: --single-article forbids --image and --title",
+      );
+    if (singleArticle && telegramUnits(text) > TELEGRAM_MESSAGE_LIMIT)
+      throw new AdapterError(
+        ErrorCode.INVALID_ARGS,
+        "telegram: single article text exceeds 4096 UTF-16 units",
+      );
     if (title && !media)
       throw new AdapterError(
         ErrorCode.INVALID_ARGS,
@@ -123,6 +134,33 @@ export class TelegramAdapter extends BaseAdapter {
       );
     const bot = requireResult<{ id: number }>(await this.transport("getMe", undefined), "getMe");
     const baseline = await this.baseline(chatId);
+
+    if (singleArticle) {
+      const body = jsonBody({
+        chat_id: chatId,
+        text,
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: false },
+      });
+      const message = requireMessage(await this.transport("sendMessage", body), "sendMessage");
+      await this.assertReadBack(
+        message,
+        chatId,
+        baseline,
+        bot.id,
+        telegramVisibleText(text),
+        undefined,
+        true,
+      );
+      return PublishResultSchema.parse({
+        ok: true,
+        platform: "telegram",
+        account: chatId,
+        postUrl: messageUrl(message),
+        attachments: [],
+        commentIds: [],
+      });
+    }
 
     if (articleBundle) {
       const bytes = await readFile(media!);

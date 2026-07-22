@@ -16,6 +16,10 @@ reference post (article A6, `@valentovtypes` msg 166/167). Reproduce this shape
 exactly — do not improvise from memory. Before publishing, `forwardMessage` the
 previous cycle post into the test channel and copy its structure.
 
+### Operator-approved text-only exception
+
+When the operator explicitly requests one post without an uploaded image or video, Publisher may use `--single-article`. This sends the complete article as one HTML text message (maximum 4096 UTF-16 units) and lets Telegram build the visual card from the final embedded arcanada.ai link. The post contains no Publisher marker, attachment, reply, thread, or comment. This exception changes only the message shape; test-channel read-back and separate production approval remain mandatory.
+
 **Message 1 — video + caption teaser:**
 
 - Animated-cover video (`dev-tools/video/make-cycle-video.sh`, length = the
