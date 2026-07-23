@@ -9,6 +9,8 @@ export default [
       "**/node_modules/**",
       "**/*.tsbuildinfo",
       "coverage/**",
+      // Vendored third-party subtree (ARCA-0191) — hash-pinned, not linted.
+      "packages/video-shotcraft/vendor/**",
     ],
   },
   {

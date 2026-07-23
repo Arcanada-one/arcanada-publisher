@@ -81,6 +81,19 @@ export interface ParsedArgs {
    * (e.g. "0xFFD24C,0xE03B5A"). Default undefined → gold→crimson house style.
    */
   waveformColors: string | undefined;
+  // ---- shotcraft engine flags (ARCA-0191) ----
+  /** `video` subcommand: render engine — "cycle" (ffmpeg, default) | "shotcraft" (Remotion). */
+  engine: "cycle" | "shotcraft";
+  /** `video --engine shotcraft`: product screenshot path(s); repeatable → assets[]. */
+  assets: string[];
+  /** `video --engine shotcraft`: template id (default + only validated: "ink-press"). */
+  template: string | undefined;
+  /** `video --engine shotcraft`: explicit shot-card designation(s); repeatable → shots[]. */
+  shots: string[];
+  /** `video --engine shotcraft`: optional Chromium executable override. */
+  browserExecutable: string | undefined;
+  /** `video --engine shotcraft`: output format id (default + only validated: "landscape"). */
+  format: string | undefined;
 }
 
 /** Flags that take a value; everything else is a boolean switch. */
@@ -108,6 +121,13 @@ const VALUE_FLAGS = new Set([
   "--max-bitrate",
   "--waveform-height",
   "--waveform-colors",
+  // shotcraft engine flags (ARCA-0191)
+  "--engine",
+  "--asset",
+  "--template",
+  "--shot",
+  "--browser-executable",
+  "--format",
 ]);
 
 const BOOL_FLAGS = new Set([
@@ -157,6 +177,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
     noWaveform: false,
     waveformHeight: undefined,
     waveformColors: undefined,
+    engine: "cycle",
+    assets: [],
+    template: undefined,
+    shots: [],
+    browserExecutable: undefined,
+    format: undefined,
   };
 
   for (let i = 0; i < rest.length; i++) {
@@ -299,6 +325,28 @@ export function parseArgs(argv: string[]): ParsedArgs {
         out.waveformColors = value;
         break;
       }
+      // shotcraft engine flags (ARCA-0191)
+      case "--engine":
+        if (value !== "cycle" && value !== "shotcraft") {
+          throw new CliParseError(`--engine must be 'cycle' or 'shotcraft', got '${value}'`);
+        }
+        out.engine = value;
+        break;
+      case "--asset":
+        out.assets.push(value);
+        break;
+      case "--template":
+        out.template = value;
+        break;
+      case "--shot":
+        out.shots.push(value);
+        break;
+      case "--browser-executable":
+        out.browserExecutable = value;
+        break;
+      case "--format":
+        out.format = value;
+        break;
     }
   }
 

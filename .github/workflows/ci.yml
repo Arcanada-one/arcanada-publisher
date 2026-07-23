@@ -69,6 +69,32 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit --prod --audit-level=high
 
+  footprint:
+    name: Footprint + supply-chain gates (ARCA-0191)
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - uses: actions/checkout@v4
+      # These gates are pure grep + bash over the checked-in source tree — no
+      # install needed, so node_modules is absent and the greps stay clean.
+      - name: V-AC-5 — footprint isolation (core + adapters carry no remotion/react)
+        run: |
+          if grep -REl --include=package.json --exclude-dir=node_modules \
+               'remotion|@remotion|"react"' packages/core packages/adapter-*; then
+            echo "FAIL: remotion/@remotion/react leaked into core or an adapter package.json" >&2
+            exit 1
+          fi
+          echo "V-AC-5: OK — 0 remotion/react deps in core + adapters"
+      - name: V-AC-6 — no shell-string interpolation / curl|bash in the shotcraft engine
+        run: |
+          if grep -REn 'shell:[[:space:]]*true|execSync|curl.*\|[[:space:]]*(bash|sh)' \
+               packages/video-shotcraft/src; then
+            echo "FAIL: shell-string interpolation or curl|bash in shotcraft src" >&2
+            exit 1
+          fi
+          echo "V-AC-6: OK — 0 shell-interp / curl|bash matches"
+      - name: V-AC-6 — vendored subtree matches the supply-chain pin
+        run: bash dev-tools/verify-vendor.sh
+
   shell:
     name: Shell (shellcheck + bats)
     runs-on: [self-hosted, Linux, X64]

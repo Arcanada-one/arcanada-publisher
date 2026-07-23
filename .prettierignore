@@ -3,3 +3,5 @@
 pnpm-lock.yaml
 *.tsbuildinfo
 coverage/
+# Vendored third-party subtree (ARCA-0191) — hash-pinned, not our code style.
+packages/video-shotcraft/vendor/**
