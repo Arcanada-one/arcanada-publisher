@@ -204,7 +204,12 @@ export class TelegramAdapter extends BaseAdapter {
         videoMetadata,
       );
 
-      const textBody = jsonBody({ chat_id: chatId, text, parse_mode: "HTML" });
+      const textBody = jsonBody({
+        chat_id: chatId,
+        text,
+        parse_mode: "HTML",
+        reply_parameters: { message_id: first.message_id },
+      });
       let second: TelegramMessage;
       try {
         second = requireMessage(await this.transport("sendMessage", textBody), "sendMessage");
@@ -227,8 +232,16 @@ export class TelegramAdapter extends BaseAdapter {
         bot.id,
         telegramVisibleText(text),
         undefined,
-        true,
       );
+      if (
+        second.reply_to_message?.message_id !== first.message_id ||
+        second.reply_to_message.chat.id !== first.chat.id
+      )
+        throw new AdapterError(
+          ErrorCode.VERIFY_FAILED,
+          "telegram: second channel post is not linked to the captured media post",
+          { firstMessageId: first.message_id, secondMessageId: second.message_id },
+        );
       const postUrls = [messageUrl(first), messageUrl(second)];
       return PublishResultSchema.parse({
         ok: true,

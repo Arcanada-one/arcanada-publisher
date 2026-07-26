@@ -905,7 +905,7 @@ function removeOneTerminalLineEnding(text: string): string {
 }
 
 describe("TelegramAdapter two-post channel contract", () => {
-  it("publishes and reads back two ordered ordinary channel posts without reply fields", async () => {
+  it("publishes the longread as a verified reply to the captured media post", async () => {
     const media = makeMedia("hero.mp4");
     const text =
       '<b>Global Addresser</b>\n\nFull RU text\n\n<a href="https://arcanada.ai/ru/blog/cubrim-global-addresser">Читать статью полностью на arcanada.ai</a>';
@@ -945,8 +945,9 @@ describe("TelegramAdapter two-post channel contract", () => {
         expect(method).toBe("sendMessage");
         expect(body.get("text")).toBe(text);
         expect(body.get("parse_mode")).toBe("HTML");
-        for (const key of ["reply_to_message_id", "reply_parameters", "message_thread_id"])
-          expect(body.has(key)).toBe(false);
+        expect(JSON.parse(String(body.get("reply_parameters")))).toEqual({ message_id: 8 });
+        expect(body.has("reply_to_message_id")).toBe(false);
+        expect(body.has("message_thread_id")).toBe(false);
         return {
           ok: true,
           result: {
@@ -954,6 +955,10 @@ describe("TelegramAdapter two-post channel contract", () => {
             chat: { id: Number(TELEGRAM_TEST_CHAT_ID), username: "test" },
             sender_chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
             text: "Global Addresser\n\nFull RU text\n\nЧитать статью полностью на arcanada.ai",
+            reply_to_message: {
+              message_id: 8,
+              chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
+            },
           },
         };
       });
