@@ -183,7 +183,7 @@ export interface ReplaceCommentOptions {
 }
 
 /**
- * PUB-0031: standalone comment deletion. `replaceCommentText` already carried a
+ * PUB-0039: standalone comment deletion. `replaceCommentText` already carried a
  * hardened delete step, but it was reachable only by writing a replacement
  * comment — there was no way to remove a comment outright (the gap that forced
  * an operator to delete duplicate link-comments by hand). The destructive
@@ -427,7 +427,7 @@ async function deleteExactComment(
   const commentBlock = await findExactExistingComment(page, binding, target.label);
   const menu = await findExactOwnedActionMenu(commentBlock, target.commentId, target.label);
   await menu.click();
-  // PUB-0031: Facebook renders the comment kebab's entries as role="button"
+  // PUB-0039: Facebook renders the comment kebab's entries as role="button"
   // inside a role="menu" container — NOT as role="menuitem". Querying
   // `getByRole("menuitem")` therefore found 0 items, and widening to
   // `getByRole("button")` page-wide would match ~100 unrelated buttons
@@ -740,7 +740,7 @@ async function collectOwnedAuthorProfileHrefs(
           (globalThis as unknown as { location?: { href: string } }).location?.href ??
           "https://www.facebook.com";
         const parsed = new URL(href, base);
-        // PUB-0031: do NOT reject on tracking params. Facebook decorates the
+        // PUB-0039: do NOT reject on tracking params. Facebook decorates the
         // author link in a comment header with `?comment_id=…&__cft__[0]=…`, so
         // rejecting any href carrying `comment_id` discarded the ONLY real author
         // link and made ownership unprovable ("expected author mismatch" on our

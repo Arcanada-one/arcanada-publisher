@@ -167,7 +167,7 @@ class FakePage {
     return {
       goto: async () => {},
       url: () => self.parent,
-      // PUB-0031: Facebook renders the kebab's entries as role="button" inside a
+      // PUB-0039: Facebook renders the kebab's entries as role="button" inside a
       // role="menu" container, and the delete confirmation inside role="dialog".
       // The fake DOM must expose those containers or it stops modelling the real
       // page (the adapter now scopes its lookups to them).

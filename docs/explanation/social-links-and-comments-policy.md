@@ -147,7 +147,7 @@ operator has not approved the exact corrective action, stop at read-only evidenc
   one Facebook post (2026-08-02): the first call errored on a missing Playwright build after
   submitting, and the retry added a second copy.
 
-### 6.3.1 Removing a duplicate comment — `delete --kind comment` (PUB-0031)
+### 6.3.1 Removing a duplicate comment — `delete --kind comment` (PUB-0039)
 
 Deleting a comment is a first-class Publisher operation. Do **not** hand-roll a Playwright
 script for it: ad-hoc selectors miss the target (hover-only kebab menus, nested reply

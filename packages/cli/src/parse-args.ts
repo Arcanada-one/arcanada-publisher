@@ -61,7 +61,7 @@ export interface ParsedArgs {
   /** Bounded Facebook profile pagination count. */
   maxScrolls: number | undefined;
   expectedMediaKind: "image" | "video" | "none" | undefined;
-  /** `delete` target kind; defaults to "post" when omitted (PUB-0031). */
+  /** `delete` target kind; defaults to "post" when omitted (PUB-0039). */
   kind: "post" | "comment" | undefined;
   videoWidth: number | undefined;
   videoHeight: number | undefined;

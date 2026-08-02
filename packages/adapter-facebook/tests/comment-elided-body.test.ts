@@ -1,4 +1,4 @@
-// PUB-0031: Facebook renders long URLs elided ("https://host/.../tail..."), so an
+// PUB-0039: Facebook renders long URLs elided ("https://host/.../tail..."), so an
 // exact string equality oracle can never match a comment containing long links.
 // That defect is what made comment verification report false negatives, and blind
 // retries on those false negatives produced duplicate comments.
