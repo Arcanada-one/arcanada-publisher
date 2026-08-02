@@ -48,7 +48,7 @@ describe("selectors — RU/EN composer & action regex", () => {
     // Third-party comment — you can also report it.
     expect(selectors.commentActionsMenu.test("Редактировать, удалить или пожаловаться")).toBe(true);
     expect(selectors.commentActionsMenu.test("Comment actions")).toBe(true);
-    // PUB-0031 regression: on our OWN comment there is no "report", so Facebook
+    // PUB-0039 regression: on our OWN comment there is no "report", so Facebook
     // labels the control «Редактировать или удалить». Missing this wording made
     // the kebab of our own comment unfindable and comment deletion impossible.
     expect(selectors.commentActionsMenu.test("Редактировать или удалить")).toBe(true);

@@ -1,4 +1,4 @@
-// PUB-0031: Facebook elides long URLs when rendering text —
+// PUB-0039: Facebook elides long URLs when rendering text —
 //   https://chromewebstore.google.com/detail/conversation-to-markdown/jhn…ili
 // renders as
 //   https://chromewebstore.google.com/.../jhnhkmnignbhmcjbhoi...

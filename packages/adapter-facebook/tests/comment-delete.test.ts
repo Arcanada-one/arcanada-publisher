@@ -1,4 +1,4 @@
-// PUB-0031: standalone comment deletion. Facebook comment deletion existed only
+// PUB-0039: standalone comment deletion. Facebook comment deletion existed only
 // inside `replaceCommentText` (delete + add), so removing a comment outright was
 // impossible — the gap that left duplicate link-comments to be cleaned by hand.
 //
@@ -295,7 +295,7 @@ class FakePage {
     return {
       goto: async () => {},
       url: () => self.parent,
-      // PUB-0031: Facebook renders the kebab's entries as role="button" inside a
+      // PUB-0039: Facebook renders the kebab's entries as role="button" inside a
       // role="menu" container, and the delete confirmation inside role="dialog".
       // The fake DOM must expose those containers or it stops modelling the real
       // page (the adapter now scopes its lookups to them).

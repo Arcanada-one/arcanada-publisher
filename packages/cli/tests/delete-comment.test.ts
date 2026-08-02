@@ -1,4 +1,4 @@
-// PUB-0031: `delete --kind comment` CLI surface. Guards the two properties that
+// PUB-0039: `delete --kind comment` CLI surface. Guards the two properties that
 // matter at this layer: the kind reaches the adapter verbatim (so a comment
 // delete can never be silently downgraded to a post delete), and the ownership
 // oracle is mandatory before any browser work starts.

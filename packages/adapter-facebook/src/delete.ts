@@ -54,7 +54,7 @@ export async function del(
       "delete: 'expectedContent' is required (read-before-delete oracle)",
     );
   }
-  // PUB-0031: a comment is not a post — it has no permalink page of its own and
+  // PUB-0039: a comment is not a post — it has no permalink page of its own and
   // its removal must bind to an exact numeric comment id plus an author oracle.
   // Route it to the dedicated hardened flow instead of the post choreography,
   // which would open the PARENT post's action menu and delete the whole post.

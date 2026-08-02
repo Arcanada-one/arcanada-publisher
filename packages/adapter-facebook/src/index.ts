@@ -89,7 +89,7 @@ export class FacebookAdapter extends BaseAdapter {
   }
 
   /**
-   * Deletes a post or (PUB-0031) a single comment. `kind: "comment"` requires a
+   * Deletes a post or (PUB-0039) a single comment. `kind: "comment"` requires a
    * `comment_id`-carrying permalink plus `expectedAuthorProfileUrl`; it routes
    * to the exact-id comment flow, never the post menu.
    */

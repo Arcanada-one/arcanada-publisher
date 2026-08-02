@@ -109,7 +109,7 @@ async function runDelete(
     };
   }
   const kind = args.kind ?? "post";
-  // PUB-0031: deleting a comment binds to an exact numeric comment id and needs
+  // PUB-0039: deleting a comment binds to an exact numeric comment id and needs
   // an ownership oracle — a permalink alone cannot prove the comment is ours.
   if (kind === "comment") {
     if (platform !== "facebook") {
