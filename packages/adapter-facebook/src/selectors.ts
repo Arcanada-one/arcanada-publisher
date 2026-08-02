@@ -27,8 +27,14 @@ export const selectors = {
     /(Напишите комментарий|Прокомментировать|Комментировать как|Write a comment|Comment as|Add a comment)/,
   // R10: comment-actions kebab — opens the "edit / delete / report" menu on a
   // comment block (FB 2026 aria-label, RU/EN variants).
+  //
+  // PUB-0031: on an OWN comment Facebook labels this control «Редактировать или
+  // удалить» / "Edit or delete" (no "report" — you cannot report yourself). The
+  // original pattern only covered the third-party wording, so the kebab of our
+  // own comment was invisible and comment deletion failed with "found 0"
+  // (observed live 2026-08-02). Both wordings must match.
   commentActionsMenu:
-    /(Редактировать, удалить или пожаловаться|Comment actions|Действия для комментария)/,
+    /(Редактировать, удалить или пожаловаться|Редактировать или удалить|Comment actions|Действия для комментария|Edit or delete)/,
   deleteMenuItem: /^(Удалить|Move to trash|Delete)$/,
   confirmDelete: /^(Удалить|Переместить|Move|Delete)$/,
   editedMarker: /^(Отредактировано|Edited)$/,

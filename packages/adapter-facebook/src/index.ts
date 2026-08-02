@@ -29,7 +29,7 @@ import {
   type ReplaceCommentOptions,
 } from "./comment.js";
 import { edit as editImpl, type EditOptions, type FacebookEditInput } from "./edit.js";
-import { del as deleteImpl, type DeleteOptions } from "./delete.js";
+import { del as deleteImpl, type DeleteOptions, type FacebookDeleteInput } from "./delete.js";
 import {
   inspectFacebookProfilePost as inspectFacebookProfilePostImpl,
   type InspectFacebookProfileOptions,
@@ -88,8 +88,13 @@ export class FacebookAdapter extends BaseAdapter {
     return editImpl(input as FacebookEditInput, this.opts.editOptions);
   }
 
-  async delete(input: DeleteInput): Promise<DeleteResult> {
-    return deleteImpl(input, this.opts.deleteOptions);
+  /**
+   * Deletes a post or (PUB-0031) a single comment. `kind: "comment"` requires a
+   * `comment_id`-carrying permalink plus `expectedAuthorProfileUrl`; it routes
+   * to the exact-id comment flow, never the post menu.
+   */
+  async delete(input: DeleteInput | FacebookDeleteInput): Promise<DeleteResult> {
+    return deleteImpl(input as FacebookDeleteInput, this.opts.deleteOptions);
   }
 }
 
@@ -98,7 +103,9 @@ export { selectors, matchesExact, isCaptchaBlob } from "./selectors.js";
 export { classifyFbError, mapFbError } from "./errors.js";
 export type { FbErrorType } from "./errors.js";
 export type { FacebookEditInput } from "./edit.js";
-export type { ReplaceCommentInput } from "./comment.js";
+export type { FacebookDeleteInput } from "./delete.js";
+export { deleteCommentById } from "./comment.js";
+export type { ReplaceCommentInput, DeleteCommentInput } from "./comment.js";
 export { inspectFacebookProfilePost } from "./inspect-profile.js";
 export type {
   InspectFacebookProfilePostInput,

@@ -1,109 +1,32 @@
+// PUB-0031: standalone comment deletion. Facebook comment deletion existed only
+// inside `replaceCommentText` (delete + add), so removing a comment outright was
+// impossible — the gap that left duplicate link-comments to be cleaned by hand.
+//
+// These tests pin the safety contract of the new surface:
+//   1. it deletes the ONE comment bound to the exact numeric id;
+//   2. it refuses BEFORE any destructive click on author/body/id mismatch;
+//   3. `delete --kind comment` never falls through to the post-delete menu
+//      (which would delete the whole parent post);
+//   4. UNKNOWN evidence carries hashes, never comment text.
+
 import { mkdtempSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { ErrorCode, ProfileManager } from "@arcanada/publisher-core";
-import { replaceCommentText } from "../src/comment.js";
+import { ErrorCode, ProfileManager, type DeleteInput } from "@arcanada/publisher-core";
+import { deleteCommentById } from "../src/comment.js";
+import { del, type FacebookDeleteInput } from "../src/delete.js";
 
 const PARENT = "https://www.facebook.com/pavelvalentov/posts/pfbid-target";
-const OLD_ID = "1326931196274132";
+const TARGET_ID = "1326931196274132";
 const AUTHOR_PROFILE = "https://www.facebook.com/pavelvalentov";
+const BODY = "Плагин в Chrome Web Store:\nhttps://chromewebstore.google.com/detail/x";
 
 function profiles(): ProfileManager {
-  const root = mkdtempSync(join(tmpdir(), "fb-comment-live-dom-"));
+  const root = mkdtempSync(join(tmpdir(), "fb-comment-delete-"));
   mkdirSync(join(root, "facebook", "default"), { recursive: true });
   return new ProfileManager({ root });
 }
-
-describe("Facebook replace-comment live DOM path", () => {
-  it("uses only the exact comment body/author/container and returns a novel post-submit id", async () => {
-    const page = new FakePage();
-    const result = await replaceCommentText(input(), {
-      profileManager: profiles(),
-      page: page.asPage(),
-    });
-
-    expect(result.commentId).toBe("9000000000000001");
-    expect(page.outerActionClicks).toBe(1);
-    expect(page.nestedActionClicks).toBe(0);
-    expect(page.preSubmitIds).toEqual(["7000000000000001"]);
-  });
-
-  it("refuses before confirmation when an impostor comment has Pavel's timestamp permalink", async () => {
-    const page = new FakePage({ oldAuthorProfileUrl: "https://www.facebook.com/impostor" });
-    await expect(
-      replaceCommentText(input(), { profileManager: profiles(), page: page.asPage() }),
-    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
-    expect(page.confirmClicks).toBe(0);
-  });
-
-  it("returns UNKNOWN when a post-create impostor has Pavel's timestamp permalink", async () => {
-    const page = new FakePage({ newAuthorProfileUrl: "https://www.facebook.com/impostor" });
-    await expect(
-      replaceCommentText(input(), { profileManager: profiles(), page: page.asPage() }),
-    ).rejects.toMatchObject({
-      details: {
-        unknown: true,
-        reconcileRequired: true,
-        newCommentIds: ["9000000000000001"],
-      },
-    });
-    expect(page.confirmClicks).toBe(1);
-  });
-
-  it("returns UNKNOWN after confirm when detach cannot be proven", async () => {
-    const page = new FakePage({ detachFails: true });
-    await expect(
-      replaceCommentText(input(), { profileManager: profiles(), page: page.asPage() }),
-    ).rejects.toMatchObject({
-      code: ErrorCode.VERIFY_FAILED,
-      details: {
-        unknown: true,
-        reconcileRequired: true,
-        oldCommentId: OLD_ID,
-        newCommentIds: [],
-      },
-    });
-    expect(page.confirmClicks).toBe(1);
-  });
-
-  it("UNKNOWN evidence contains only hashes/lengths and never full comment content", async () => {
-    const secretOld = "OLD_SECRET_DO_NOT_LEAK";
-    const secretNew = "NEW_SECRET_DO_NOT_LEAK";
-    const page = new FakePage({ detachFails: true, oldBody: secretOld });
-    let error: unknown;
-    try {
-      await replaceCommentText(input({ oldText: secretOld, text: secretNew }), {
-        profileManager: profiles(),
-        page: page.asPage(),
-      });
-    } catch (caught) {
-      error = caught;
-    }
-    const serialized = JSON.stringify(error);
-    expect(serialized).not.toContain(secretOld);
-    expect(serialized).not.toContain(secretNew);
-    expect(serialized).toMatch(/expectedOldTextSha256/);
-    expect(serialized).toMatch(/replacementTextSha256/);
-    expect(serialized).toMatch(/expectedOldTextLength/);
-    expect(serialized).toMatch(/replacementTextLength/);
-  });
-
-  it("returns UNKNOWN and all observed novel ids when post-submit proof is ambiguous", async () => {
-    const page = new FakePage({ newIds: ["9000000000000001", "9000000000000002"] });
-    await expect(
-      replaceCommentText(input(), { profileManager: profiles(), page: page.asPage() }),
-    ).rejects.toMatchObject({
-      code: ErrorCode.VERIFY_FAILED,
-      details: {
-        unknown: true,
-        reconcileRequired: true,
-        oldCommentId: OLD_ID,
-        newCommentIds: ["9000000000000001", "9000000000000002"],
-      },
-    });
-  });
-});
 
 function input(overrides: Partial<ReturnType<typeof baseInput>> = {}) {
   return { ...baseInput(), ...overrides };
@@ -112,44 +35,249 @@ function input(overrides: Partial<ReturnType<typeof baseInput>> = {}) {
 function baseInput() {
   return {
     parentPostUrl: PARENT,
-    commentId: OLD_ID,
+    commentId: TARGET_ID,
     expectedAuthorProfileUrl: AUTHOR_PROFILE,
-    oldText: "old exact body\nhttps://arcanada.ai/old",
-    text: "new exact body\nhttps://arcanada.ai/new",
+    expectedContent: BODY,
     profile: "default",
   };
 }
 
+describe("Facebook deleteCommentById — input validation (no browser, fails closed)", () => {
+  it("requires the read-before-delete oracle", async () => {
+    await expect(
+      deleteCommentById(input({ expectedContent: "  " }), { profileManager: profiles() }),
+    ).rejects.toMatchObject({ code: ErrorCode.MISSING_INPUT });
+  });
+
+  it("requires a numeric comment id", async () => {
+    await expect(
+      deleteCommentById(input({ commentId: "pfbid-not-numeric" }), {
+        profileManager: profiles(),
+      }),
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
+  });
+
+  it("requires the author ownership oracle", async () => {
+    await expect(
+      deleteCommentById(input({ expectedAuthorProfileUrl: "" }), { profileManager: profiles() }),
+    ).rejects.toMatchObject({ code: ErrorCode.MISSING_INPUT });
+  });
+
+  it("rejects a comment permalink passed as the author profile URL", async () => {
+    await expect(
+      deleteCommentById(input({ expectedAuthorProfileUrl: `${PARENT}?comment_id=${TARGET_ID}` }), {
+        profileManager: profiles(),
+      }),
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
+  });
+
+  it("rejects an off-host parent", async () => {
+    await expect(
+      deleteCommentById(input({ parentPostUrl: "https://evil.example.com/posts/1" }), {
+        profileManager: profiles(),
+      }),
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
+  });
+});
+
+describe("Facebook deleteCommentById — live DOM path", () => {
+  it("deletes exactly the bound comment and reports its permalink", async () => {
+    const page = new FakePage();
+    const result = await deleteCommentById(input(), {
+      profileManager: profiles(),
+      page: page.asPage(),
+    });
+
+    expect(result.deleted).toBe(true);
+    expect(result.platform).toBe("facebook");
+    expect(result.targetUrl).toContain(`comment_id=${TARGET_ID}`);
+    // The kebab menu of the target comment — never the nested reply's.
+    expect(page.outerActionClicks).toBe(1);
+    expect(page.nestedActionClicks).toBe(0);
+    expect(page.confirmClicks).toBe(1);
+    // Unrelated comments survive.
+    expect(page.remainingIds()).toContain("7000000000000001");
+    expect(page.remainingIds()).not.toContain(TARGET_ID);
+  });
+
+  it("refuses without clicking confirm when the author is an impostor", async () => {
+    const page = new FakePage({ authorProfileUrl: "https://www.facebook.com/impostor" });
+    await expect(
+      deleteCommentById(input(), { profileManager: profiles(), page: page.asPage() }),
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    expect(page.confirmClicks).toBe(0);
+    expect(page.remainingIds()).toContain(TARGET_ID);
+  });
+
+  it("refuses without clicking confirm when the rendered body differs from the oracle", async () => {
+    const page = new FakePage({ body: "some other comment entirely" });
+    await expect(
+      deleteCommentById(input(), { profileManager: profiles(), page: page.asPage() }),
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    expect(page.confirmClicks).toBe(0);
+    expect(page.remainingIds()).toContain(TARGET_ID);
+  });
+
+  it("refuses when the exact comment id is absent from the parent", async () => {
+    const page = new FakePage();
+    await expect(
+      deleteCommentById(input({ commentId: "9999999999999999" }), {
+        profileManager: profiles(),
+        page: page.asPage(),
+      }),
+    ).rejects.toMatchObject({ code: ErrorCode.VERIFY_FAILED });
+    expect(page.confirmClicks).toBe(0);
+  });
+
+  it("reports UNKNOWN with hashes only — never comment text — when detach cannot be proven", async () => {
+    const secret = "SECRET_COMMENT_DO_NOT_LEAK";
+    const page = new FakePage({ detachFails: true, body: secret });
+    let error: unknown;
+    try {
+      await deleteCommentById(input({ expectedContent: secret }), {
+        profileManager: profiles(),
+        page: page.asPage(),
+      });
+    } catch (caught) {
+      error = caught;
+    }
+    const serialized = JSON.stringify(error);
+    expect(serialized).not.toContain(secret);
+    expect(serialized).toMatch(/expectedOldTextSha256/);
+    expect(serialized).toMatch(/reconcileRequired/);
+  });
+});
+
+describe("delete --kind comment routing (must never delete the parent post)", () => {
+  it("routes a comment permalink to the comment arm, not the post choreography", async () => {
+    let postDeleteAttempted = false;
+    let received: unknown;
+    const result = await del(
+      {
+        targetUrl: `${PARENT}?comment_id=${TARGET_ID}`,
+        kind: "comment",
+        expectedContent: BODY,
+        expectedAuthorProfileUrl: AUTHOR_PROFILE,
+        profile: "default",
+      } satisfies FacebookDeleteInput,
+      {
+        profileManager: profiles(),
+        // If routing regressed, the post arm would run these seams.
+        __readContent: async () => {
+          postDeleteAttempted = true;
+          return BODY;
+        },
+        __performDelete: async () => {
+          postDeleteAttempted = true;
+        },
+        __deleteComment: async (commentInput) => {
+          received = commentInput;
+          return {
+            ok: true as const,
+            platform: "facebook" as const,
+            account: "pavelvalentov",
+            deleted: true,
+            targetUrl: `${PARENT}?comment_id=${TARGET_ID}`,
+          };
+        },
+      },
+    );
+
+    expect(postDeleteAttempted).toBe(false);
+    expect(result.deleted).toBe(true);
+    // The parent URL handed to the comment arm carries no comment_id.
+    expect(received).toMatchObject({
+      commentId: TARGET_ID,
+      expectedAuthorProfileUrl: AUTHOR_PROFILE,
+      expectedContent: BODY,
+    });
+    expect((received as { parentPostUrl: string }).parentPostUrl).not.toContain("comment_id");
+  });
+
+  it("refuses a comment delete whose target URL carries no comment_id", async () => {
+    await expect(
+      del(
+        {
+          targetUrl: PARENT,
+          kind: "comment",
+          expectedContent: BODY,
+          expectedAuthorProfileUrl: AUTHOR_PROFILE,
+          profile: "default",
+        } satisfies FacebookDeleteInput,
+        { profileManager: profiles() },
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
+  });
+
+  it("refuses a comment delete with no author oracle", async () => {
+    await expect(
+      del(
+        {
+          targetUrl: `${PARENT}?comment_id=${TARGET_ID}`,
+          kind: "comment",
+          expectedContent: BODY,
+          profile: "default",
+        } satisfies FacebookDeleteInput,
+        { profileManager: profiles() },
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.MISSING_INPUT });
+  });
+
+  it("still routes kind=post through the post choreography", async () => {
+    let performed = false;
+    const result = await del(
+      {
+        targetUrl: PARENT,
+        kind: "post",
+        expectedContent: BODY,
+        profile: "default",
+      } satisfies DeleteInput,
+      {
+        profileManager: profiles(),
+        __readContent: async () => BODY,
+        __performDelete: async () => {
+          performed = true;
+        },
+        __deleteComment: async () => {
+          throw new Error("comment arm must not run for kind=post");
+        },
+      },
+    );
+    expect(performed).toBe(true);
+    expect(result.deleted).toBe(true);
+  });
+});
+
+// --- Fake DOM ---------------------------------------------------------------
+// Mirrors the shape `comment.ts` walks: nested [role=article] blocks, each with
+// a comment_id anchor, an author link, a [dir=auto] body and a kebab menu.
+
 interface FakePageOptions {
-  oldAuthorProfileUrl?: string;
-  newAuthorProfileUrl?: string;
-  oldBody?: string;
+  authorProfileUrl?: string;
+  body?: string;
   detachFails?: boolean;
-  newIds?: string[];
 }
 
 class FakePage {
   readonly parent = PARENT;
   readonly options: FakePageOptions;
   articles: FakeArticle[];
-  typed = "";
   outerActionClicks = 0;
   nestedActionClicks = 0;
   confirmClicks = 0;
-  preSubmitIds: string[] = [];
 
   constructor(options: FakePageOptions = {}) {
     this.options = options;
     const nested = new FakeArticle(
       "8000000000000001",
       "https://www.facebook.com/nested-author",
-      "old exact body\nhttps://arcanada.ai/old",
+      options.body ?? BODY,
       "nested",
     );
-    const old = new FakeArticle(
-      OLD_ID,
-      options.oldAuthorProfileUrl ?? AUTHOR_PROFILE,
-      options.oldBody ?? "old exact body\nhttps://arcanada.ai/old",
+    const target = new FakeArticle(
+      TARGET_ID,
+      options.authorProfileUrl ?? AUTHOR_PROFILE,
+      options.body ?? BODY,
       "outer",
       [nested],
     );
@@ -159,7 +287,7 @@ class FakePage {
       "unrelated existing comment",
       "unrelated",
     );
-    this.articles = [old, unrelated];
+    this.articles = [target, unrelated];
   }
 
   asPage() {
@@ -186,30 +314,9 @@ class FakePage {
       getByRole: (role: string) => {
         if (role === "menuitem") return new FakeLocator(self, [new FakeControl("delete-item")]);
         if (role === "button") return new FakeLocator(self, [new FakeControl("confirm")]);
-        if (role === "textbox") return new FakeLocator(self, [new FakeControl("composer")]);
         return new FakeLocator(self, []);
       },
-      keyboard: {
-        insertText: async (value: string) => {
-          self.typed += value;
-        },
-        press: async (key: string) => {
-          if (key === "Shift+Enter") self.typed += "\n";
-          if (key === "Enter") {
-            self.preSubmitIds = self.allArticles().map((article) => article.id);
-            for (const id of self.options.newIds ?? ["9000000000000001"]) {
-              self.articles.push(
-                new FakeArticle(
-                  id,
-                  self.options.newAuthorProfileUrl ?? AUTHOR_PROFILE,
-                  self.typed,
-                  "new",
-                ),
-              );
-            }
-          }
-        },
-      },
+      keyboard: { insertText: async () => {}, press: async () => {} },
       waitForTimeout: async () => {},
       isClosed: () => false,
       screenshot: async () => {},
@@ -220,9 +327,13 @@ class FakePage {
     return this.articles.flatMap((article) => [article, ...article.nested]);
   }
 
-  removeOld(): void {
+  remainingIds(): string[] {
+    return this.allArticles().map((article) => article.id);
+  }
+
+  removeTarget(): void {
     if (!this.options.detachFails)
-      this.articles = this.articles.filter((article) => article.id !== OLD_ID);
+      this.articles = this.articles.filter((article) => article.id !== TARGET_ID);
   }
 }
 
@@ -298,7 +409,7 @@ class FakeLocator {
     }
     if (node instanceof FakeControl && node.kind === "confirm") {
       this.page.confirmClicks += 1;
-      this.page.removeOld();
+      this.page.removeTarget();
     }
   }
   async evaluate<T, A>(fn: (element: never, arg: A) => T, arg: A): Promise<T> {
@@ -427,8 +538,8 @@ class FakeBody extends FakeNode {
     if (selector === '[role="article"]') return this.article;
     return null;
   }
-  querySelector(selector: string): FakeNode | null {
-    return selector === '[role="article"]' ? null : null;
+  querySelector(): FakeNode | null {
+    return null;
   }
   querySelectorAll(selector: string): FakeNode[] {
     return selector.includes('a[role="link"]') ? [this.mention] : [];
