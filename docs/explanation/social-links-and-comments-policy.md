@@ -140,6 +140,48 @@ operator has not approved the exact corrective action, stop at read-only evidenc
   (e.g. the keeper has its first comment → reply count ≥ 1; the duplicate has none), then
   request explicit operator permission for the exact duplicate URL. Delete only after
   that permission and the §6.1 read-before-delete gate both pass.
+- **A comment call that died mid-flight has usually already posted.** A crash _after_ the
+  submit keystroke (browser-binary error, killed process, network drop) leaves the comment
+  live. `comment` failing is NOT evidence that nothing was posted — reopen the post and
+  look before retrying. This is the exact path that produced two identical link-comments on
+  one Facebook post (2026-08-02): the first call errored on a missing Playwright build after
+  submitting, and the retry added a second copy.
+
+### 6.3.1 Removing a duplicate comment — `delete --kind comment` (PUB-0031)
+
+Deleting a comment is a first-class Publisher operation. Do **not** hand-roll a Playwright
+script for it: ad-hoc selectors miss the target (hover-only kebab menus, nested reply
+wrappers) and stray clicks land on unrelated page furniture.
+
+```bash
+node packages/cli/dist/index.js delete \
+  --platform facebook \
+  --kind comment \
+  --target-url 'https://www.facebook.com/<user>/posts/<pfbid>?comment_id=<numeric-id>' \
+  --expected-content-file /path/to/exact-comment-body.txt \
+  --expected-author-profile-url 'https://www.facebook.com/<user>' \
+  --profile default
+```
+
+Contract (all gates fail **closed**, before any destructive click):
+
+- `--kind comment` requires a `comment_id`-carrying permalink; the numeric id — not
+  document order — binds the mutation (§6.8). The parent post URL is derived from it.
+- `--expected-content-file` is the read-before-delete oracle: the comment's **exact**
+  rendered body. Mismatch → abort, nothing deleted.
+- `--expected-author-profile-url` proves the comment is ours. A permalink alone cannot:
+  an impostor's comment can carry a lookalike timestamp link.
+- The comment's own action menu must resolve to exactly one element inside the exact
+  comment container; ambiguity (nested replies, two menus) → refuse.
+- Post-delete, the comment block must be proven detached. If that cannot be proven the
+  result is **UNKNOWN + `reconcileRequired`** — reconcile by reading the post, never retry
+  blindly. UNKNOWN evidence carries content **hashes and lengths only**, never comment text.
+- `--kind` defaults to `post`, so existing invocations are unchanged. A comment delete never
+  falls through to the post-delete menu (that would delete the whole parent post).
+
+Currently implemented for **Facebook**; other platforms reject `--kind comment` with
+`INVALID_ARGS` rather than silently deleting the wrong object. To change a comment's text
+use `replace-comment` (delete + add) — in-place comment editing is unsafe (R10).
 
 ### 6.4 Composer media+text order — video first, then text, then verify (all browser composers)
 

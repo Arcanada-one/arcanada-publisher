@@ -8,14 +8,17 @@ import {
   ErrorCode,
   ProfileManager,
   CommentResultSchema,
+  DeleteResultSchema,
   type CommentInput,
   type CommentResult,
+  type DeleteResult,
 } from "@arcanada/publisher-core";
 import { extractAccountFromUrl, extractPostUrlFromHref } from "./url-extraction.js";
 import { launchSession, withScreenshotOnFail } from "./context.js";
 import { selectors } from "./selectors.js";
 import { typeMultiline } from "./input.js";
 import { VERIFY_DELAY_MS } from "./timing.js";
+import { matchesElidedText, matchesElidedTextSource } from "./elided-text.js";
 
 const FB_HOSTNAME = "www.facebook.com";
 
@@ -179,11 +182,115 @@ export interface ReplaceCommentOptions {
   skipTeardown?: boolean;
 }
 
+/**
+ * PUB-0031: standalone comment deletion. `replaceCommentText` already carried a
+ * hardened delete step, but it was reachable only by writing a replacement
+ * comment — there was no way to remove a comment outright (the gap that forced
+ * an operator to delete duplicate link-comments by hand). The destructive
+ * choreography is NOT duplicated here: `deleteCommentById` and
+ * `replaceCommentText` share `deleteExactComment` below, so the
+ * bind-to-exact-id → verify-author → verify-body → confirm → prove-detached
+ * contract has exactly one implementation.
+ */
+export interface DeleteCommentInput {
+  parentPostUrl: string;
+  /** Exact existing Facebook comment id (digits only). */
+  commentId: string;
+  /** Exact stable Facebook profile URL expected on the comment header. */
+  expectedAuthorProfileUrl: string;
+  /** Read-before-delete oracle: the current text of the comment to delete. */
+  expectedContent: string;
+  profile: string;
+}
+
+export interface DeleteCommentOptions {
+  headed?: boolean;
+  profileManager?: ProfileManager;
+  page?: Page;
+  /** Test seam: perform the bind → verify → confirm → prove-detached step. */
+  __deleteStep?: (page: Page, input: DeleteCommentInput) => Promise<DeleteCommentEvidence>;
+  skipTeardown?: boolean;
+}
+
 export interface CommentBindingEvidence {
   commentHref: string;
   commentId: string;
   renderedBodyCandidates: readonly string[];
   renderedAuthorProfileHrefs: readonly string[];
+}
+
+export async function deleteCommentById(
+  input: DeleteCommentInput,
+  options: DeleteCommentOptions = {},
+): Promise<DeleteResult> {
+  assertParentHost(input.parentPostUrl);
+  assertExactMutationTarget("deleteCommentById", {
+    commentId: input.commentId,
+    expectedAuthorProfileUrl: input.expectedAuthorProfileUrl,
+    oracleText: input.expectedContent,
+    oracleField: "expectedContent",
+  });
+
+  const profiles = options.profileManager ?? new ProfileManager();
+  const profileDir = profiles.ensureProfileExists("facebook", input.profile);
+
+  if (options.page) {
+    return runDeleteCommentFlow(options.page, input, options);
+  }
+
+  const session = await launchSession({
+    profileDir,
+    ...(options.headed !== undefined ? { headed: options.headed } : {}),
+  });
+  try {
+    return await runDeleteCommentFlow(session.page, input, options);
+  } finally {
+    if (!options.skipTeardown) {
+      await session.close();
+    }
+  }
+}
+
+async function runDeleteCommentFlow(
+  page: Page,
+  input: DeleteCommentInput,
+  options: DeleteCommentOptions,
+): Promise<DeleteResult> {
+  return withScreenshotOnFail(page, "comment-delete", async () => {
+    const step = options.__deleteStep ?? defaultDeleteCommentStep;
+    await step(page, input);
+    // Deletion is terminal — unlike replace there is no second mutation whose
+    // failure could leave the comment half-replaced. `deleteExactComment` only
+    // returns after proving the comment block detached from the DOM.
+    return DeleteResultSchema.parse({
+      ok: true,
+      platform: "facebook",
+      account: extractAccountFromUrl(input.parentPostUrl),
+      deleted: true,
+      targetUrl: commentPermalink(input.parentPostUrl, input.commentId),
+    });
+  });
+}
+
+async function defaultDeleteCommentStep(
+  page: Page,
+  input: DeleteCommentInput,
+): Promise<DeleteCommentEvidence> {
+  await page.goto(input.parentPostUrl);
+  return deleteExactComment(page, {
+    label: "deleteCommentById",
+    parentPostUrl: input.parentPostUrl,
+    commentId: input.commentId,
+    expectedAuthorProfileUrl: input.expectedAuthorProfileUrl,
+    oldText: input.expectedContent,
+  });
+}
+
+/** Comment permalink identity for the DeleteResult receipt. */
+function commentPermalink(parentPostUrl: string, commentId: string): string {
+  const url = new URL(parentPostUrl);
+  url.searchParams.set("comment_id", commentId);
+  return url.href;
 }
 
 export async function replaceCommentText(
@@ -194,32 +301,12 @@ export async function replaceCommentText(
   if (!input.text || input.text.trim() === "") {
     throw new AdapterError(ErrorCode.MISSING_INPUT, "replaceCommentText: 'text' is required");
   }
-  if (!input.oldText || input.oldText.trim() === "") {
-    throw new AdapterError(
-      ErrorCode.MISSING_INPUT,
-      "replaceCommentText: 'oldText' is required (read-before-delete oracle)",
-    );
-  }
-  if (!input.commentId || input.commentId.trim() === "") {
-    throw new AdapterError(
-      ErrorCode.MISSING_INPUT,
-      "replaceCommentText: 'commentId' is required (exact mutation target)",
-    );
-  }
-  if (!/^\d+$/.test(input.commentId)) {
-    throw new AdapterError(
-      ErrorCode.INVALID_ARGS,
-      "replaceCommentText: 'commentId' must contain Facebook's numeric comment id",
-      { commentId: input.commentId },
-    );
-  }
-  if (!input.expectedAuthorProfileUrl || input.expectedAuthorProfileUrl.trim() === "") {
-    throw new AdapterError(
-      ErrorCode.MISSING_INPUT,
-      "replaceCommentText: 'expectedAuthorProfileUrl' is required (stable ownership oracle)",
-    );
-  }
-  facebookAccountIdentity(input.expectedAuthorProfileUrl);
+  assertExactMutationTarget("replaceCommentText", {
+    commentId: input.commentId,
+    expectedAuthorProfileUrl: input.expectedAuthorProfileUrl,
+    oracleText: input.oldText,
+    oracleField: "oldText",
+  });
 
   const profiles = options.profileManager ?? new ProfileManager();
   const profileDir = profiles.ensureProfileExists("facebook", input.profile);
@@ -270,41 +357,14 @@ async function runReplaceFlow(
 const defaultReplaceSteps: ReplaceCommentRecorder = {
   async deleteOldComment(page: Page, input: ReplaceCommentInput): Promise<DeleteCommentEvidence> {
     await page.goto(input.parentPostUrl);
-    // Bind the mutation to one exact comment id under the exact parent, then
-    // require the complete rendered body before opening any destructive menu.
-    const commentBlock = await findExactExistingComment(page, input);
-    const menu = await findExactOwnedActionMenu(commentBlock, input.commentId);
-    await menu.click();
-    const deleteItems = page.getByRole("menuitem", { name: selectors.deleteMenuItem });
-    if ((await deleteItems.count()) !== 1) {
-      throw new AdapterError(
-        ErrorCode.VERIFY_FAILED,
-        "replaceCommentText: exact delete menu item is ambiguous; refusing delete",
-        { commentId: input.commentId, fbErrorType: "verify_mismatch" },
-      );
-    }
-    const deleteItem = deleteItems.first();
-    await deleteItem.waitFor({ state: "visible", timeout: 5_000 });
-    await deleteItem.click();
-    const confirms = page.getByRole("button", { name: selectors.confirmDelete, exact: true });
-    if ((await confirms.count()) !== 1) {
-      throw new AdapterError(
-        ErrorCode.VERIFY_FAILED,
-        "replaceCommentText: exact delete confirmation is ambiguous; refusing delete",
-        { commentId: input.commentId, fbErrorType: "verify_mismatch" },
-      );
-    }
-    const preDeleteCommentIds = await collectParentCommentIds(page, input.parentPostUrl);
-    try {
-      await confirms.first().click();
-      await page.waitForTimeout(VERIFY_DELAY_MS);
-      await commentBlock.waitFor({ state: "detached", timeout: 10_000 });
-    } catch (error) {
-      throw asUnknownReplaceState("delete-confirm-or-detach", input, error, {
-        preDeleteCommentIds,
-      });
-    }
-    return { preDeleteCommentIds };
+    return deleteExactComment(page, {
+      label: "replaceCommentText",
+      parentPostUrl: input.parentPostUrl,
+      commentId: input.commentId,
+      expectedAuthorProfileUrl: input.expectedAuthorProfileUrl,
+      oldText: input.oldText,
+      replacementText: input.text,
+    });
   },
 
   async addNewComment(page: Page, input: ReplaceCommentInput): Promise<NewCommentEvidence> {
@@ -330,36 +390,179 @@ const defaultReplaceSteps: ReplaceCommentRecorder = {
   },
 };
 
+/**
+ * The ONLY implementation of Facebook comment deletion: bind to one exact
+ * comment id under the exact parent, require the exact rendered body and the
+ * expected author before opening any menu, refuse when the menu item or the
+ * confirmation button is ambiguous, and prove the block detached afterwards.
+ *
+ * Shared by `deleteCommentById` (delete outright) and `replaceCommentText`
+ * (delete + add). Every abort before `confirm().click()` is non-destructive;
+ * after the click the state is reported UNKNOWN with hashes only, never blindly
+ * retried.
+ */
+async function deleteExactComment(
+  page: Page,
+  target: {
+    label: string;
+    parentPostUrl: string;
+    commentId: string;
+    expectedAuthorProfileUrl: string;
+    oldText: string;
+    /** Present only on the replace path — carried into UNKNOWN evidence. */
+    replacementText?: string;
+  },
+): Promise<DeleteCommentEvidence> {
+  const binding: ReplaceCommentInput = {
+    parentPostUrl: target.parentPostUrl,
+    commentId: target.commentId,
+    expectedAuthorProfileUrl: target.expectedAuthorProfileUrl,
+    oldText: target.oldText,
+    // The binding/UNKNOWN helpers are shared with the replace path; on a plain
+    // delete there is no replacement body, so mirror oldText to keep the
+    // evidence hashes well-formed without inventing content.
+    text: target.replacementText ?? target.oldText,
+    profile: "",
+  };
+  const commentBlock = await findExactExistingComment(page, binding, target.label);
+  const menu = await findExactOwnedActionMenu(commentBlock, target.commentId, target.label);
+  await menu.click();
+  // PUB-0031: Facebook renders the comment kebab's entries as role="button"
+  // inside a role="menu" container — NOT as role="menuitem". Querying
+  // `getByRole("menuitem")` therefore found 0 items, and widening to
+  // `getByRole("button")` page-wide would match ~100 unrelated buttons
+  // ("ambiguous"). Scope the lookup to the just-opened menu and accept either
+  // role, so the target stays unambiguous without loosening the guard.
+  const openMenu = page.locator('[role="menu"]').last();
+  await openMenu.waitFor({ state: "visible", timeout: 5_000 });
+  const deleteItems = openMenu
+    .getByRole("menuitem", { name: selectors.deleteMenuItem })
+    .or(openMenu.getByRole("button", { name: selectors.deleteMenuItem }));
+  if ((await deleteItems.count()) !== 1) {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      `${target.label}: exact delete menu item is ambiguous; refusing delete`,
+      {
+        commentId: target.commentId,
+        observedDeleteItems: await deleteItems.count(),
+        fbErrorType: "verify_mismatch",
+      },
+    );
+  }
+  const deleteItem = deleteItems.first();
+  await deleteItem.waitFor({ state: "visible", timeout: 5_000 });
+  await deleteItem.click();
+  // The confirmation lives in a modal dialog. Scope to the topmost dialog when
+  // one is present: a page-wide search can collide with the post's own «Удалить»
+  // affordances, and an ambiguous match must never reach a destructive click.
+  await page.waitForTimeout(800);
+  const confirmDialog = page.locator('[role="dialog"]').last();
+  const scope = (await confirmDialog.count()) > 0 ? confirmDialog : page;
+  const confirms = scope.getByRole("button", { name: selectors.confirmDelete, exact: true });
+  if ((await confirms.count()) !== 1) {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      `${target.label}: exact delete confirmation is ambiguous; refusing delete`,
+      {
+        commentId: target.commentId,
+        observedConfirmButtons: await confirms.count(),
+        scopedToDialog: (await confirmDialog.count()) > 0,
+        fbErrorType: "verify_mismatch",
+      },
+    );
+  }
+  const preDeleteCommentIds = await collectParentCommentIds(page, target.parentPostUrl);
+  try {
+    await confirms.first().click();
+    await page.waitForTimeout(VERIFY_DELAY_MS);
+    await commentBlock.waitFor({ state: "detached", timeout: 10_000 });
+  } catch (error) {
+    throw asUnknownReplaceState("delete-confirm-or-detach", binding, error, {
+      preDeleteCommentIds,
+    });
+  }
+  return { preDeleteCommentIds };
+}
+
+/** Input validation shared by the delete-outright and replace paths. */
+function assertExactMutationTarget(
+  label: string,
+  target: {
+    commentId: string;
+    expectedAuthorProfileUrl: string;
+    oracleText: string;
+    oracleField: string;
+  },
+): void {
+  if (!target.oracleText || target.oracleText.trim() === "") {
+    throw new AdapterError(
+      ErrorCode.MISSING_INPUT,
+      `${label}: '${target.oracleField}' is required (read-before-delete oracle)`,
+    );
+  }
+  if (!target.commentId || target.commentId.trim() === "") {
+    throw new AdapterError(
+      ErrorCode.MISSING_INPUT,
+      `${label}: 'commentId' is required (exact mutation target)`,
+    );
+  }
+  if (!/^\d+$/.test(target.commentId)) {
+    throw new AdapterError(
+      ErrorCode.INVALID_ARGS,
+      `${label}: 'commentId' must contain Facebook's numeric comment id`,
+      { commentId: target.commentId },
+    );
+  }
+  if (!target.expectedAuthorProfileUrl || target.expectedAuthorProfileUrl.trim() === "") {
+    throw new AdapterError(
+      ErrorCode.MISSING_INPUT,
+      `${label}: 'expectedAuthorProfileUrl' is required (stable ownership oracle)`,
+    );
+  }
+  facebookAccountIdentity(target.expectedAuthorProfileUrl);
+}
+
 /** Fail-closed read-before-delete check shared by the live path and unit tests. */
 export function assertExactCommentBinding(
   input: ReplaceCommentInput,
   evidence: CommentBindingEvidence,
+  label = "replaceCommentText",
 ): void {
   if (evidence.commentId !== input.commentId) {
-    throw bindingError("comment id mismatch", input, evidence);
+    throw bindingError("comment id mismatch", input, evidence, label);
   }
   if (
     facebookParentIdentity(evidence.commentHref) !== facebookParentIdentity(input.parentPostUrl)
   ) {
-    throw bindingError("parent post mismatch", input, evidence);
+    throw bindingError("parent post mismatch", input, evidence, label);
   }
   const expected = normalizeExactText(input.oldText);
   if (
-    !evidence.renderedBodyCandidates.some((candidate) => normalizeExactText(candidate) === expected)
+    !evidence.renderedBodyCandidates.some((candidate) => matchesElidedText(candidate, expected))
   ) {
-    throw bindingError("exact old content mismatch", input, evidence);
+    throw bindingError("exact old content mismatch", input, evidence, label);
   }
+  // Operator input stays strict; rendered hrefs are normalized leniently because
+  // Facebook appends comment_id/__cft__ tracking to the author link itself.
   const expectedAuthorIdentity = facebookAccountIdentity(input.expectedAuthorProfileUrl);
   if (
-    !evidence.renderedAuthorProfileHrefs.some(
-      (href) => facebookAccountIdentity(href) === expectedAuthorIdentity,
-    )
+    !evidence.renderedAuthorProfileHrefs.some((href) => {
+      try {
+        return facebookAccountIdentity(href, { strict: false }) === expectedAuthorIdentity;
+      } catch {
+        return false; // not a profile URL at all — cannot vouch for ownership
+      }
+    })
   ) {
-    throw bindingError("expected author mismatch", input, evidence);
+    throw bindingError("expected author mismatch", input, evidence, label);
   }
 }
 
-async function findExactExistingComment(page: Page, input: ReplaceCommentInput): Promise<Locator> {
+async function findExactExistingComment(
+  page: Page,
+  input: ReplaceCommentInput,
+  label = "replaceCommentText",
+): Promise<Locator> {
   const anchors = page.locator('a[href*="comment_id="]');
   const count = await anchors.count();
   for (let index = 0; index < count; index += 1) {
@@ -377,17 +580,21 @@ async function findExactExistingComment(page: Page, input: ReplaceCommentInput):
       input.commentId,
       input.oldText,
     );
-    assertExactCommentBinding(input, {
-      commentHref,
-      commentId,
-      renderedBodyCandidates,
-      renderedAuthorProfileHrefs,
-    });
+    assertExactCommentBinding(
+      input,
+      {
+        commentHref,
+        commentId,
+        renderedBodyCandidates,
+        renderedAuthorProfileHrefs,
+      },
+      label,
+    );
     return block;
   }
   throw new AdapterError(
     ErrorCode.VERIFY_FAILED,
-    `replaceCommentText: exact comment id '${input.commentId}' was not found under parent`,
+    `${label}: exact comment id '${input.commentId}' was not found under parent`,
     {
       parentPostUrl: input.parentPostUrl,
       commentId: input.commentId,
@@ -482,6 +689,13 @@ async function collectOwnedAuthorProfileHrefs(
   for (let index = 0; index < count; index += 1) {
     const href = await links.nth(index).evaluate(
       (element, options) => {
+        // Facebook elides long URLs when rendering, so the body node's innerText
+        // is not byte-equal to the expected body. Rehydrate the ONE canonical
+        // matcher from its shipped source rather than keeping a second copy here.
+        const bodyEquals = new Function(`return (${options.matcherSource});`)() as (
+          rendered: string,
+          expected: string,
+        ) => boolean;
         const article = element.closest('[role="article"]');
         if (!article) return null;
         const ownsId = [...article.querySelectorAll('a[href*="comment_id="]')].some((anchor) => {
@@ -497,13 +711,18 @@ async function collectOwnedAuthorProfileHrefs(
         const bodyNodes = [...article.querySelectorAll('[dir="auto"]')].filter((candidate) => {
           if (candidate.closest('[role="article"]') !== article) return false;
           if (candidate.querySelector('[role="article"]')) return false;
-          if ((candidate as unknown as { innerText: string }).innerText !== options.exactBody)
+          if (
+            !bodyEquals(
+              (candidate as unknown as { innerText: string }).innerText,
+              options.exactBody,
+            )
+          )
             return false;
           return ![...candidate.querySelectorAll('[dir="auto"]')].some(
             (child) =>
               child !== candidate &&
               child.closest('[role="article"]') === article &&
-              (child as unknown as { innerText: string }).innerText === options.exactBody,
+              bodyEquals((child as unknown as { innerText: string }).innerText, options.exactBody),
           );
         });
         if (bodyNodes.length !== 1) return null;
@@ -521,12 +740,14 @@ async function collectOwnedAuthorProfileHrefs(
           (globalThis as unknown as { location?: { href: string } }).location?.href ??
           "https://www.facebook.com";
         const parsed = new URL(href, base);
-        if (
-          ["comment_id", "reply_comment_id", "story_fbid", "fbid"].some((key) =>
-            parsed.searchParams.has(key),
-          )
-        )
-          return null;
+        // PUB-0031: do NOT reject on tracking params. Facebook decorates the
+        // author link in a comment header with `?comment_id=…&__cft__[0]=…`, so
+        // rejecting any href carrying `comment_id` discarded the ONLY real author
+        // link and made ownership unprovable ("expected author mismatch" on our
+        // own comment, observed live 2026-08-02). Identity is decided by the PATH:
+        // `/<slug>` or `/profile.php?id=`. A post permalink still fails below
+        // because its path segment (`posts`, `permalink.php`, …) is reserved, and
+        // `story_fbid`/`fbid` only appear on those same reserved paths.
         if (parsed.pathname === "/profile.php") return parsed.searchParams.has("id") ? href : null;
         const segments = parsed.pathname.split("/").filter(Boolean);
         const reserved = new Set([
@@ -544,7 +765,7 @@ async function collectOwnedAuthorProfileHrefs(
         if (segments.length !== 1 || reserved.has(segments[0]!.toLowerCase())) return null;
         return href;
       },
-      { commentId, exactBody },
+      { commentId, exactBody, matcherSource: matchesElidedTextSource },
     );
     if (typeof href === "string") result.push(href);
   }
@@ -595,7 +816,11 @@ async function collectOwnedText(
   return [...new Set(result)];
 }
 
-async function findExactOwnedActionMenu(block: Locator, commentId: string): Promise<Locator> {
+async function findExactOwnedActionMenu(
+  block: Locator,
+  commentId: string,
+  label = "replaceCommentText",
+): Promise<Locator> {
   const actions = block.getByLabel(selectors.commentActionsMenu);
   const matches: Locator[] = [];
   const count = await actions.count();
@@ -619,7 +844,7 @@ async function findExactOwnedActionMenu(block: Locator, commentId: string): Prom
   if (matches.length !== 1) {
     throw new AdapterError(
       ErrorCode.VERIFY_FAILED,
-      `replaceCommentText: expected one action menu in exact comment container, found ${matches.length}`,
+      `${label}: expected one action menu in exact comment container, found ${matches.length}`,
       { commentId, fbErrorType: "verify_mismatch" },
     );
   }
@@ -630,18 +855,15 @@ function bindingError(
   reason: string,
   input: ReplaceCommentInput,
   evidence: CommentBindingEvidence,
+  label = "replaceCommentText",
 ): AdapterError {
-  return new AdapterError(
-    ErrorCode.VERIFY_FAILED,
-    `replaceCommentText: ${reason}; refusing delete`,
-    {
-      parentPostUrl: input.parentPostUrl,
-      expectedCommentId: input.commentId,
-      observedCommentId: evidence.commentId,
-      commentHref: evidence.commentHref,
-      fbErrorType: "verify_mismatch",
-    },
-  );
+  return new AdapterError(ErrorCode.VERIFY_FAILED, `${label}: ${reason}; refusing delete`, {
+    parentPostUrl: input.parentPostUrl,
+    expectedCommentId: input.commentId,
+    observedCommentId: evidence.commentId,
+    commentHref: evidence.commentHref,
+    fbErrorType: "verify_mismatch",
+  });
 }
 
 function asUnknownReplaceState(
@@ -690,10 +912,28 @@ function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-function facebookAccountIdentity(rawUrl: string): string {
+/**
+ * Author identity of a URL.
+ *
+ * `strict` (default) is for OPERATOR-SUPPLIED input: a URL carrying `comment_id`
+ * / `story_fbid` / `fbid` is rejected outright, so a permalink can never be
+ * passed off as the ownership oracle.
+ *
+ * `strict: false` is for hrefs READ FROM THE DOM. Facebook decorates the author
+ * link inside a comment header with the very same tracking params
+ * (`facebook.com/<slug>?comment_id=…&__cft__[0]=…`), so under the strict rule
+ * every rendered author href was discarded and the author check could never
+ * pass — the comment-delete flow refused with "expected author mismatch" on a
+ * genuinely owned comment (observed live 2026-08-02). Identity is decided by the
+ * PATH (`/<slug>` or `/profile.php?id=`), which the tracking tail never changes;
+ * a real permalink still fails because its path is `/posts/<id>` (reserved).
+ */
+function facebookAccountIdentity(rawUrl: string, options: { strict?: boolean } = {}): string {
+  const strict = options.strict ?? true;
   const parsed = new URL(rawUrl, "https://www.facebook.com");
   assertParentHost(parsed.href);
   if (
+    strict &&
     ["comment_id", "reply_comment_id", "story_fbid", "fbid"].some((key) =>
       parsed.searchParams.has(key),
     )
@@ -703,6 +943,9 @@ function facebookAccountIdentity(rawUrl: string): string {
       `replaceCommentText: '${rawUrl}' is a comment/post permalink, not an author profile URL`,
     );
   }
+  // Even in lenient mode a `story_fbid`/`fbid` URL is a post permalink, not a
+  // profile: those params only ever appear on permalink.php / story.php surfaces
+  // whose path is reserved below, so no extra check is needed here.
   if (parsed.pathname === "/profile.php") {
     const id = parsed.searchParams.get("id");
     if (!id) {

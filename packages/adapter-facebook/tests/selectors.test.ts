@@ -44,6 +44,22 @@ describe("selectors — RU/EN composer & action regex", () => {
     expect(selectors.commentComposer.test("Что у вас нового, Pavel?")).toBe(false);
   });
 
+  it("commentActionsMenu matches the kebab on BOTH own and third-party comments", () => {
+    // Third-party comment — you can also report it.
+    expect(selectors.commentActionsMenu.test("Редактировать, удалить или пожаловаться")).toBe(true);
+    expect(selectors.commentActionsMenu.test("Comment actions")).toBe(true);
+    // PUB-0031 regression: on our OWN comment there is no "report", so Facebook
+    // labels the control «Редактировать или удалить». Missing this wording made
+    // the kebab of our own comment unfindable and comment deletion impossible.
+    expect(selectors.commentActionsMenu.test("Редактировать или удалить")).toBe(true);
+    expect(selectors.commentActionsMenu.test("Edit or delete")).toBe(true);
+    // Must NOT match unrelated controls in the same comment block.
+    expect(selectors.commentActionsMenu.test("Нравится")).toBe(false);
+    expect(selectors.commentActionsMenu.test("Отреагировать")).toBe(false);
+    expect(selectors.commentActionsMenu.test("Ответить")).toBe(false);
+    expect(selectors.commentActionsMenu.test("Информация о личном значке")).toBe(false);
+  });
+
   it("isCaptchaBlob detects RU/EN security-check signals", () => {
     expect(isCaptchaBlob("Пройдите проверку безопасности, чтобы продолжить")).toBe(true);
     expect(isCaptchaBlob("Please complete the security check")).toBe(true);

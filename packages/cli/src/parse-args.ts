@@ -61,6 +61,8 @@ export interface ParsedArgs {
   /** Bounded Facebook profile pagination count. */
   maxScrolls: number | undefined;
   expectedMediaKind: "image" | "video" | "none" | undefined;
+  /** `delete` target kind; defaults to "post" when omitted (PUB-0031). */
+  kind: "post" | "comment" | undefined;
   videoWidth: number | undefined;
   videoHeight: number | undefined;
   videoDuration: number | undefined;
@@ -145,6 +147,7 @@ const VALUE_FLAGS = new Set([
   "--evidence-dir",
   "--max-scrolls",
   "--expected-media-kind",
+  "--kind",
   "--video-width",
   "--video-height",
   "--video-duration",
@@ -208,6 +211,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     evidenceDir: undefined,
     maxScrolls: undefined,
     expectedMediaKind: undefined,
+    kind: undefined,
     videoWidth: undefined,
     videoHeight: undefined,
     videoDuration: undefined,
@@ -332,6 +336,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
             `--expected-media-kind must be image, video, or none, got '${value}'`,
           );
         out.expectedMediaKind = value;
+        break;
+      case "--kind":
+        if (value !== "post" && value !== "comment")
+          throw new CliParseError(`--kind must be post or comment, got '${value}'`);
+        out.kind = value;
         break;
       case "--video-width":
       case "--video-height":

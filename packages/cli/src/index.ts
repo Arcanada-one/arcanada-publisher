@@ -6,6 +6,8 @@
 //   arcanada-publisher comment  --platform <p> --text-file <f> --parent-url <url>
 //   arcanada-publisher edit     --platform <p> --target-url <url> --text-file <f> [--image <p>]
 //   arcanada-publisher delete   --platform <p> --target-url <url> --expected-content <text>
+//                               [--kind post|comment]  (comment: target-url must carry comment_id
+//                               and --expected-author-profile-url is required; Facebook only)
 //   arcanada-publisher login    --platform <p> [--profile <name>]
 //   arcanada-publisher server   [--bind <host>] [--port <n>]   (loopback API; 127.0.0.1:8787 default)
 

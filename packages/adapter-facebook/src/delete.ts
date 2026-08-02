@@ -15,8 +15,20 @@ import {
 import { selectors } from "./selectors.js";
 import { launchSession, withScreenshotOnFail } from "./context.js";
 import { extractAccountFromUrl } from "./url-extraction.js";
+import { deleteCommentById, type DeleteCommentInput } from "./comment.js";
 
 const FB_HOSTNAME = "www.facebook.com";
+
+/**
+ * `DeleteInput` from core carries no author oracle; deleting a COMMENT requires
+ * one (a permalink alone cannot prove the comment is ours), so the Facebook
+ * adapter widens the input at its boundary — same pattern as
+ * `FacebookEditInput`. Core's cross-platform contract stays untouched.
+ */
+export interface FacebookDeleteInput extends DeleteInput {
+  /** Required when `kind === "comment"`: stable profile URL of the comment author. */
+  expectedAuthorProfileUrl?: string;
+}
 
 export interface DeleteOptions {
   headed?: boolean;
@@ -26,16 +38,28 @@ export interface DeleteOptions {
   __readContent?: (page: Page, input: DeleteInput) => Promise<string>;
   /** Test seam: perform the destructive menu→Delete→confirm choreography. */
   __performDelete?: (page: Page, input: DeleteInput) => Promise<void>;
+  /** Test seam: the comment-deletion arm (defaults to `deleteCommentById`). */
+  __deleteComment?: (input: DeleteCommentInput) => Promise<DeleteResult>;
   skipTeardown?: boolean;
 }
 
-export async function del(input: DeleteInput, options: DeleteOptions = {}): Promise<DeleteResult> {
+export async function del(
+  input: FacebookDeleteInput,
+  options: DeleteOptions = {},
+): Promise<DeleteResult> {
   assertTargetHost(input.targetUrl);
   if (!input.expectedContent || input.expectedContent.trim() === "") {
     throw new AdapterError(
       ErrorCode.MISSING_INPUT,
       "delete: 'expectedContent' is required (read-before-delete oracle)",
     );
+  }
+  // PUB-0031: a comment is not a post — it has no permalink page of its own and
+  // its removal must bind to an exact numeric comment id plus an author oracle.
+  // Route it to the dedicated hardened flow instead of the post choreography,
+  // which would open the PARENT post's action menu and delete the whole post.
+  if (input.kind === "comment") {
+    return deleteCommentArm(input, options);
   }
 
   const profiles = options.profileManager ?? new ProfileManager();
@@ -85,6 +109,45 @@ async function runDeleteFlow(
       deleted: true,
       targetUrl: input.targetUrl,
     });
+  });
+}
+
+/**
+ * Comment arm: derive the exact numeric comment id and the parent post URL from
+ * the comment permalink, then delegate to the hardened `deleteCommentById`
+ * (bind-to-id → verify author → verify body → confirm → prove detached).
+ */
+async function deleteCommentArm(
+  input: FacebookDeleteInput,
+  options: DeleteOptions,
+): Promise<DeleteResult> {
+  const target = new URL(input.targetUrl);
+  const commentId = target.searchParams.get("comment_id");
+  if (!commentId) {
+    throw new AdapterError(
+      ErrorCode.INVALID_ARGS,
+      "delete --kind comment: targetUrl must be a comment permalink carrying 'comment_id'",
+      { targetUrl: input.targetUrl },
+    );
+  }
+  if (!input.expectedAuthorProfileUrl || input.expectedAuthorProfileUrl.trim() === "") {
+    throw new AdapterError(
+      ErrorCode.MISSING_INPUT,
+      "delete --kind comment: 'expectedAuthorProfileUrl' is required (ownership oracle)",
+      { targetUrl: input.targetUrl },
+    );
+  }
+  const parent = new URL(input.targetUrl);
+  parent.searchParams.delete("comment_id");
+  parent.searchParams.delete("reply_comment_id");
+
+  const run = options.__deleteComment ?? ((i: DeleteCommentInput) => deleteCommentById(i, options));
+  return run({
+    parentPostUrl: parent.href,
+    commentId,
+    expectedAuthorProfileUrl: input.expectedAuthorProfileUrl,
+    expectedContent: input.expectedContent,
+    profile: input.profile,
   });
 }
 

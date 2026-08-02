@@ -108,16 +108,36 @@ async function runDelete(
       message: "delete accepts only one content oracle",
     };
   }
+  const kind = args.kind ?? "post";
+  // PUB-0031: deleting a comment binds to an exact numeric comment id and needs
+  // an ownership oracle — a permalink alone cannot prove the comment is ours.
+  if (kind === "comment") {
+    if (platform !== "facebook") {
+      return {
+        code: ErrorCode.INVALID_ARGS,
+        message: "delete --kind comment is supported only for Facebook",
+      };
+    }
+    if (!args.expectedAuthorProfileUrl) {
+      return {
+        code: ErrorCode.MISSING_INPUT,
+        message: "delete --kind comment requires --expected-author-profile-url",
+      };
+    }
+  }
   const expectedContent = args.expectedContentFile
     ? readDeleteOracle(args.expectedContentFile)
     : args.expectedContent!;
   const res = await makeAdapter(platform, args).delete({
     targetUrl: args.targetUrl,
-    kind: "post",
+    kind,
     expectedContent,
+    ...(args.expectedAuthorProfileUrl
+      ? { expectedAuthorProfileUrl: args.expectedAuthorProfileUrl }
+      : {}),
     profile,
   });
-  return { code: ErrorCode.SUCCESS, message: `deleted ${res.targetUrl}` };
+  return { code: ErrorCode.SUCCESS, message: `deleted ${kind} ${res.targetUrl}` };
 }
 
 async function runEdit(platform: Platform, profile: string, args: ParsedArgs): Promise<RunResult> {
