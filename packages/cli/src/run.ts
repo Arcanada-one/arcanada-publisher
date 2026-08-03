@@ -109,13 +109,14 @@ async function runDelete(
     };
   }
   const kind = args.kind ?? "post";
-  // PUB-0039: deleting a comment binds to an exact numeric comment id and needs
-  // an ownership oracle — a permalink alone cannot prove the comment is ours.
+  // PUB-0039/PUB-0040: deleting a comment binds to an exact platform comment
+  // id/URN and needs an ownership oracle — a permalink alone cannot prove the
+  // comment is ours. Never let a comment fall through to post deletion.
   if (kind === "comment") {
-    if (platform !== "facebook") {
+    if (platform !== "facebook" && platform !== "linkedin") {
       return {
         code: ErrorCode.INVALID_ARGS,
-        message: "delete --kind comment is supported only for Facebook",
+        message: "delete --kind comment is supported only for Facebook and LinkedIn",
       };
     }
     if (!args.expectedAuthorProfileUrl) {

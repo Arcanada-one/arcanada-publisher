@@ -35,7 +35,7 @@ import {
   type EditCommentOptions,
 } from "./comment.js";
 import { edit as editImpl, type EditOptions, type LinkedInEditInput } from "./edit.js";
-import { del as deleteImpl, type DeleteOptions } from "./delete.js";
+import { del as deleteImpl, type DeleteOptions, type LinkedInDeleteInput } from "./delete.js";
 import {
   inspectComposer as inspectComposerImpl,
   type ComposerDiagnostics,
@@ -141,8 +141,8 @@ export class LinkedInAdapter extends BaseAdapter {
     return editImpl(input as LinkedInEditInput, this.opts.editOptions);
   }
 
-  async delete(input: DeleteInput): Promise<DeleteResult> {
-    return deleteImpl(input, this.opts.deleteOptions);
+  async delete(input: DeleteInput | LinkedInDeleteInput): Promise<DeleteResult> {
+    return deleteImpl(input as LinkedInDeleteInput, this.opts.deleteOptions);
   }
 }
 
@@ -157,6 +157,13 @@ export { classifyLiError, mapLiError } from "./errors.js";
 export type { LiErrorType } from "./errors.js";
 export type { LinkedInEditInput } from "./edit.js";
 export type { EditCommentInput } from "./comment.js";
+export type { LinkedInDeleteInput, LinkedInCommentTarget } from "./delete.js";
+export {
+  assertExactCommentBinding,
+  deleteCommentByUrn,
+  deleteExactComment,
+  linkedInProfileIdentity,
+} from "./comment.js";
 export { isVideoPath, isAbortedPublish } from "./publish.js";
 export type { AbortedPublishResult } from "./publish.js";
 export { inspectLinkedInProfilePost } from "./inspect-profile.js";

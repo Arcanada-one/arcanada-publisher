@@ -165,8 +165,9 @@ node packages/cli/dist/index.js delete \
 
 Contract (all gates fail **closed**, before any destructive click):
 
-- `--kind comment` requires a `comment_id`-carrying permalink; the numeric id — not
-  document order — binds the mutation (§6.8). The parent post URL is derived from it.
+- `--kind comment` requires a platform comment permalink carrying an exact comment
+  id/URN; the identity — not document order — binds the mutation (§6.8). The parent post
+  URL is derived from it.
 - `--expected-content-file` is the read-before-delete oracle: the comment's **exact**
   rendered body. Mismatch → abort, nothing deleted.
 - `--expected-author-profile-url` proves the comment is ours. A permalink alone cannot:
@@ -179,7 +180,26 @@ Contract (all gates fail **closed**, before any destructive click):
 - `--kind` defaults to `post`, so existing invocations are unchanged. A comment delete never
   falls through to the post-delete menu (that would delete the whole parent post).
 
-Currently implemented for **Facebook**; other platforms reject `--kind comment` with
+Implemented for **Facebook** and **LinkedIn**; other platforms reject the kind with
+`INVALID_ARGS` rather than silently deleting the wrong object. LinkedIn now has the same
+contract (PUB-0040):
+
+```bash
+node packages/cli/dist/index.js delete \
+  --platform linkedin \
+  --kind comment \
+  --target-url 'https://www.linkedin.com/feed/update/urn:li:activity:<activity-id>/?commentUrn=<encoded-comment-urn>' \
+  --expected-content-file /path/to/exact-comment-body.txt \
+  --expected-author-profile-url 'https://www.linkedin.com/in/<author-slug>/' \
+  --profile default
+```
+
+For LinkedIn, the exact nested `urn:li:comment:(urn:li:activity:<activity-id>,<comment-id>)`
+is the identity anchor. Live markup can omit the known comment container selectors, so the
+adapter discovers rendered evidence through the page text and exact URN-bearing nodes; the
+visible `<Name> Author` line is an allowed author fallback. The matcher accepts only elision
+inside one unbroken token, never a general subsequence. Any ambiguity or missing evidence
+fails closed before the comment menu is opened. Other platforms reject `--kind comment` with
 `INVALID_ARGS` rather than silently deleting the wrong object. To change a comment's text
 use `replace-comment` (delete + add) — in-place comment editing is unsafe (R10).
 
