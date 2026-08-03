@@ -17,12 +17,20 @@ import {
   ErrorCode,
   ProfileManager,
   CommentResultSchema,
+  DeleteResultSchema,
   type CommentInput,
   type CommentResult,
+  type DeleteResult,
 } from "@arcanada/publisher-core";
 import { launchSession, withScreenshotOnFail } from "./context.js";
 import { cssSelectors, selectors } from "./selectors.js";
 import { ACTIVITY_URN_RE, extractActivityId } from "./url-extraction.js";
+import { matchesElidedText, matchesElidedTextSource } from "./elided-text.js";
+
+// The adapter package intentionally does not include the DOM library. This
+// ambient name is erased from the Node bundle; the serialized page callback
+// resolves it against the browser (or a document-shaped boundary fixture).
+declare const document: unknown;
 
 const LINKEDIN_HOSTNAME = "www.linkedin.com";
 
@@ -232,22 +240,53 @@ export async function readExactCommentMatches(
   expectedText: string,
 ): Promise<RenderedCommentMatch[]> {
   return page.evaluate(
-    ({ expected, containerSelector, normalizerSource }) => {
+    ({ expected, containerSelector, normalizerSource, matcherSource }) => {
       interface BrowserElement {
         innerText: string;
-        closest(selector: string): BrowserElement | null;
+        parentElement: BrowserElement | null;
         getAttribute(name: string): string | null;
         querySelectorAll(selector: string): ArrayLike<BrowserElement>;
       }
-      const browserDocument = (
-        globalThis as unknown as {
-          document: { querySelectorAll(selector: string): ArrayLike<BrowserElement> };
-        }
-      ).document;
+      // Keep `document` as a lexical page-callback dependency. Besides being
+      // the browser-native surface, this lets the serialized callback be
+      // executed against a document-shaped fixture in boundary tests.
+      const browserDocument = document as unknown as {
+        querySelectorAll(selector: string): ArrayLike<BrowserElement>;
+      };
       const normalize = new Function(`return (${normalizerSource})`)() as (value: string) => string;
-      const containers = Array.from(browserDocument.querySelectorAll(containerSelector));
+      const bodyMatches = new Function(`return (${matcherSource})`)() as (
+        rendered: string,
+        expected: string,
+      ) => boolean;
+      // The known LinkedIn comment selectors returned zero on the live 2026
+      // surface. Keep them as a fast path, but always add broad text-bearing
+      // elements so verification is not selector-dependent.
+      const containers = [
+        ...new Set([
+          ...Array.from(browserDocument.querySelectorAll(containerSelector)),
+          ...Array.from(browserDocument.querySelectorAll("*")),
+        ]),
+      ];
       const seen = new Set<BrowserElement>();
-      const matches: Array<{ text: string; id: string }> = [];
+      const matches = new Map<string, { text: string; id: string }>();
+      const commentIdFrom = (container: BrowserElement): string => {
+        let current: BrowserElement | null = container;
+        while (current) {
+          const rawValues = [
+            current.getAttribute("data-id"),
+            current.getAttribute("data-urn"),
+            current.getAttribute("data-comment-urn"),
+          ].filter((value): value is string => Boolean(value));
+          for (const raw of rawValues) {
+            const nested = /urn:li:comment:\(.*?,(\d+)\)/.exec(raw);
+            if (nested?.[1]) return nested[1];
+            const simple = /^urn:li:comment:(\d+)$/.exec(raw);
+            if (simple?.[1]) return simple[1];
+          }
+          current = current.parentElement;
+        }
+        return "";
+      };
       for (const container of containers) {
         if (seen.has(container)) continue;
         seen.add(container);
@@ -259,19 +298,546 @@ export async function readExactCommentMatches(
             ),
           ),
         ];
-        if (!bodies.some((body) => normalize(body.innerText) === expected)) continue;
-        const raw = container.closest("[data-id^='urn:li:comment']")?.getAttribute("data-id") ?? "";
-        const id = /urn:li:comment:\(.*?,(\d+)\)/.exec(raw)?.[1] ?? "";
-        matches.push({ text: expected, id });
+        const matchingBodies = bodies.filter((body) =>
+          bodyMatches(normalize(body.innerText), expected),
+        );
+        if (matchingBodies.length === 0) continue;
+        const id = commentIdFrom(container);
+        const key = id || `text:${normalize(matchingBodies[0]!.innerText)}`;
+        matches.set(key, { text: expected, id });
       }
-      return matches;
+      return [...matches.values()];
     },
     {
-      expected: expectedText,
+      expected: normalizeCommentBody(expectedText),
       containerSelector: commentContainerSelector,
       normalizerSource: normalizeRenderedCommentText.toString(),
+      matcherSource: matchesElidedTextSource,
     },
   );
+}
+
+// --- R13: exact LinkedIn comment deletion ----------------------------------
+
+/** The marker is applied only after the exact URN/author/body candidate wins. */
+export const LINKEDIN_COMMENT_DELETE_TARGET_ATTR = "data-arcanada-delete-comment-target";
+
+export interface LinkedInDeleteCommentInput {
+  targetUrl: string;
+  parentPostUrl: string;
+  /** Exact LinkedIn comment URN, not a post/activity URN. */
+  commentUrn: string;
+  /** Stable `/in/<slug>` ownership oracle. */
+  expectedAuthorProfileUrl: string;
+  /** Read-before-delete body oracle. */
+  expectedContent: string;
+  profile: string;
+}
+
+export interface LinkedInDeleteCommentEvidence {
+  preDeleteCommentUrns: readonly string[];
+}
+
+export interface LinkedInCommentBindingEvidence {
+  commentUrn: string;
+  renderedBodyCandidates: readonly string[];
+  renderedAuthorProfileHrefs: readonly string[];
+  /** Live LinkedIn fallback: visible `<Name> Author` lines. */
+  renderedAuthorLines: readonly string[];
+}
+
+export interface LinkedInDeleteCommentOptions {
+  headed?: boolean;
+  profileManager?: ProfileManager;
+  page?: Page;
+  /** Test seam for the complete exact bind → confirm → detach step. */
+  __deleteStep?: (
+    page: Page,
+    input: LinkedInDeleteCommentInput,
+  ) => Promise<LinkedInDeleteCommentEvidence>;
+  skipTeardown?: boolean;
+}
+
+/**
+ * Delete exactly one LinkedIn comment. The post-delete path in delete.ts calls
+ * this function rather than reusing the post menu choreography, which keeps a
+ * comment target from ever becoming a whole-post deletion.
+ */
+export async function deleteCommentByUrn(
+  input: LinkedInDeleteCommentInput,
+  options: LinkedInDeleteCommentOptions = {},
+): Promise<DeleteResult> {
+  assertParentActivityUrl(input.parentPostUrl);
+  assertExactLinkedInMutationTarget("deleteCommentByUrn", input);
+
+  const profiles = options.profileManager ?? new ProfileManager();
+  const profileDir = profiles.ensureProfileExists("linkedin", input.profile);
+  if (options.page) return runDeleteCommentFlow(options.page, input, options);
+
+  const session = await launchSession({
+    profileDir,
+    ...(options.headed !== undefined ? { headed: options.headed } : {}),
+  });
+  try {
+    return await runDeleteCommentFlow(session.page, input, options);
+  } finally {
+    if (!options.skipTeardown) await session.close();
+  }
+}
+
+/** Compatibility alias: LinkedIn's stable comment target is an URN. */
+export const deleteCommentById = deleteCommentByUrn;
+
+async function runDeleteCommentFlow(
+  page: Page,
+  input: LinkedInDeleteCommentInput,
+  options: LinkedInDeleteCommentOptions,
+): Promise<DeleteResult> {
+  return withScreenshotOnFail(page, "comment-delete", async () => {
+    const step = options.__deleteStep ?? defaultDeleteCommentStep;
+    await step(page, input);
+    return DeleteResultSchema.parse({
+      ok: true,
+      platform: "linkedin",
+      account: `urn:li:activity:${extractActivityId(input.parentPostUrl)}`,
+      deleted: true,
+      targetUrl: input.targetUrl,
+    });
+  });
+}
+
+async function defaultDeleteCommentStep(
+  page: Page,
+  input: LinkedInDeleteCommentInput,
+): Promise<LinkedInDeleteCommentEvidence> {
+  await page.goto(input.parentPostUrl, { waitUntil: "domcontentloaded" });
+  return deleteExactComment(page, input);
+}
+
+/**
+ * The single LinkedIn comment deletion choreography: exact target binding,
+ * author/body verification, scoped menu and confirmation, and detached proof.
+ * Nothing after the confirmation click is retried; uncertainty is UNKNOWN.
+ */
+export async function deleteExactComment(
+  page: Page,
+  input: LinkedInDeleteCommentInput,
+): Promise<LinkedInDeleteCommentEvidence> {
+  const candidates = (await readAndMarkExactLinkedInComments(page, input)).map((candidate) => ({
+    ...candidate,
+    renderedBodyCandidates: [...candidate.renderedBodyCandidates],
+    renderedAuthorProfileHrefs: [...candidate.renderedAuthorProfileHrefs],
+    renderedAuthorLines: [...candidate.renderedAuthorLines],
+  }));
+  if (candidates.length !== 1) {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "deleteCommentByUrn: exact LinkedIn comment target is missing or ambiguous; refusing delete",
+      {
+        parentPostUrl: input.parentPostUrl,
+        commentUrn: input.commentUrn,
+        liErrorType: "verify_mismatch",
+        candidateCount: candidates.length,
+      },
+    );
+  }
+
+  const binding = candidates[0]!;
+  assertExactCommentBinding(input, binding, "deleteCommentByUrn");
+
+  const target = page.locator(`[${LINKEDIN_COMMENT_DELETE_TARGET_ATTR}="true"]`);
+  if ((await target.count()) !== 1) {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "deleteCommentByUrn: exact comment marker is missing or ambiguous; refusing delete",
+      { commentUrn: input.commentUrn, liErrorType: "verify_mismatch" },
+    );
+  }
+
+  const menus = target.getByRole("button", { name: selectors.commentOptionsMenu });
+  if ((await menus.count()) !== 1) {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "deleteCommentByUrn: exact comment action menu is ambiguous; refusing delete",
+      {
+        commentUrn: input.commentUrn,
+        liErrorType: "verify_mismatch",
+        menuCount: await menus.count(),
+      },
+    );
+  }
+  await menus.first().waitFor({ state: "visible", timeout: 5_000 });
+  await menus.first().click();
+
+  await page.waitForTimeout(800);
+  const openMenu = page.locator('[role="menu"]').last();
+  const openMenuCount = await openMenu.count();
+  if (openMenuCount !== 1) {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "deleteCommentByUrn: opened comment menu is missing or ambiguous; refusing delete",
+      { commentUrn: input.commentUrn, liErrorType: "verify_mismatch", menuCount: openMenuCount },
+    );
+  }
+  const deleteItems = openMenu
+    .getByRole("menuitem", { name: selectors.deleteMenuItem, exact: true })
+    .or(openMenu.getByRole("button", { name: selectors.deleteMenuItem, exact: true }));
+  const deleteItemCount = await deleteItems.count();
+  if (deleteItemCount !== 1) {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "deleteCommentByUrn: exact delete item is ambiguous; refusing delete",
+      {
+        commentUrn: input.commentUrn,
+        liErrorType: "verify_mismatch",
+        deleteItemCount,
+      },
+    );
+  }
+  await deleteItems.first().waitFor({ state: "visible", timeout: 5_000 });
+  await deleteItems.first().click();
+
+  await page.waitForTimeout(800);
+  const dialog = page.locator('[role="dialog"]').last();
+  const dialogCount = await dialog.count();
+  if (dialogCount > 1) {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "deleteCommentByUrn: confirmation dialogs are ambiguous; refusing delete",
+      { commentUrn: input.commentUrn, liErrorType: "verify_mismatch", dialogCount },
+    );
+  }
+  const confirmationScope = dialogCount === 1 ? dialog : page;
+  const confirms = confirmationScope.getByRole("button", {
+    name: selectors.confirmDelete,
+    exact: true,
+  });
+  const confirmCount = await confirms.count();
+  if (confirmCount !== 1) {
+    throw new AdapterError(
+      ErrorCode.VERIFY_FAILED,
+      "deleteCommentByUrn: exact confirmation is ambiguous; refusing delete",
+      {
+        commentUrn: input.commentUrn,
+        liErrorType: "verify_mismatch",
+        confirmCount,
+        scopedToDialog: dialogCount === 1,
+      },
+    );
+  }
+
+  const preDeleteCommentUrns = [input.commentUrn];
+  try {
+    await confirms.first().click();
+    await page.waitForTimeout(3_000);
+    await target.waitFor({ state: "detached", timeout: 10_000 });
+  } catch (cause) {
+    throw asUnknownLinkedInDeleteState("confirm-or-detach", input, cause, {
+      preDeleteCandidateCount: 1,
+    });
+  }
+  return { preDeleteCommentUrns };
+}
+
+/** Pure fail-closed binding assertion used by the browser path and tests. */
+export function assertExactCommentBinding(
+  input: LinkedInDeleteCommentInput,
+  evidence: LinkedInCommentBindingEvidence,
+  label = "deleteCommentByUrn",
+): void {
+  if (normalizeCommentUrn(evidence.commentUrn) !== normalizeCommentUrn(input.commentUrn)) {
+    throw linkedInBindingError("comment URN mismatch", input, label);
+  }
+  const expected = normalizeCommentBody(input.expectedContent);
+  if (
+    !evidence.renderedBodyCandidates.some((candidate) =>
+      matchesElidedText(normalizeRenderedCommentText(candidate), expected),
+    )
+  ) {
+    throw linkedInBindingError("exact comment body mismatch", input, label);
+  }
+  const expectedIdentity = linkedInProfileIdentity(input.expectedAuthorProfileUrl);
+  const hrefMatches = evidence.renderedAuthorProfileHrefs.some(
+    (href) => safeLinkedInProfileIdentity(href) === expectedIdentity,
+  );
+  const expectedSlug = expectedIdentity.split("/in/")[1]!;
+  const lineMatches = evidence.renderedAuthorLines.some((line) =>
+    authorLineMatches(line, expectedSlug),
+  );
+  if (!hrefMatches && !lineMatches) {
+    throw linkedInBindingError("expected comment author mismatch", input, label);
+  }
+}
+
+async function readAndMarkExactLinkedInComments(
+  page: Page,
+  input: LinkedInDeleteCommentInput,
+): Promise<LinkedInCommentBindingEvidence[]> {
+  return page.evaluate(
+    ({ expectedUrn, expectedBody, expectedAuthorSlug, matcherSource, markerAttr }) => {
+      interface BrowserElement {
+        innerText?: string;
+        textContent?: string | null;
+        tagName?: string;
+        parentElement: BrowserElement | null;
+        getAttribute(name: string): string | null;
+        querySelectorAll(selector: string): ArrayLike<BrowserElement>;
+        contains(other: BrowserElement): boolean;
+        setAttribute(name: string, value: string): void;
+        removeAttribute(name: string): void;
+      }
+      const browserDocument = (
+        globalThis as unknown as {
+          document: {
+            body?: BrowserElement;
+            querySelectorAll(selector: string): ArrayLike<BrowserElement>;
+            location?: { href?: string };
+          };
+          location?: { href?: string };
+        }
+      ).document;
+      const all = [
+        ...(browserDocument.body ? [browserDocument.body] : []),
+        ...Array.from(browserDocument.querySelectorAll("*")),
+      ];
+      const normalize = (value: string): string =>
+        value
+          .replace(/\r\n/g, "\n")
+          .replace(/\n\s*(?:…|\.\.\.)\s*more\s*$/i, "")
+          .trim();
+      const matcher = new Function(`return (${matcherSource})`)() as (
+        rendered: string,
+        expected: string,
+      ) => boolean;
+      const decode = (value: string): string => {
+        try {
+          return decodeURIComponent(value);
+        } catch {
+          return value;
+        }
+      };
+      const textOf = (node: BrowserElement): string =>
+        String(node.innerText ?? node.textContent ?? "");
+      const rawIdentityValues = (node: BrowserElement): string[] =>
+        [
+          node.getAttribute("data-id"),
+          node.getAttribute("data-urn"),
+          node.getAttribute("data-comment-urn"),
+          node.getAttribute("href"),
+        ].filter((value): value is string => Boolean(value));
+      const ownsExpectedUrn = (node: BrowserElement): boolean =>
+        rawIdentityValues(node).some((value) => {
+          const decodedValue = decode(value).trim();
+          if (decodedValue === expectedUrn) return true;
+          try {
+            const parsed = new URL(
+              value,
+              browserDocument.location?.href ?? "https://www.linkedin.com",
+            );
+            return [
+              parsed.searchParams.get("commentUrn"),
+              parsed.searchParams.get("comment_urn"),
+              parsed.searchParams.get("comment-urn"),
+            ].some((candidate) => decode(candidate ?? "").trim() === expectedUrn);
+          } catch {
+            return false;
+          }
+        });
+      const descendants = (node: BrowserElement): BrowserElement[] => [
+        node,
+        ...Array.from(node.querySelectorAll("*")),
+      ];
+      const hrefIdentity = (raw: string): string => {
+        try {
+          const parsed = new URL(raw, browserDocument.location?.href ?? "https://www.linkedin.com");
+          if (!/^(www\.)?linkedin\.com$/i.test(parsed.hostname)) return "";
+          const match = /^\/in\/([^/]+)\/?$/.exec(parsed.pathname);
+          return match ? `www.linkedin.com/in/${match[1]!.toLowerCase()}` : "";
+        } catch {
+          return "";
+        }
+      };
+      const authorData = (owner: BrowserElement) => {
+        const hrefs = descendants(owner)
+          .map((node) => hrefIdentity(node.getAttribute("href") ?? ""))
+          .filter(Boolean);
+        const lines = textOf(owner)
+          .split(/\n+/)
+          .map((line) => line.normalize("NFKC").trim())
+          .filter((line) => /\bAuthor\s*$/i.test(line));
+        const expectedSlug = expectedAuthorSlug.replace(/[^a-z0-9]/gi, "").toLowerCase();
+        const lineMatches = lines.some((line) => {
+          const name = line.replace(/\s+Author\s*$/i, "").replace(/[^a-z0-9]/gi, "");
+          return name.toLowerCase() === expectedSlug;
+        });
+        return { hrefs: [...new Set(hrefs)], lines: [...new Set(lines)], lineMatches };
+      };
+      const bodyMatches = (node: BrowserElement): boolean =>
+        matcher(normalize(textOf(node)), expectedBody);
+      const bodyNodes = all
+        .filter(bodyMatches)
+        .filter(
+          (node) =>
+            !all.some((other) => other !== node && node.contains(other) && bodyMatches(other)),
+        );
+      const ownerFor = (body: BrowserElement): BrowserElement | null => {
+        const chain: BrowserElement[] = [];
+        let current: BrowserElement | null = body;
+        while (current) {
+          chain.push(current);
+          current = current.parentElement;
+        }
+        for (const owner of chain) {
+          if (!descendants(owner).some(ownsExpectedUrn)) continue;
+          const authors = authorData(owner);
+          if (
+            authors.hrefs.includes(`www.linkedin.com/in/${expectedAuthorSlug.toLowerCase()}`) ||
+            authors.lineMatches
+          )
+            return owner;
+        }
+        return null;
+      };
+      for (const node of all) node.removeAttribute(markerAttr);
+      const unique = new Map<BrowserElement, LinkedInCommentBindingEvidence>();
+      for (const body of bodyNodes) {
+        const owner = ownerFor(body);
+        if (!owner || owner === browserDocument.body) continue;
+        const authors = authorData(owner);
+        unique.set(owner, {
+          commentUrn: expectedUrn,
+          renderedBodyCandidates: [textOf(body)],
+          renderedAuthorProfileHrefs: authors.hrefs,
+          renderedAuthorLines: authors.lines,
+        });
+      }
+      const result = [...unique.entries()];
+      if (result.length === 1) result[0]![0].setAttribute(markerAttr, "true");
+      else for (const [owner] of result) owner.removeAttribute(markerAttr);
+      return result.map(([, evidence]) => evidence);
+    },
+    {
+      expectedUrn: input.commentUrn,
+      expectedBody: normalizeCommentBody(input.expectedContent),
+      expectedAuthorSlug: linkedInProfileIdentity(input.expectedAuthorProfileUrl).split("/in/")[1]!,
+      matcherSource: matchesElidedTextSource,
+      markerAttr: LINKEDIN_COMMENT_DELETE_TARGET_ATTR,
+    },
+  );
+}
+
+function assertExactLinkedInMutationTarget(label: string, input: LinkedInDeleteCommentInput): void {
+  if (!input.expectedContent || input.expectedContent.trim() === "") {
+    throw new AdapterError(
+      ErrorCode.MISSING_INPUT,
+      `${label}: 'expectedContent' is required (read-before-delete oracle)`,
+    );
+  }
+  if (!input.commentUrn || !isLinkedInCommentUrn(input.commentUrn)) {
+    throw new AdapterError(
+      ErrorCode.INVALID_ARGS,
+      `${label}: 'commentUrn' must be an exact LinkedIn comment URN`,
+      { commentUrn: input.commentUrn },
+    );
+  }
+  if (!input.expectedAuthorProfileUrl || input.expectedAuthorProfileUrl.trim() === "") {
+    throw new AdapterError(
+      ErrorCode.MISSING_INPUT,
+      `${label}: 'expectedAuthorProfileUrl' is required (stable ownership oracle)`,
+    );
+  }
+  linkedInProfileIdentity(input.expectedAuthorProfileUrl);
+}
+
+function linkedInBindingError(
+  reason: string,
+  input: LinkedInDeleteCommentInput,
+  label: string,
+): AdapterError {
+  return new AdapterError(ErrorCode.VERIFY_FAILED, `${label}: ${reason}; refusing delete`, {
+    parentPostUrl: input.parentPostUrl,
+    commentUrn: input.commentUrn,
+    liErrorType: "verify_mismatch",
+  });
+}
+
+function asUnknownLinkedInDeleteState(
+  stage: string,
+  input: LinkedInDeleteCommentInput,
+  cause: unknown,
+  evidence: Record<string, unknown>,
+): AdapterError {
+  const causeDetails = cause instanceof AdapterError ? cause.details : undefined;
+  return new AdapterError(
+    ErrorCode.VERIFY_FAILED,
+    `deleteCommentByUrn: LinkedIn state UNKNOWN after irreversible confirmation; do not retry blindly (${stage})`,
+    {
+      unknown: true,
+      reconcileRequired: true,
+      stage,
+      targetUrl: input.targetUrl,
+      parentPostUrl: input.parentPostUrl,
+      commentUrn: input.commentUrn,
+      expectedAuthorIdentity: safeLinkedInProfileIdentity(input.expectedAuthorProfileUrl),
+      expectedContentSha256: sha256(input.expectedContent),
+      expectedContentLength: input.expectedContent.length,
+      evidence,
+      causeName: cause instanceof Error ? cause.name : typeof cause,
+      causeCode: cause instanceof AdapterError ? cause.code : causeDetails?.["code"],
+      liErrorType: "verify_mismatch",
+    },
+  );
+}
+
+function isLinkedInCommentUrn(value: string): boolean {
+  return /^urn:li:comment:\(urn:li:activity:\d+,\d+\)$/.test(normalizeCommentUrn(value));
+}
+
+function normalizeCommentUrn(value: string): string {
+  try {
+    return decodeURIComponent(value).trim();
+  } catch {
+    return value.trim();
+  }
+}
+
+function normalizeCommentBody(value: string): string {
+  return value.replace(/\r\n/g, "\n");
+}
+
+export function linkedInProfileIdentity(rawUrl: string): string {
+  const parsed = new URL(rawUrl, "https://www.linkedin.com");
+  if (!/^(www\.)?linkedin\.com$/i.test(parsed.hostname)) {
+    throw new AdapterError(
+      ErrorCode.INVALID_ARGS,
+      "deleteCommentByUrn requires a LinkedIn author profile URL",
+    );
+  }
+  const match = /^\/in\/([^/]+)\/?$/.exec(parsed.pathname);
+  if (!match) {
+    throw new AdapterError(
+      ErrorCode.INVALID_ARGS,
+      "deleteCommentByUrn requires a stable /in/ author profile URL",
+    );
+  }
+  return `www.linkedin.com/in/${match[1]!.toLowerCase()}`;
+}
+
+function safeLinkedInProfileIdentity(rawUrl: string): string {
+  try {
+    return linkedInProfileIdentity(rawUrl);
+  } catch {
+    return "";
+  }
+}
+
+function authorLineMatches(line: string, expectedSlug: string): boolean {
+  const name = line.replace(/\s+Author\s*$/i, "").replace(/[^a-z0-9]/gi, "");
+  return name.toLowerCase() === expectedSlug.replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
 function verifiedEvidenceId(activityId: string, text: string): string {

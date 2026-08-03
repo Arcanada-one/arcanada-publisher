@@ -16,10 +16,16 @@ import {
 import { selectors, shadowClickPatterns } from "./selectors.js";
 import { launchSession, withScreenshotOnFail } from "./context.js";
 import { shadowClickButtonJs, shadowFindActivityUrnJs } from "./dom-shadow.js";
+import { deleteCommentByUrn, type LinkedInDeleteCommentInput } from "./comment.js";
 
 const DELETE_TARGET_ATTR = "data-arcanada-delete-target";
 
 const LINKEDIN_HOSTNAME = "www.linkedin.com";
+
+export interface LinkedInDeleteInput extends DeleteInput {
+  /** Required when `kind === "comment"`: stable profile URL of the author. */
+  expectedAuthorProfileUrl?: string;
+}
 
 export interface DeleteOptions {
   headed?: boolean;
@@ -29,10 +35,15 @@ export interface DeleteOptions {
   __readContent?: (page: Page, input: DeleteInput) => Promise<string>;
   /** Test seam: perform the destructive control-menu → Delete → confirm flow. */
   __performDelete?: (page: Page, input: DeleteInput) => Promise<void>;
+  /** Test seam: the exact comment deletion arm. */
+  __deleteComment?: (input: LinkedInDeleteCommentInput) => Promise<DeleteResult>;
   skipTeardown?: boolean;
 }
 
-export async function del(input: DeleteInput, options: DeleteOptions = {}): Promise<DeleteResult> {
+export async function del(
+  input: LinkedInDeleteInput,
+  options: DeleteOptions = {},
+): Promise<DeleteResult> {
   assertTargetHost(input.targetUrl);
   if (!input.expectedContent || input.expectedContent.trim() === "") {
     throw new AdapterError(
@@ -40,6 +51,10 @@ export async function del(input: DeleteInput, options: DeleteOptions = {}): Prom
       "delete: 'expectedContent' is required (read-before-delete oracle)",
     );
   }
+
+  // A comment is not a post. Route it before creating the post-delete flow so
+  // the post action menu can never be used for a LinkedIn comment target.
+  if (input.kind === "comment") return deleteCommentArm(input, options);
 
   const profiles = options.profileManager ?? new ProfileManager();
   const profileDir = profiles.ensureProfileExists("linkedin", input.profile);
@@ -58,6 +73,135 @@ export async function del(input: DeleteInput, options: DeleteOptions = {}): Prom
     if (!options.skipTeardown) {
       await session.close();
     }
+  }
+}
+
+/**
+ * Parse the exact comment target and delegate all destructive choreography to
+ * the shared comment boundary in comment.ts.
+ */
+async function deleteCommentArm(
+  input: LinkedInDeleteInput,
+  options: DeleteOptions,
+): Promise<DeleteResult> {
+  const target = parseLinkedInCommentTarget(input.targetUrl);
+  if (!input.expectedAuthorProfileUrl || input.expectedAuthorProfileUrl.trim() === "") {
+    throw new AdapterError(
+      ErrorCode.MISSING_INPUT,
+      "delete --kind comment: 'expectedAuthorProfileUrl' is required (ownership oracle)",
+      { targetUrl: input.targetUrl },
+    );
+  }
+  const run =
+    options.__deleteComment ??
+    ((comment: LinkedInDeleteCommentInput) => deleteCommentByUrn(comment, options));
+  return run({
+    targetUrl: input.targetUrl,
+    parentPostUrl: target.parentPostUrl,
+    commentUrn: target.commentUrn,
+    expectedAuthorProfileUrl: input.expectedAuthorProfileUrl,
+    expectedContent: input.expectedContent,
+    profile: input.profile,
+  });
+}
+
+export interface LinkedInCommentTarget {
+  commentUrn: string;
+  parentPostUrl: string;
+}
+
+const COMMENT_URN_RE = /^urn:li:comment:\(urn:li:activity:(\d+),(\d+)\)$/;
+
+/**
+ * Accept the LinkedIn comment URN query used by browser permalinks, plus the
+ * numeric legacy query forms when the activity path supplies the parent. The
+ * returned URN is always the canonical nested activity/comment form.
+ */
+export function parseLinkedInCommentTarget(targetUrl: string): LinkedInCommentTarget {
+  let parsed: URL;
+  try {
+    parsed = new URL(targetUrl);
+  } catch (cause) {
+    throw new AdapterError(
+      ErrorCode.INVALID_ARGS,
+      `delete --kind comment: targetUrl is not a valid URL: ${targetUrl}`,
+      { cause: cause instanceof Error ? cause.message : String(cause) },
+    );
+  }
+  if (parsed.hostname !== LINKEDIN_HOSTNAME) {
+    throw new AdapterError(
+      ErrorCode.INVALID_ARGS,
+      `delete --kind comment: targetUrl host '${parsed.hostname}' is not '${LINKEDIN_HOSTNAME}'`,
+      { targetUrl },
+    );
+  }
+
+  const decodedHref = decodeURIComponentSafe(parsed.href);
+  const queryValue = [
+    parsed.searchParams.get("commentUrn"),
+    parsed.searchParams.get("comment_urn"),
+    parsed.searchParams.get("comment-urn"),
+    parsed.searchParams.get("commentId"),
+    parsed.searchParams.get("comment_id"),
+  ].find((value) => value !== null && value.trim() !== "");
+  const embeddedUrn = decodedHref.match(/urn:li:comment:\(urn:li:activity:\d+,\d+\)/)?.[0];
+  const raw = queryValue ?? embeddedUrn;
+  const activityId = activityIdFromUrl(targetUrl);
+  if (!raw) {
+    throw new AdapterError(
+      ErrorCode.INVALID_ARGS,
+      "delete --kind comment: targetUrl must carry an exact LinkedIn comment URN/id",
+      { targetUrl },
+    );
+  }
+
+  const decoded = decodeURIComponentSafe(raw).trim();
+  const nested = COMMENT_URN_RE.exec(decoded);
+  let commentUrn: string;
+  let nestedActivityId: string | undefined;
+  if (nested) {
+    nestedActivityId = nested[1];
+    commentUrn = decoded;
+  } else if (/^\d+$/.test(decoded) && activityId) {
+    nestedActivityId = activityId;
+    commentUrn = `urn:li:comment:(urn:li:activity:${activityId},${decoded})`;
+  } else if (/^urn:li:comment:\d+$/.test(decoded) && activityId) {
+    nestedActivityId = activityId;
+    commentUrn = `urn:li:comment:(urn:li:activity:${activityId},${decoded.replace(/^urn:li:comment:/, "")})`;
+  } else {
+    throw new AdapterError(
+      ErrorCode.INVALID_ARGS,
+      "delete --kind comment: targetUrl comment URN/id is not an exact LinkedIn comment target",
+      { targetUrl },
+    );
+  }
+
+  if (nestedActivityId && activityId && nestedActivityId !== activityId) {
+    throw new AdapterError(
+      ErrorCode.INVALID_ARGS,
+      "delete --kind comment: comment URN parent does not match target URL activity",
+      { targetUrl },
+    );
+  }
+
+  const parentActivityId = nestedActivityId ?? activityId;
+  if (!parentActivityId) {
+    throw new AdapterError(
+      ErrorCode.INVALID_ARGS,
+      "delete --kind comment: exact comment target does not identify its parent activity",
+      { targetUrl },
+    );
+  }
+  const parentPostUrl = new URL(`/feed/update/urn:li:activity:${parentActivityId}/`, parsed.origin)
+    .href;
+  return { commentUrn, parentPostUrl };
+}
+
+function decodeURIComponentSafe(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
   }
 }
 

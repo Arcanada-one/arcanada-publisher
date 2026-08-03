@@ -19,6 +19,10 @@ import { run } from "../src/run.js";
 const PARENT = "https://www.facebook.com/pavelvalentov/posts/pfbid-target";
 const COMMENT_URL = `${PARENT}?comment_id=2232816490902550`;
 const AUTHOR = "https://www.facebook.com/pavelvalentov";
+const LI_PARENT = "https://www.linkedin.com/feed/update/urn:li:activity:7462962260978642944/";
+const LI_URN = "urn:li:comment:(urn:li:activity:7462962260978642944,9001)";
+const LI_COMMENT_URL = `${LI_PARENT}?commentUrn=${encodeURIComponent(LI_URN)}`;
+const LI_AUTHOR = "https://www.linkedin.com/in/pavelvalentov/";
 const BODY = "Плагин в Chrome Web Store:\nhttps://chromewebstore.google.com/detail/x";
 
 function oracleFile(body = BODY): string {
@@ -98,11 +102,36 @@ describe("delete --kind comment CLI", () => {
     expect(del).not.toHaveBeenCalled();
   });
 
-  it("refuses comment deletion on platforms that do not implement it", async () => {
+  it("routes LinkedIn comment deletion with the exact kind and author oracle", async () => {
     const result = await run([
       "delete",
       "--platform",
       "linkedin",
+      "--kind",
+      "comment",
+      "--target-url",
+      LI_COMMENT_URL,
+      "--expected-content-file",
+      oracleFile(),
+      "--expected-author-profile-url",
+      LI_AUTHOR,
+    ]);
+
+    expect(result.code).toBe(ErrorCode.SUCCESS);
+    expect(del).toHaveBeenCalledWith({
+      targetUrl: LI_COMMENT_URL,
+      kind: "comment",
+      expectedContent: BODY,
+      expectedAuthorProfileUrl: LI_AUTHOR,
+      profile: "default",
+    });
+  });
+
+  it("refuses comment deletion on platforms that do not implement it", async () => {
+    const result = await run([
+      "delete",
+      "--platform",
+      "x",
       "--kind",
       "comment",
       "--target-url",
