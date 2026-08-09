@@ -49,8 +49,8 @@ waveform, and matching local/CDN hashes prove only that an audio file exists.
 They do **not** prove that the file says the approved narration. Treat every TTS
 output as untrusted until the final MP3 passes this gate.
 
-Before an MP3 may be uploaded, registered in the blog manifest, used as input to
-the video generator, or attached to a public post:
+Normally, before an MP3 may be uploaded, registered in the blog manifest, used as
+input to the video generator, or attached to a public post:
 
 1. Freeze the exact normalized narration and record its SHA-256 together with the
    final MP3 SHA-256, language, voice id, and TTS engine/model.
@@ -75,6 +75,18 @@ the video generator, or attached to a public post:
 Any regeneration or byte change invalidates the prior approval and requires the
 gate again. Voice-reference audio and biometrics remain private; only the
 narration, hashes, transcripts, and review result belong in campaign evidence.
+
+### Operator-directed site-first review exception
+
+When the operator explicitly asks for fresh narration to be published on an
+Arcanada first-party blog so it can be listened to there, the site may receive
+the new MP3 before step 3 is complete. In that mode the campaign evidence MUST
+remain `REVIEW_REQUIRED` / `PENDING`, the live player URL is the review surface,
+and the asset MUST NOT be described as approved. The exception does not
+authorize an unreviewed narration-backed MP4 on Telegram, X, LinkedIn, Facebook,
+VK, YouTube, or another social destination. After the operator confirms the
+live-site listen, complete the checklist and receipt, then apply the normal
+Publisher gates.
 
 ### Evidence contract and current enforcement boundary
 
