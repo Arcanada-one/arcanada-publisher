@@ -1401,3 +1401,123 @@ function fakePage(root: FakeNode) {
     screenshot: async () => Buffer.from("png"),
   } as never;
 }
+
+describe("expectNativeVideo — reading back a text or image post (PUB-0041)", () => {
+  it("rejects a post without native video by default", async () => {
+    // The default MUST stay strict: every video-publishing caller relies on
+    // this assertion, so relaxing it for image posts must not weaken them.
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "li-inspect-")), "evidence");
+    await expect(
+      inspectLinkedInProfilePost(input(evidenceDir), options([[post({ hasNativeVideo: false })]])),
+    ).rejects.toThrow(/no native video/);
+  });
+
+  it("accepts a post without native video when expectNativeVideo is false", async () => {
+    // Real need 2026-08-09: recovering the vanity permalink of an IMAGE
+    // announcement for the blog's `social` back-link block. The post is ours
+    // and exactly matched; only the media kind differs.
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "li-inspect-")), "evidence");
+    const result = await inspectLinkedInProfilePost(
+      { ...input(evidenceDir), expectNativeVideo: false },
+      options([[post({ hasNativeVideo: false })], [post({ hasNativeVideo: false })]]),
+    );
+    expect(result).toMatchObject({
+      activityId: ID,
+      authorProfileIdentity: "www.linkedin.com/in/pavelvalentov",
+      canonicalParentPermalink: expect.stringContaining("/posts/"),
+      hasNativeVideo: false,
+    });
+  });
+
+  it("still binds author identity when the video assertion is relaxed", async () => {
+    // Relaxing the media assertion must not open the identity hole — an
+    // impostor's post is still refused.
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "li-inspect-")), "evidence");
+    await expect(
+      inspectLinkedInProfilePost(
+        { ...input(evidenceDir), expectNativeVideo: false },
+        options([
+          [
+            post({
+              hasNativeVideo: false,
+              authorProfileHref: "https://www.linkedin.com/in/impostor/",
+            }),
+          ],
+        ]),
+      ),
+    ).rejects.toThrow(/different author identity/);
+  });
+
+  it("reports the observed media kind rather than asserting true", async () => {
+    const evidenceDir = join(mkdtempSync(join(tmpdir(), "li-inspect-")), "evidence");
+    const result = await inspectLinkedInProfilePost(
+      input(evidenceDir),
+      options([[post()], [post()]]),
+    );
+    expect(result.hasNativeVideo).toBe(true);
+  });
+});
+
+describe("detail-card proving without native video (PUB-0041)", () => {
+  it("proves an exact image card when expectNativeVideo is false", async () => {
+    // Exact body SHA-256 + author identity already pin the card; the video
+    // filter only narrowed the media kind and blocked image posts entirely.
+    const root = new FakeNode("");
+    const card = detailCard(root, { hasVideo: false });
+    const menu = card.querySelectorAll("button")[0]!;
+
+    const diagnostic = await inspectExactDetailPostMenu(root, {
+      ...detailOracle(true),
+      expectNativeVideo: false,
+    });
+
+    expect(diagnostic).toMatchObject({
+      exactBodyCardCount: 1,
+      exactAuthorCardCount: 1,
+      nativeVideoCardCount: 0,
+      provenCardCount: 1,
+      clicked: true,
+    });
+    expect(menu.clickCount).toBe(1);
+  });
+
+  it("still refuses a card whose body hash differs, video assertion relaxed", async () => {
+    // Relaxing the media kind must not relax the body binding. The card renders
+    // BODY, so an oracle expecting a different body must not prove it.
+    const root = new FakeNode("");
+    const card = detailCard(root, { hasVideo: false });
+    const menu = card.querySelectorAll("button")[0]!;
+    const otherBody = "A different post body entirely.";
+
+    const diagnostic = await inspectExactDetailPostMenu(root, {
+      ...detailOracle(true),
+      expectedBodySha256: createHash("sha256").update(otherBody, "utf8").digest("hex"),
+      expectedBodyLength: otherBody.length,
+      expectNativeVideo: false,
+    });
+
+    expect(diagnostic).toMatchObject({ exactBodyCardCount: 0, provenCardCount: 0, clicked: false });
+    expect(menu.clickCount).toBe(0);
+  });
+
+  it("still refuses a card authored by someone else, video assertion relaxed", async () => {
+    const root = new FakeNode("");
+    const card = detailCard(root, {
+      hasVideo: false,
+      authorHref: "https://www.linkedin.com/in/impostor/",
+    });
+    const menu = card.querySelectorAll("button")[0]!;
+
+    const diagnostic = await inspectExactDetailPostMenu(root, {
+      ...detailOracle(true),
+      expectNativeVideo: false,
+    });
+
+    expect(diagnostic).toMatchObject({
+      exactAuthorCardCount: 0,
+      provenCardCount: 0,
+      clicked: false,
+    });
+    expect(menu.clickCount).toBe(0);
+  });
+});

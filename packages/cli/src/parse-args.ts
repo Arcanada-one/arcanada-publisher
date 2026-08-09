@@ -88,6 +88,12 @@ export interface ParsedArgs {
   /** X-specific (PUB-0033): opt-in Premium long-form mode (25 000-char limit). */
   premium: boolean;
   /**
+   * PUB-0041: drop `inspect-profile-post`'s native-video requirement so a text
+   * or image post can be read back. Default keeps the assertion on, so every
+   * video caller retains its guarantee.
+   */
+  noExpectNativeVideo: boolean;
+  /**
    * PUB-0033: run the browser headed (visible) instead of headless. Large video
    * uploads settle far more reliably in a headed context; default stays headless.
    */
@@ -176,6 +182,7 @@ const BOOL_FLAGS = new Set([
   "--dry-run",
   "--list-presets",
   "--premium",
+  "--no-expect-native-video",
   "--headed",
   "--browser",
   "--single-article",
@@ -226,6 +233,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     language: undefined,
     privacy: undefined,
     premium: false,
+    noExpectNativeVideo: false,
     headed: false,
     browser: false,
     cover: undefined,
@@ -253,6 +261,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
     if (flag === "--premium") {
       out.premium = true;
+      continue;
+    }
+    if (flag === "--no-expect-native-video") {
+      out.noExpectNativeVideo = true;
       continue;
     }
     if (flag === "--headed") {

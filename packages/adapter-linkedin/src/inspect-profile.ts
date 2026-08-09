@@ -30,6 +30,17 @@ export interface InspectLinkedInProfilePostInput {
   evidenceDir: string;
   maxScrolls: number;
   profile: string;
+  /**
+   * Require the matched post to carry a native video. Defaults to `true`, which
+   * is the guarantee every video-publishing caller already relies on.
+   *
+   * Set `false` to read back a text or image post. Verifying such a post is a
+   * legitimate need — recovering the vanity permalink of an image announcement
+   * for a blog back-link block — and the video assertion made that impossible
+   * (observed 2026-08-09). Identity binding, exact-body matching and permalink
+   * recovery are independent of the media kind, so only this assertion relaxes.
+   */
+  expectNativeVideo?: boolean;
 }
 
 export interface InspectLinkedInProfilePostResult {
@@ -39,7 +50,8 @@ export interface InspectLinkedInProfilePostResult {
   authorProfileIdentity: string;
   postBodySha256: string;
   postBodyLength: number;
-  hasNativeVideo: true;
+  /** What the page actually showed — not an assumption baked into the type. */
+  hasNativeVideo: boolean;
   coverage: { maxScrolls: number; scrollsPerformed: number; postsInspected: number };
 }
 
@@ -167,7 +179,9 @@ async function runInspection(
   }
   if (matches.length !== 1) return fail(`expected one matching post, found ${matches.length}`);
   const matched = matches[0]!;
-  if (!matched.hasNativeVideo) return fail("exact post match has no native video");
+  if (input.expectNativeVideo !== false && !matched.hasNativeVideo) {
+    return fail("exact post match has no native video");
+  }
   const id = activityId(matched.activityUrl);
   if (!id) return fail("exact post match has no activity id");
   const matchedBody = normalizeExact(matched.body);
@@ -186,6 +200,7 @@ async function runInspection(
           input.evidenceDir,
           matchedBodySha256,
           matchedBody.length,
+          input.expectNativeVideo !== false,
         );
   } catch (error) {
     await captureFailure();
@@ -213,7 +228,7 @@ async function runInspection(
           activityUrl: matched.activityUrl,
           activityId: id,
           authorProfileIdentity: expectedIdentity,
-          hasNativeVideo: true,
+          hasNativeVideo: matched.hasNativeVideo,
           postBodyEvidencePath: bodyPath,
           screenshotPath,
         },
@@ -233,7 +248,7 @@ async function runInspection(
     authorProfileIdentity: expectedIdentity,
     postBodySha256: createHash("sha256").update(body, "utf8").digest("hex"),
     postBodyLength: body.length,
-    hasNativeVideo: true,
+    hasNativeVideo: matched.hasNativeVideo,
     coverage,
   };
 }
@@ -328,6 +343,7 @@ async function recoverVanityPermalink(
   evidenceDir: string,
   expectedBodySha256: string,
   expectedBodyLength: number,
+  expectNativeVideo: boolean,
 ): Promise<string> {
   await page.goto(activityUrl, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1_000);
@@ -345,6 +361,7 @@ async function recoverVanityPermalink(
     expectedBodyLength,
     controlMenuPatternSources: DETAIL_CONTROL_MENU_PATTERN_SOURCES,
     click: false,
+    expectNativeVideo,
   };
   const diagnostic = await writeMenuLookupDiagnostic(page, evidenceDir, id, detailOracle);
   const target: CopyLinkTarget =
@@ -380,6 +397,14 @@ export interface DetailPostMenuOracle {
   expectedBodyLength: number;
   controlMenuPatternSources: readonly string[];
   click: boolean;
+  /**
+   * Require the proven detail card to carry a native video. Defaults to `true`.
+   *
+   * The card is already pinned by an exact body SHA-256 plus author identity —
+   * the video filter adds no identity strength, it only narrows the media kind.
+   * Keeping it mandatory made an image post unrecoverable (PUB-0041).
+   */
+  expectNativeVideo?: boolean;
 }
 
 export async function copyVanityFromActivityMenu(
@@ -955,7 +980,11 @@ export async function inspectExactDetailPostMenu(
         "video, [data-test-native-video], .video-js, [class*='video-player'], [data-vjs-player]",
       ).length > 0,
   );
-  const provenCards = nativeVideoCards;
+  // The exact body hash plus author identity already pin this card. Requiring a
+  // native video on top only narrows the media kind, so an image post opts out.
+  // The exact body hash plus author identity already pin this card. Requiring a
+  // native video on top only narrows the media kind, so an image post opts out.
+  const provenCards = expected.expectNativeVideo === false ? exactAuthorCards : nativeVideoCards;
   const menus = provenCards.map((card) =>
     owned(card, "button, [role='button']").filter((button) => {
       const label = (button.getAttribute("aria-label") ?? "").normalize("NFKC").trim();
