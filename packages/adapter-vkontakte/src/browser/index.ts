@@ -44,6 +44,19 @@ const POST_SELECTOR = '[data-testid="post"]';
 const PROFILE_READY_SELECTOR = '[data-testid="posting_create_post_button"]';
 const COMPOSER_TITLE_SELECTOR = '[data-testid="modalheader-title"]';
 
+/**
+ * CSS that finds the anchor carrying `url`, whether VK kept it verbatim or
+ * wrapped it in its `/away.php?to=<percent-encoded>` redirect.
+ *
+ * VK elides a long URL in the visible text ("https://chromewebstore.goog…nbh..")
+ * so a text match can never succeed for it; the intact address survives only
+ * inside the href. Matching there is what makes comment verification possible
+ * at all — see the call site for the duplicate this cost.
+ */
+export function vkLinkAnchorSelector(url: string): string {
+  return `a[href*="${encodeURIComponent(url)}"], a[href="${url}"]`;
+}
+
 function extractUrls(text: string): string[] {
   return text.match(/https?:\/\/[^\s]+/g)?.map((url) => url.replace(/[),.;]+$/, "")) ?? [];
 }
@@ -375,7 +388,24 @@ function commentSteps(page: Page, parentPostUrl: string): VkCommentSteps {
       await guardPlatformRefusals(page);
       const linkOracle = extractUrls(text)[0];
       const comments = article.locator('[data-testid="wall_comments_comment_root"]');
-      const posted = linkOracle ? comments.filter({ hasText: linkOracle }).last() : comments.last();
+      // VK renders a long URL ELIDED ("https://chromewebstore.google…nbh..") and
+      // routes it through an /away.php redirect, so the full address never
+      // appears in the comment's text. Matching on `hasText: <full url>` can
+      // therefore never succeed for any link longer than the display cap: the
+      // comment posts, verification times out, and the retry that invites
+      // creates a duplicate (observed live 2026-08-09 — two identical comments
+      // on wall277123371_479).
+      //
+      // The intact URL survives percent-encoded inside the anchor's href, so
+      // bind to that instead and keep the text filter as a fallback for short
+      // links that VK leaves unelided.
+      const posted = linkOracle
+        ? comments
+            .filter({
+              has: page.locator(vkLinkAnchorSelector(linkOracle)),
+            })
+            .last()
+        : comments.last();
       await posted.waitFor({ state: "visible", timeout: 20_000 });
       const idAttr = await posted.getAttribute("id");
       const commentId = idAttr?.match(/_([0-9]+)$/)?.[1];

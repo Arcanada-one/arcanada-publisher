@@ -311,11 +311,13 @@ async function runInspectProfilePost(
       evidenceDir: string;
       maxScrolls: number;
       profile: string;
+      expectNativeVideo?: boolean;
     }): Promise<unknown>;
   };
   const result = await adapter.inspectProfilePost({
     profileUrl: args.profileUrl,
     expectedAuthorProfileUrl: args.expectedAuthorProfileUrl,
+    ...(args.noExpectNativeVideo ? { expectNativeVideo: false } : {}),
     ...(args.expectedContentFile
       ? { expectedBody: readInspectionOracle(args.expectedContentFile) }
       : { contentExcerpt: args.contentExcerpt! }),
