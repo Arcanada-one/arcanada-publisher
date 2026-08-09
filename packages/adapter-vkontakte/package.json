@@ -24,7 +24,7 @@
   },
   "dependencies": {
     "@arcanada/publisher-core": "workspace:*",
-    "playwright": "^1.60.0"
+    "playwright": "^1.62.1"
   },
   "devDependencies": {
     "typescript": "^5.7.2",
