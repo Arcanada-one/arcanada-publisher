@@ -6,6 +6,7 @@ import { ErrorCode, ProfileManager, type PublishInput } from "@arcanada/publishe
 import {
   publish as publishImpl,
   publishedTextMatchFragment,
+  resolveJustPublishedHref,
   type PublishStepRecorder,
 } from "../src/publish.js";
 import { typeMultiline } from "../src/input.js";
@@ -363,6 +364,70 @@ describe("PUB-0030 — publish forwards the body to submitAndConfirm", () => {
       { profileManager: makeProfiles(), page: fakePage(), __recorder: rec },
     );
     expect(rec.submitTextSeen).toEqual(["Title line\nbody"]);
+  });
+});
+
+describe("resolveJustPublishedHref — a failed publish must not answer with a stranger's post", () => {
+  it("throws instead of returning the first (unrelated) article when the body does not match", async () => {
+    const counters = { reads: 0 };
+    const page = {
+      locator: () => ({
+        filter: () => ({
+          first: () => ({
+            waitFor: () => Promise.reject(new Error("locator.waitFor: Timeout 10000ms exceeded")),
+            locator: () => ({ first: () => ({ evaluate: () => Promise.resolve("unused") }) }),
+          }),
+        }),
+      }),
+      $eval: () => {
+        counters.reads += 1;
+        return Promise.resolve("https://www.facebook.com/pavelvalentov/posts/pfbid-SOMEONE-ELSES");
+      },
+    } as unknown as Parameters<typeof resolveJustPublishedHref>[0];
+
+    // Real incident 2026-08-09: this returned a four-day-old article, and the
+    // caller then verified a post nobody had just published.
+    await expect(
+      resolveJustPublishedHref(page, "Conversation to Markdown 1.1.8 — title"),
+    ).rejects.toThrow();
+    expect(counters.reads).toBe(0);
+  });
+
+  it("returns the matching article's href when the body does match", async () => {
+    const page = {
+      locator: () => ({
+        filter: () => ({
+          first: () => ({
+            waitFor: () => Promise.resolve(),
+            locator: () => ({
+              first: () => ({
+                evaluate: () =>
+                  Promise.resolve("https://www.facebook.com/pavelvalentov/posts/pfbid-OURS"),
+              }),
+            }),
+          }),
+        }),
+      }),
+      $eval: () =>
+        Promise.resolve("https://www.facebook.com/pavelvalentov/posts/pfbid-SOMEONE-ELSES"),
+    } as unknown as Parameters<typeof resolveJustPublishedHref>[0];
+
+    await expect(
+      resolveJustPublishedHref(page, "Conversation to Markdown 1.1.8 — title"),
+    ).resolves.toBe("https://www.facebook.com/pavelvalentov/posts/pfbid-OURS");
+  });
+
+  it("still falls back to the first article for an image-only post (no text to match on)", async () => {
+    const page = {
+      locator: () => {
+        throw new Error("must not attempt a text match when there is no text");
+      },
+      $eval: () => Promise.resolve("https://www.facebook.com/pavelvalentov/posts/pfbid-IMAGE-ONLY"),
+    } as unknown as Parameters<typeof resolveJustPublishedHref>[0];
+
+    await expect(resolveJustPublishedHref(page, undefined)).resolves.toBe(
+      "https://www.facebook.com/pavelvalentov/posts/pfbid-IMAGE-ONLY",
+    );
   });
 });
 

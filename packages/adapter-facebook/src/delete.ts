@@ -151,11 +151,36 @@ async function deleteCommentArm(
   });
 }
 
-async function defaultReadContent(page: Page, input: DeleteInput): Promise<string> {
+/**
+ * Read the body of the post named by `targetUrl` — and of no other post.
+ *
+ * §6.8: a permalink page renders MULTIPLE articles (the target plus recommended
+ * and sibling items), so `[role="article"].first()` is frequently somebody
+ * else's content. Feeding that to the read-before-delete oracle is worse than
+ * useless: a spurious match would delete the wrong post, and a spurious
+ * mismatch blocks a legitimate delete. Observed 2026-08-09 while removing a
+ * duplicate — the oracle compared against a neighbouring post and refused
+ * forever.
+ *
+ * The permalink's own `pfbid` is the only stable identity available, so bind to
+ * the article carrying a link to it. If no such article exists, fail rather
+ * than fall back to a positional guess.
+ */
+export async function defaultReadContent(page: Page, input: DeleteInput): Promise<string> {
   await page.goto(input.targetUrl);
-  const article = page.locator('[role="article"]').first();
+  const permalinkId = extractPermalinkId(input.targetUrl);
+  const article =
+    permalinkId === null
+      ? page.locator('[role="article"]').first()
+      : page.locator(`[role="article"]:has(a[href*="${permalinkId}"])`).first();
   await article.waitFor({ state: "visible", timeout: 10_000 });
   return (await article.innerText()) ?? "";
+}
+
+/** Extract the `pfbid…` identity from a Facebook post permalink, if present. */
+export function extractPermalinkId(targetUrl: string): string | null {
+  const match = /pfbid[A-Za-z0-9]+/.exec(targetUrl);
+  return match === null ? null : match[0];
 }
 
 async function defaultPerformDelete(page: Page, _input: DeleteInput): Promise<void> {

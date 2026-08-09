@@ -35,7 +35,12 @@ export const selectors = {
   // (observed live 2026-08-02). Both wordings must match.
   commentActionsMenu:
     /(Редактировать, удалить или пожаловаться|Редактировать или удалить|Comment actions|Действия для комментария|Edit or delete)/,
-  deleteMenuItem: /^(Удалить|Move to trash|Delete)$/,
+  // The post action menu labels this item "Удалить публикацию" / "Delete post",
+  // not a bare "Удалить" — an exact-match on the bare verb finds nothing and the
+  // delete dies after the menu is already open (observed live 2026-08-09).
+  // The optional noun stays anchored so this cannot drift onto the adjacent
+  // "Редактировать публикацию" / "Edit post" item sitting one row above.
+  deleteMenuItem: /^(Удалить(\s+публикацию)?|Move to trash|Delete(\s+post)?)$/,
   confirmDelete: /^(Удалить|Переместить|Move|Delete)$/,
   editedMarker: /^(Отредактировано|Edited)$/,
   loginEmail: /^(Эл\. адрес или номер мобильного телефона|Email or phone number)$/,

@@ -368,24 +368,33 @@ export function publishedTextMatchFragment(text: string | undefined): string {
 
 /**
  * PUB-0030: resolve the href of the article we JUST published, not merely the
- * first article in the /me feed. When a match fragment is available we filter
- * the feed articles by body text; otherwise we fall back to the legacy
- * first-article behaviour (best-effort, logged by the caller's verify step).
+ * first article in the /me feed.
+ *
+ * When the body text is known, the matching article is the ONLY acceptable
+ * answer. The former behaviour fell through to the first article in the feed
+ * whenever the match failed, on the reasoning that a best-effort URL beats a
+ * hard failure. It does not: the first article is routinely a PREVIOUS post, so
+ * the fallback answers a failed publish with a real-looking permalink pointing
+ * at unrelated content. Observed 2026-08-09 — a publish that never landed
+ * returned a four-day-old article, and every downstream check then compared
+ * against that stranger's post. Failing here is what lets the caller report
+ * `reconcileRequired` honestly.
+ *
+ * The legacy first-article path survives only when there is no text to match on
+ * (image-only post), where "first article" is the best identity available.
  */
-async function resolveJustPublishedHref(page: Page, publishedText?: string): Promise<string> {
+export async function resolveJustPublishedHref(
+  page: Page,
+  publishedText?: string,
+): Promise<string> {
   const fragment = publishedTextMatchFragment(publishedText);
   if (fragment !== "") {
     const article = page.locator('[role="article"]').filter({ hasText: fragment }).first();
-    try {
-      await article.waitFor({ state: "visible", timeout: 10_000 });
-      return await article
-        .locator('a[href*="/posts/"]')
-        .first()
-        .evaluate((a) => (a as unknown as { href: string }).href);
-    } catch {
-      // Fall through to the legacy first-article path below — better a
-      // best-effort URL than a hard failure when the feed render is unusual.
-    }
+    await article.waitFor({ state: "visible", timeout: 10_000 });
+    return await article
+      .locator('a[href*="/posts/"]')
+      .first()
+      .evaluate((a) => (a as unknown as { href: string }).href);
   }
   return page.$eval(
     '[role="article"] a[href*="/posts/"]',
