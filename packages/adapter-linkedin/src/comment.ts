@@ -218,8 +218,11 @@ interface RenderedCommentMatch {
 export const commentContainerSelector =
   "[data-id^='urn:li:comment'], .comments-comment-item, [class*='comments-comment-item'], [data-testid='expandable-text-box']";
 
-export function normalizeRenderedCommentText(value: string): string {
-  return value.replace(/\n\s*(?:…|\.\.\.)\s*more\s*$/i, "").trim();
+export function normalizeRenderedCommentText(value: string | undefined): string {
+  // LinkedIn's virtualised comment tree contains text-bearing nodes without
+  // an innerText property. Treat those nodes as empty during the readback
+  // scan; a missing property must not turn a submitted comment into UNKNOWN.
+  return (value ?? "").replace(/\n\s*(?:…|\.\.\.)\s*more\s*$/i, "").trim();
 }
 
 async function waitForExactComment(page: Page, text: string): Promise<RenderedCommentMatch> {

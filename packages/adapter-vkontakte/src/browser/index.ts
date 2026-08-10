@@ -143,12 +143,53 @@ export interface VkBrowserOptions {
 /** Read the logged-in identity + current URL off the live page. */
 export async function readSessionState(page: Page): Promise<SessionState> {
   const url = page.url();
-  const idLink = page.locator('a[href^="/id"]').first();
+  const leftMenu = page.locator('[data-testid="leftmenu"]');
+  // A page-wide /id link is not an identity oracle: VK adds recommended users
+  // to the feed and their profile links can be the first matching anchor.
+  // Scope the legacy numeric profile selector to the account-owned menu.
+  const idLink = leftMenu.locator('a[href^="/id"]').first();
   const idHref =
     (await idLink.count().catch(() => 0)) > 0
       ? await idLink.getAttribute("href").catch(() => null)
       : null;
-  const accountId = idHref ? idHref.replace(/^\/id/, "") : undefined;
+  // Older VK shells without the left menu are still supported by the legacy
+  // page-wide selector; current vk.ru uses the scoped media-link fallback.
+  const legacyIdLink =
+    !idHref && (await leftMenu.count().catch(() => 0)) === 0
+      ? page.locator('a[href^="/id"]').first()
+      : null;
+  const legacyIdHref = legacyIdLink
+    ? (await legacyIdLink.count().catch(() => 0)) > 0
+      ? await legacyIdLink.getAttribute("href").catch(() => null)
+      : null
+    : null;
+  // The current vk.ru desktop shell no longer renders `/id123` for the
+  // signed-in profile. It does, however, keep profile-bound media links such
+  // as `/photos123` and `/audios123` in the left menu. Those links are an
+  // account-scoped identity signal, unlike arbitrary numeric links in the
+  // feed, so use them only as the fallback identity oracle.
+  let mediaHrefs: string[] = [];
+  if (!idHref && !legacyIdHref) {
+    if ((await leftMenu.count().catch(() => 0)) > 0) {
+      const mediaLinks = leftMenu.locator(
+        'a[href*="/photos"], a[href*="/audios"], a[href*="/albums"], a[href*="/videos"]',
+      );
+      await mediaLinks
+        .first()
+        .waitFor({ state: "visible", timeout: 5_000 })
+        .catch(() => {});
+      mediaHrefs = await mediaLinks
+        .evaluateAll((anchors) => anchors.map((anchor) => anchor.getAttribute("href") ?? ""))
+        .catch(() => []);
+    }
+  }
+  const accountIdFromMediaHref =
+    idHref?.replace(/^\/id/, "") ??
+    legacyIdHref?.replace(/^\/id/, "") ??
+    mediaHrefs
+      .map((href) => href.match(/(?:^|\/)(?:photos|audios|albums|videos)(\d+)(?:[/?#]|$)/i))
+      .find((match): match is RegExpMatchArray => Boolean(match))?.[1];
+  const accountId = accountIdFromMediaHref;
   const legacyName = page.locator('[data-testid="profile_name"], .top_profile_name').first();
   let accountName =
     (await legacyName.count().catch(() => 0)) > 0

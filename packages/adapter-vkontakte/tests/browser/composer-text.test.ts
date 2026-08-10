@@ -44,6 +44,7 @@ describe("vk browser — composer text persistence", () => {
 
   it("requires the exact body in the active final preview", async () => {
     const preview = {
+      isVisible: vi.fn(async () => false),
       waitFor: vi.fn(async () => undefined),
       innerText: vi.fn(async () => "Title\n\nFull body"),
     };
@@ -57,7 +58,32 @@ describe("vk browser — composer text persistence", () => {
     expect(publishButton.locator).toHaveBeenCalledWith(
       'xpath=ancestor::*[@data-testid="posting_modal_box"]',
     );
-    expect(modal.locator).toHaveBeenCalledWith('[data-testid="showmoretext-in"]');
+    expect(modal.locator).toHaveBeenCalledWith(
+      '[data-testid="showmoretext-in-expanded"], [data-testid="showmoretext-in"]',
+    );
     expect(preview.waitFor).toHaveBeenCalledWith({ state: "visible", timeout: 30_000 });
+  });
+
+  it("expands a truncated final preview before comparing the full body", async () => {
+    const expand = {
+      isVisible: vi.fn(async () => true),
+      click: vi.fn(async () => undefined),
+    };
+    const preview = {
+      waitFor: vi.fn(async () => undefined),
+      innerText: vi.fn(async () => "Title\n\nFull body"),
+    };
+    const modal = {
+      locator: vi.fn((selector: string) => ({
+        first: () => selector.includes("showmoretext-after") ? expand : preview,
+      })),
+    };
+    const publishButton = {
+      locator: vi.fn(() => ({ first: () => modal })),
+    } as never;
+
+    await waitForFinalTextPreview(publishButton, "Title\n\nFull body", 30_000);
+
+    expect(expand.click).toHaveBeenCalledOnce();
   });
 });

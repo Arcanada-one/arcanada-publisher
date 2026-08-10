@@ -34,7 +34,13 @@ export async function waitForFinalTextPreview(
   const modal = publishButton
     .locator('xpath=ancestor::*[@data-testid="posting_modal_box"]')
     .first();
-  const preview = modal.locator('[data-testid="showmoretext-in"]').first();
+  const showMore = modal.locator('[data-testid="showmoretext-after"]').first();
+  if (await showMore.isVisible().catch(() => false)) {
+    await showMore.click().catch(() => undefined);
+  }
+  const preview = modal
+    .locator('[data-testid="showmoretext-in-expanded"], [data-testid="showmoretext-in"]')
+    .first();
   await preview.waitFor({ state: "visible", timeout });
   const rendered = await preview.innerText().catch(() => "");
   if (!normalize(rendered).includes(normalize(expectedText))) {

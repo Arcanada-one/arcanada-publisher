@@ -80,13 +80,24 @@ narration, hashes, transcripts, and review result belong in campaign evidence.
 
 When the operator explicitly asks for fresh narration to be published on an
 Arcanada first-party blog so it can be listened to there, the site may receive
-the new MP3 before step 3 is complete. In that mode the campaign evidence MUST
-remain `REVIEW_REQUIRED` / `PENDING`, the live player URL is the review surface,
-and the asset MUST NOT be described as approved. The exception does not
-authorize an unreviewed narration-backed MP4 on Telegram, X, LinkedIn, Facebook,
-VK, YouTube, or another social destination. After the operator confirms the
-live-site listen, complete the checklist and receipt, then apply the normal
-Publisher gates.
+the new MP3 before step 3 is complete. After the operator confirms the live-site
+listen, an explicitly requested smoke may also send the derived MP4 to the
+canonical Telegram **test** channel through Publisher. In that mode the campaign
+evidence MUST remain `REVIEW_REQUIRED` / `PENDING`, the live URLs are review
+surfaces, and the assets MUST NOT be described as approved. The exception does
+not authorize the main Telegram channel, X, LinkedIn, Facebook, VK, YouTube, or
+another production/social destination. Read back the test-channel artifacts;
+then complete the checklist and receipt before broader social publication.
+
+### Explicit production continuation after live review
+
+If the operator listens on the live first-party site and then explicitly says to
+continue the production rollout, that second instruction authorizes the named
+main Telegram/social/YouTube publications through Publisher even when the
+evidence receipt is still `REVIEW_REQUIRED` / `PENDING`. Keep that status in the
+campaign record and never report it as proof-listening `PASS`. If the second go
+is absent, stop after the requested test-channel smoke; do not infer production
+permission from the site-first request alone.
 
 ### Evidence contract and current enforcement boundary
 

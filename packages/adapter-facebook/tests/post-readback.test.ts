@@ -5,6 +5,7 @@ import {
   normalizeFacebookText,
   readFacebookPost,
   dedupeFacebookPostReadbacks,
+  resolveFacebookPostReadbacks,
 } from "../src/post-readback.js";
 
 const TARGET = "https://www.facebook.com/pavelvalentov/posts/pfbid123";
@@ -73,6 +74,18 @@ describe("Facebook exact post readback primitives", () => {
         /ambiguous target evidence/,
       );
     }
+  });
+
+  it("accepts native video readback as media", () => {
+    const video = {
+      canonicalPermalink: TARGET,
+      normalizedBody: "Title\n\nFull body",
+      authorProfileIdentity: "www.facebook.com/pavelvalentov",
+      hasImage: false,
+      hasVideo: true,
+      mediaIdentity: "https://video.facebook.com/native/123",
+    };
+    expect(resolveFacebookPostReadbacks([video])).toEqual(video);
   });
 
   it("dedupes identical multi-article DOM copies and rejects every divergent axis", async () => {

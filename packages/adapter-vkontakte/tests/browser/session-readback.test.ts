@@ -43,4 +43,25 @@ describe("vk browser — live session readback", () => {
       accountId: "123456",
     });
   });
+
+  it("derives the numeric account id from a current profile-bound media link", async () => {
+    await page.setContent('<div data-testid="leftmenu"><a href="/photos277123371">Фото</a></div>');
+
+    await expect(readSessionState(page)).resolves.toMatchObject({
+      loggedIn: true,
+      accountId: "277123371",
+    });
+  });
+
+  it("ignores a recommended user's numeric profile link when the account media link is present", async () => {
+    await page.setContent(`
+      <div data-testid="leftmenu"><a href="/photos277123371">Фото</a></div>
+      <a href="/id719266278">Рекомендованный пользователь</a>
+    `);
+
+    await expect(readSessionState(page)).resolves.toMatchObject({
+      loggedIn: true,
+      accountId: "277123371",
+    });
+  });
 });

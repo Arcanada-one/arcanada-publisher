@@ -34,7 +34,16 @@ import {
   type FacebookPostReadback,
 } from "./post-readback.js";
 
-const IMAGE_EXT_ALLOWLIST = new Set([".png", ".jpg", ".jpeg", ".webp"]);
+const MEDIA_EXT_ALLOWLIST = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".mp4",
+  ".m4v",
+  ".mov",
+  ".webm",
+]);
 const FB_HOME = "https://www.facebook.com/";
 const FB_ME = "https://www.facebook.com/me";
 /** R7: a GraphQL 200 response is the real publish confirmation (DOM caches/lies). */
@@ -81,7 +90,7 @@ export interface PublishOptions {
   __recorder?: PublishStepRecorder;
 }
 
-/** R1: collect every image path (imagePaths takes precedence; imagePath is the legacy alias). */
+/** R1: collect every media path (imagePaths is the legacy shared input name). */
 function collectImagePaths(input: PublishInput): string[] {
   if (input.imagePaths && input.imagePaths.length > 0) {
     return input.imagePaths;
@@ -90,6 +99,13 @@ function collectImagePaths(input: PublishInput): string[] {
     return [input.imagePath];
   }
   return [];
+}
+
+function attachmentForPath(src: string): { kind: "image" | "video"; src: string } {
+  return MEDIA_EXT_ALLOWLIST.has(extname(src).toLowerCase()) &&
+    [".mp4", ".m4v", ".mov", ".webm"].includes(extname(src).toLowerCase())
+    ? { kind: "video", src }
+    : { kind: "image", src };
 }
 
 export async function publish(
@@ -124,7 +140,7 @@ export async function publish(
       platform: "facebook",
       account: "dry-run",
       postUrl: "https://www.facebook.com/dry-run/posts/0",
-      attachments: safeImagePaths.map((src) => ({ kind: "image" as const, src })),
+      attachments: safeImagePaths.map(attachmentForPath),
       commentIds: [],
     });
   }
@@ -163,7 +179,7 @@ async function runPublishFlow(
         platform: "facebook",
         account: "dry-run",
         postUrl: "https://www.facebook.com/dry-run/posts/0",
-        attachments: imagePaths.map((src) => ({ kind: "image" as const, src })),
+        attachments: imagePaths.map(attachmentForPath),
         commentIds: [],
       });
     }
@@ -174,7 +190,7 @@ async function runPublishFlow(
     await steps.uploadImages(page, imagePaths);
     await steps.typeBody(page, input.text);
 
-    // R7: pre-submit snapshot — both text and image must be present, else ABORT.
+    // R7: pre-submit snapshot — both text and media must be present, else ABORT.
     const snap = await steps.preSubmitSnapshot(page, input);
     if (snap.normalizedBody !== normalizeFacebookText(input.text)) {
       throw new AdapterError(
@@ -190,7 +206,7 @@ async function runPublishFlow(
     if (JSON.stringify(snap.attachments) !== JSON.stringify(expectedAttachments)) {
       throw new AdapterError(
         ErrorCode.VERIFY_FAILED,
-        "publish: pre-submit snapshot found no image in the composer — aborting (R7)",
+        "publish: pre-submit snapshot found no media in the composer — aborting (R7)",
         { fbErrorType: "verify_mismatch", stage: "pre_submit_image" },
       );
     }
@@ -205,7 +221,7 @@ async function runPublishFlow(
       if (
         verified.normalizedBody !== normalizeFacebookText(input.text) ||
         verified.authorProfileIdentity !== expectedAuthor ||
-        !verified.hasImage ||
+        !(verified.hasImage || verified.hasVideo) ||
         verified.mediaIdentity === "" ||
         verified.canonicalPermalink !== canonicalFacebookPostUrl(postUrl)
       ) {
@@ -216,7 +232,7 @@ async function runPublishFlow(
         platform: "facebook",
         account: extractAccountFromUrl(postUrl),
         postUrl,
-        attachments: imagePaths.map((src) => ({ kind: "image" as const, src })),
+        attachments: imagePaths.map(attachmentForPath),
         commentIds: [],
       });
     } catch (error) {
@@ -428,12 +444,12 @@ function validateImagePath(rawPath: string, index: number): string {
     });
   }
   const ext = extname(abs).toLowerCase();
-  if (!IMAGE_EXT_ALLOWLIST.has(ext)) {
-    throw new AdapterError(ErrorCode.INVALID_ARGS, "publish: unsupported image extension", {
+  if (!MEDIA_EXT_ALLOWLIST.has(ext)) {
+    throw new AdapterError(ErrorCode.INVALID_ARGS, "publish: unsupported media extension", {
       stage: "image_validation",
       artifactId,
       index,
-      allowed: Array.from(IMAGE_EXT_ALLOWLIST),
+      allowed: Array.from(MEDIA_EXT_ALLOWLIST),
     });
   }
   return abs;

@@ -22,7 +22,11 @@ export interface ExpectedPost {
 }
 
 function normalize(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
+  // VK's renderer typographically rewrites a double hyphen in code snippets
+  // (for example `--json`) to an em dash. Treat that presentation rewrite as
+  // equivalent while keeping the full normalized body comparison fail-closed
+  // for truncation or omitted content.
+  return text.replace(/—/g, "--").replace(/\s+/g, " ").trim();
 }
 
 /**

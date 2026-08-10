@@ -53,6 +53,24 @@ describe("vk browser — post read-back oracle", () => {
     ).not.toThrow();
   });
 
+  it("accepts VK's em-dash rewrite of a double hyphen in a code snippet", () => {
+    expect(() =>
+      assertPostReadBack(
+        {
+          account: "Pavel Valentov",
+          text: "CLI может сделать deployment list —json | jq '.[]'",
+          hasVideo: true,
+          hasImage: false,
+        },
+        {
+          account: "Pavel Valentov",
+          text: "CLI может сделать deployment list --json | jq '.[]'",
+          requireMediaKind: "video",
+        },
+      ),
+    ).not.toThrow();
+  });
+
   it("STOPs with VERIFY_FAILED when the author differs", () => {
     expect(() =>
       assertPostReadBack(

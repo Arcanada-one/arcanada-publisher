@@ -75,6 +75,17 @@ describe("facebook publish — input validation (R1 image-mandatory)", () => {
     expect(rec.uploadedImages).toEqual([img]);
   });
 
+  it("accepts an MP4 as a video attachment and reports its media kind", async () => {
+    const rec = makeRecorder();
+    const video = makeImage(".mp4");
+    const res = await publish(
+      { text: "hello", imagePaths: [video], profile: FAKE_PROFILE },
+      { profileManager: makeProfiles(), page: fakePage(), __recorder: rec },
+    );
+    expect(res.attachments).toEqual([{ kind: "video", src: video }]);
+    expect(rec.uploadedImages).toEqual([video]);
+  });
+
   it("R1: validates EVERY element of imagePaths (unsupported ext anywhere → INVALID_ARGS)", async () => {
     const good = makeImage(".png");
     const dir = mkdtempSync(join(tmpdir(), "pub-0017-fb-bad-"));

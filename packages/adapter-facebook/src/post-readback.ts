@@ -6,6 +6,8 @@ export interface FacebookPostReadback {
   authorProfileIdentity: string;
   normalizedBody: string;
   hasImage: boolean;
+  /** Optional for backwards-compatible readback fixtures; true for native video posts. */
+  hasVideo?: boolean;
   mediaIdentity: string;
 }
 
@@ -39,6 +41,9 @@ function extractFacebookArticleEvidence(node: unknown, expected: string) {
   type DomElement = {
     innerText: string;
     href?: string;
+    currentSrc?: string;
+    src?: string;
+    poster?: string;
     closest(selector: string): DomElement | null;
     querySelector(selector: string): DomElement | null;
     querySelectorAll(selector: string): ArrayLike<DomElement> & Iterable<DomElement>;
@@ -103,7 +108,9 @@ function extractFacebookArticleEvidence(node: unknown, expected: string) {
     return null;
   const mediaAnchor = ownedAttachmentAnchors.find((anchor) => {
     if (!anchor.href) return false;
-    if (Array.from(anchor.querySelectorAll("img")).length === 0) return false;
+    const hasImage = Array.from(anchor.querySelectorAll("img")).length > 0;
+    const hasVideo = Array.from(anchor.querySelectorAll("video, source")).length > 0;
+    if (!hasImage && !hasVideo) return false;
     try {
       const url = new URL(anchor.href, browserLocation.href);
       return url.pathname.includes("/photo") || url.pathname === "/photo.php";
@@ -114,6 +121,15 @@ function extractFacebookArticleEvidence(node: unknown, expected: string) {
   const mediaUrl = mediaAnchor?.href ? new URL(mediaAnchor.href, browserLocation.href) : null;
   mediaUrl?.searchParams.delete("__cft__[0]");
   mediaUrl?.searchParams.delete("__tn__");
+  const videoElement = article.querySelector("video");
+  const videoIdentity = videoElement
+    ? videoElement.currentSrc ||
+      videoElement.src ||
+      videoElement.getAttribute("src") ||
+      videoElement.poster ||
+      videoElement.getAttribute("poster") ||
+      "video"
+    : "";
   const dialog = article.closest('[role="dialog"]');
   const style = dialog
     ? (
@@ -144,7 +160,8 @@ function extractFacebookArticleEvidence(node: unknown, expected: string) {
     authorProfileHref: author.href!,
     body: body.innerText,
     hasImage: mediaUrl !== null,
-    mediaIdentity: mediaUrl?.toString() ?? "",
+    hasVideo: videoIdentity !== "",
+    mediaIdentity: videoIdentity || mediaUrl?.toString() || "",
     isModal,
   };
 }
@@ -182,6 +199,7 @@ export async function readFacebookPost(
     authorProfileIdentity: facebookProfileIdentity(match.authorProfileHref),
     normalizedBody: normalizeFacebookText(match.body),
     hasImage: match.hasImage,
+    hasVideo: match.hasVideo ?? false,
     mediaIdentity: match.mediaIdentity,
     isModal: match.isModal,
   }));
@@ -203,10 +221,11 @@ export function resolveFacebookPostReadbacks(
         candidate.canonicalPermalink === authoritative.canonicalPermalink &&
         candidate.authorProfileIdentity === authoritative.authorProfileIdentity &&
         candidate.hasImage === authoritative.hasImage &&
+        (candidate.hasVideo ?? false) === (authoritative.hasVideo ?? false) &&
         candidate.mediaIdentity === authoritative.mediaIdentity,
     );
     if (!sameBinding) throw readbackError("modal target binding differs from background evidence");
-    if (!authoritative.hasImage || authoritative.mediaIdentity === "")
+    if ((!authoritative.hasImage && !authoritative.hasVideo) || authoritative.mediaIdentity === "")
       throw readbackError("target has no post media");
     const { isModal: _ignored, ...result } = authoritative;
     return result;
@@ -228,10 +247,11 @@ export function dedupeFacebookPostReadbacks(
       candidate.normalizedBody === first.normalizedBody &&
       candidate.authorProfileIdentity === first.authorProfileIdentity &&
       candidate.hasImage === first.hasImage &&
+      (candidate.hasVideo ?? false) === (first.hasVideo ?? false) &&
       candidate.mediaIdentity === first.mediaIdentity,
   );
   if (!identical) throw readbackError(`ambiguous target evidence across ${ordered.length} copies`);
-  if (!first.hasImage || first.mediaIdentity === "")
+  if ((!first.hasImage && !first.hasVideo) || first.mediaIdentity === "")
     throw readbackError("target has no post media");
   return first;
 }
