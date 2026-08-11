@@ -75,7 +75,7 @@ describe("vk browser — composer text persistence", () => {
     };
     const modal = {
       locator: vi.fn((selector: string) => ({
-        first: () => selector.includes("showmoretext-after") ? expand : preview,
+        first: () => (selector.includes("showmoretext-after") ? expand : preview),
       })),
     };
     const publishButton = {
