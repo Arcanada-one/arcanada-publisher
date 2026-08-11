@@ -1,0 +1,5 @@
+Arcanada Month Three: the system outgrew my control panel
+
+Month three delivered 823 core tasks and 3,711 routine tasks across Arcanada. Period spending was $807, bringing total investment to at least $2,240.
+
+Development now runs entirely on data-center servers. The Mac can be switched off without stopping the agents or orchestrators.
