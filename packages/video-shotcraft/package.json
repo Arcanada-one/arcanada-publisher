@@ -1,0 +1,46 @@
+{
+  "name": "@arcanada/publisher-shotcraft",
+  "version": "0.1.0-pre.0",
+  "description": "Cinematic Remotion render engine for arcanada-publisher — turns a social post (text + product asset[s]) into a shot-composed 1920x1080 promo MP4 using the vendored video-shotcraft skill (106 shot cards + Ink Press template)",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "vendor",
+    "LICENSE-REMOTION.ack",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --build --noEmit",
+    "test": "vitest run",
+    "lint": "eslint --no-error-on-unmatched-pattern src tests"
+  },
+  "dependencies": {
+    "@arcanada/publisher-core": "workspace:*",
+    "@remotion/bundler": "4.0.498",
+    "@remotion/cli": "4.0.498",
+    "@remotion/renderer": "4.0.498",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "remotion": "4.0.498"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.3",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

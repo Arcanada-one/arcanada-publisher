@@ -422,6 +422,14 @@ async function runServer(args: ParsedArgs): Promise<RunResult> {
  * @arcanada/publisher-video. Platform-agnostic; no adapter or login needed.
  */
 async function runVideo(args: ParsedArgs): Promise<RunResult> {
+  // ARCA-0191: engine routing. The shotcraft (Remotion cinematic) engine is
+  // opt-in via `--engine shotcraft`; the default `cycle` branch below is the
+  // existing ffmpeg code path, byte-for-byte unchanged. Heavy Remotion/React
+  // deps are reached only through this dynamic import (footprint isolation).
+  if (args.engine === "shotcraft") {
+    return runShotcraft(args);
+  }
+
   const { generateVideo, listPresets } = await import("@arcanada/publisher-video");
 
   if (args.listPresets) {
@@ -469,6 +477,45 @@ async function runVideo(args: ParsedArgs): Promise<RunResult> {
   return {
     code: ErrorCode.SUCCESS,
     message: `video generated: ${result.out} (${result.durationSec.toFixed(1)}s, audio=${result.hasAudio})`,
+  };
+}
+
+/**
+ * Run the `video --engine shotcraft` path: render a cinematic promo MP4 from a
+ * social post (text + product asset[s]) via @arcanada/publisher-shotcraft. The
+ * heavy Remotion/Chromium/React closure is reached only through this dynamic
+ * import. Output uses the same result envelope as the ffmpeg engine, so the
+ * success message and the downstream `publish --image` handoff are identical.
+ */
+async function runShotcraft(args: ParsedArgs): Promise<RunResult> {
+  if (!args.textFile) {
+    return {
+      code: ErrorCode.MISSING_INPUT,
+      message: "video --engine shotcraft: --text-file is required",
+    };
+  }
+  if (!args.videoOut) {
+    return {
+      code: ErrorCode.MISSING_INPUT,
+      message: "video --engine shotcraft: --out is required",
+    };
+  }
+
+  const { renderCinematic, resolveFormat } = await import("@arcanada/publisher-shotcraft");
+
+  const result = await renderCinematic({
+    textFile: args.textFile,
+    assets: args.assets,
+    out: args.videoOut,
+    ...(args.template !== undefined ? { template: args.template as "ink-press" } : {}),
+    ...(args.shots.length > 0 ? { shots: args.shots } : {}),
+    ...(args.format !== undefined ? { format: resolveFormat(args.format) } : {}),
+    ...(args.browserExecutable !== undefined ? { browserExecutable: args.browserExecutable } : {}),
+  });
+
+  return {
+    code: ErrorCode.SUCCESS,
+    message: `cinematic video generated: ${result.out} (${result.durationSec.toFixed(1)}s, audio=${result.hasAudio})`,
   };
 }
 
