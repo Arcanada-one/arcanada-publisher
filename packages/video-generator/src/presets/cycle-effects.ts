@@ -7,7 +7,9 @@
  * Raw effect filter strings from the bash engine.
  * Use substituteEffectParams() before embedding into an ffmpeg filter graph.
  * __DT__ → frame-count integer (fps * seg_sec).
- * W and H are NOT substituted here — they are expanded via explicit scale params.
+ * __WxH__ → the output canvas as `<width>x<height>`. Only zoompan needs it: that
+ * filter re-rasterises to its own `s=` size and would otherwise silently force
+ * every clip back to 1280x720, which is how a 9:16 render came out landscape.
  */
 export const EFFECT_POOL: readonly string[] = [
   "hue=h='60*t':s=1.5",
@@ -20,8 +22,8 @@ export const EFFECT_POOL: readonly string[] = [
   "negate,hue=h='80*t':s=1.5",
   "vignette=PI/4,hue=h='70*t':s=1.6,eq=brightness=0.03",
   "noise=alls=14:allf=t,hue=h='-50*t':s=1.5",
-  "zoompan=z='min(1+0.025*on,1.5)':d=__DT__:s=1280x720,eq=saturation=1.4",
-  "zoompan=z='if(lte(on,1),1.5,max(1.5-0.025*on,1))':d=__DT__:s=1280x720,hue=h='40*t'",
+  "zoompan=z='min(1+0.025*on,1.5)':d=__DT__:s=__WxH__,eq=saturation=1.4",
+  "zoompan=z='if(lte(on,1),1.5,max(1.5-0.025*on,1))':d=__DT__:s=__WxH__,hue=h='40*t'",
   "rotate='0.06*sin(t*1.5)':c=black,eq=saturation=1.5",
   "pixelize=w=12:h=12,hue=h='90*t':s=1.6",
   "pixelize=w=24:h=24,eq=saturation=1.8",
@@ -102,6 +104,13 @@ export function buildEffectSequence(count: number, seed?: number): number[] {
  * Replace the __DT__ placeholder in an effect string with the actual frame count.
  * This is the ONLY substitution performed — no user strings enter here.
  */
-export function substituteEffectParams(effect: string, dt: number): string {
-  return effect.replaceAll("__DT__", String(dt));
+export function substituteEffectParams(
+  effect: string,
+  dt: number,
+  width: number,
+  height: number,
+): string {
+  return effect
+    .replaceAll("__DT__", String(dt))
+    .replaceAll("__WxH__", `${width}x${height}`);
 }

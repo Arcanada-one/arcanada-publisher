@@ -84,3 +84,35 @@ export function validateOutputPath(rawPath: string): string {
   }
   return abs;
 }
+
+/**
+ * Validate the output canvas and return concrete dimensions.
+ *
+ * Defaults to 1280x720. Both must be positive even integers: h264 with
+ * yuv420p chroma subsampling requires even dimensions, and ffmpeg's failure
+ * for an odd size arrives deep inside a filter graph rather than at the call
+ * boundary, so it is cheaper to refuse here.
+ */
+export function validateDimensions(
+  rawWidth: number | undefined,
+  rawHeight: number | undefined,
+): { width: number; height: number } {
+  const width = rawWidth ?? 1280;
+  const height = rawHeight ?? 720;
+  for (const [name, value] of [
+    ["width", width],
+    ["height", height],
+  ] as const) {
+    if (!Number.isInteger(value) || value <= 0)
+      throw new AdapterError(
+        ErrorCode.INVALID_ARGS,
+        `video: ${name} must be a positive integer (got ${String(value)})`,
+      );
+    if (value % 2 !== 0)
+      throw new AdapterError(
+        ErrorCode.INVALID_ARGS,
+        `video: ${name} must be even for h264 yuv420p (got ${String(value)})`,
+      );
+  }
+  return { width, height };
+}

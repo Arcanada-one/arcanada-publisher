@@ -122,6 +122,17 @@ export interface ParsedArgs {
    */
   maxBitrateKbps: number | undefined;
   /**
+   * `video` subcommand: output canvas in pixels. Default 1280x720 (16:9); pass
+   * 720x1280 for a 9:16 social vertical. Mirrors GenerateOptions.width/height.
+   *
+   * Deliberately NOT named --video-width/--video-height: those already exist on
+   * this CLI and mean something else (the dimensions a PUBLISHED post's media is
+   * verified against). Reusing them would have made a render flag and a
+   * verification flag share a name.
+   */
+  canvasWidth: number | undefined;
+  canvasHeight: number | undefined;
+  /**
    * `video` subcommand: disable the bottom audio-amplitude strip (cycle preset).
    * Default false → the strip is drawn (house style). `--no-waveform` flips it.
    */
@@ -174,6 +185,8 @@ const VALUE_FLAGS = new Set([
   "--cover-seconds",
   "--seed",
   "--max-bitrate",
+  "--canvas-width",
+  "--canvas-height",
   "--waveform-height",
   "--waveform-colors",
 ]);
@@ -244,6 +257,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     seed: undefined,
     listPresets: false,
     maxBitrateKbps: undefined,
+    canvasWidth: undefined,
+    canvasHeight: undefined,
     noWaveform: false,
     waveformHeight: undefined,
     waveformColors: undefined,
@@ -434,6 +449,19 @@ export function parseArgs(argv: string[]): ParsedArgs {
           throw new CliParseError(`--seed must be an integer, got '${value}'`);
         }
         out.seed = s;
+        break;
+      }
+      case "--canvas-width":
+      case "--canvas-height": {
+        if (!/^\d+$/.test(value))
+          throw new CliParseError(`${flag} must be a positive integer (pixels), got '${value}'`);
+        const px = Number.parseInt(value, 10);
+        if (px <= 0 || px % 2 !== 0)
+          throw new CliParseError(
+            `${flag} must be a positive EVEN integer (h264 yuv420p), got '${value}'`,
+          );
+        if (flag === "--canvas-width") out.canvasWidth = px;
+        else out.canvasHeight = px;
         break;
       }
       case "--max-bitrate": {

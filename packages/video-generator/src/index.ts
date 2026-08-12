@@ -3,7 +3,9 @@
 
 import { mkdirSync, rmSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
-import { validateCoverPath, validateAudioPath, validateOutputPath } from "./validate.js";
+import { validateCoverPath, validateAudioPath, validateOutputPath,
+  validateDimensions,
+} from "./validate.js";
 import { requireFfmpeg, runFfmpeg, probeDuration, probeStreams } from "./ffmpeg.js";
 import { resolve as resolvePreset, describe } from "./presets/index.js";
 import type { BuildContext } from "./presets/types.js";
@@ -34,6 +36,20 @@ export interface GenerateOptions {
    * Lower = better quality / larger file. Only applies to the final assembly pass.
    */
   crf?: number | undefined;
+  /**
+   * Output canvas in pixels. Default 1280x720 (16:9). Set 720x1280 for a 9:16
+   * social vertical.
+   *
+   * This is a real dimension, not a hint: the cover is scaled with
+   * `force_original_aspect_ratio=increase` and then cropped to exactly these
+   * numbers, so a portrait cover rendered at the landscape default is
+   * centre-cropped into a wide frame rather than letterboxed — it comes out
+   * looking like a mis-framed horizontal video, with nothing reporting an error.
+   * Both must be positive even integers (h264 chroma subsampling).
+   */
+  width?: number | undefined;
+  height?: number | undefined;
+
   /**
    * Bottom audio-amplitude strip (cycle preset only; ignored by other presets
    * and by cover-only runs that have no audio). A partial object is merged over
@@ -73,6 +89,7 @@ export async function generateVideo(opts: GenerateOptions): Promise<GenerateResu
   const coverAbs = validateCoverPath(opts.cover);
   const audioAbs = opts.audio !== undefined ? validateAudioPath(opts.audio) : undefined;
   const outAbs = validateOutputPath(opts.out);
+  const { width, height } = validateDimensions(opts.width, opts.height);
 
   // 2. Ensure ffmpeg/ffprobe are available.
   requireFfmpeg();
@@ -95,8 +112,8 @@ export async function generateVideo(opts: GenerateOptions): Promise<GenerateResu
     audio: audioAbs,
     out: outAbs,
     durationSec,
-    width: 1280,
-    height: 720,
+    width,
+    height,
     fps: 30,
     seed: opts.seed,
     coverOnlySeconds,
