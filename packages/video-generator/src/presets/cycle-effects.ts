@@ -110,7 +110,5 @@ export function substituteEffectParams(
   width: number,
   height: number,
 ): string {
-  return effect
-    .replaceAll("__DT__", String(dt))
-    .replaceAll("__WxH__", `${width}x${height}`);
+  return effect.replaceAll("__DT__", String(dt)).replaceAll("__WxH__", `${width}x${height}`);
 }

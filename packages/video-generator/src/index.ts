@@ -3,7 +3,10 @@
 
 import { mkdirSync, rmSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
-import { validateCoverPath, validateAudioPath, validateOutputPath,
+import {
+  validateCoverPath,
+  validateAudioPath,
+  validateOutputPath,
   validateDimensions,
 } from "./validate.js";
 import { requireFfmpeg, runFfmpeg, probeDuration, probeStreams } from "./ffmpeg.js";

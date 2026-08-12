@@ -7,7 +7,12 @@ import { writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { validateCoverPath, validateAudioPath, validateOutputPath, validateDimensions } from "../src/validate.js";
+import {
+  validateCoverPath,
+  validateAudioPath,
+  validateOutputPath,
+  validateDimensions,
+} from "../src/validate.js";
 import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
