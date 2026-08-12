@@ -12,6 +12,7 @@
     { "path": "../adapter-vkontakte" },
     { "path": "../adapter-telegram" },
     { "path": "../video-generator" },
+    { "path": "../video-shotcraft" },
     { "path": "../adapter-youtube" }
   ]
 }

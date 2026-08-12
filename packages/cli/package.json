@@ -32,6 +32,7 @@
     "@arcanada/publisher-reddit": "workspace:*",
     "@arcanada/publisher-server": "workspace:*",
     "@arcanada/publisher-telegram": "workspace:*",
+    "@arcanada/publisher-shotcraft": "workspace:*",
     "@arcanada/publisher-video": "workspace:*",
     "@arcanada/publisher-vkontakte": "workspace:*",
     "@arcanada/publisher-x": "workspace:*",
