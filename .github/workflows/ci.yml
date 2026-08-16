@@ -74,7 +74,7 @@ jobs:
     name: Footprint + supply-chain gates (ARCA-0191)
     runs-on: [self-hosted, Linux, X64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # These gates are pure grep + bash over the checked-in source tree — no
       # install needed, so node_modules is absent and the greps stay clean.
       - name: V-AC-5 — footprint isolation (core + adapters carry no remotion/react)
