@@ -29,7 +29,7 @@
     "@arcanada/publisher-core": "workspace:*",
     "@remotion/bundler": "4.0.513",
     "@remotion/cli": "4.0.513",
-    "@remotion/renderer": "4.0.509",
+    "@remotion/renderer": "4.0.513",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "remotion": "4.0.509"

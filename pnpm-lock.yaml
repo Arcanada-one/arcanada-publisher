@@ -263,8 +263,8 @@ importers:
         specifier: 4.0.513
         version: 4.0.513(postcss@8.5.26)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3)
       '@remotion/renderer':
-        specifier: 4.0.509
-        version: 4.0.509(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        specifier: 4.0.513
+        version: 4.0.513(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       react:
         specifier: 19.2.8
         version: 19.2.8
