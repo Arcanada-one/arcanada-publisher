@@ -471,6 +471,8 @@ async function runVideo(args: ParsedArgs): Promise<RunResult> {
     ...(args.coverSeconds !== undefined ? { coverOnlySeconds: args.coverSeconds } : {}),
     ...(args.seed !== undefined ? { seed: args.seed } : {}),
     ...(args.maxBitrateKbps !== undefined ? { maxBitrateKbps: args.maxBitrateKbps } : {}),
+    ...(args.canvasWidth !== undefined ? { width: args.canvasWidth } : {}),
+    ...(args.canvasHeight !== undefined ? { height: args.canvasHeight } : {}),
     ...(Object.keys(waveform).length > 0 ? { waveform } : {}),
   });
 

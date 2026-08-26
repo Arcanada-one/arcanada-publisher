@@ -251,7 +251,7 @@ function buildMuxPass(
 }
 
 function buildCyclePlan(ctx: BuildContext): PresetPlan {
-  const { out, fps, durationSec, seed } = ctx;
+  const { out, fps, durationSec, seed, width, height } = ctx;
   const workdir = pathJoin(dirname(out), `_cycleWork-${Date.now()}`);
 
   if (durationSec > MAX_AUDIO_MINUTES * 60) {
@@ -276,7 +276,7 @@ function buildCyclePlan(ctx: BuildContext): PresetPlan {
     const efxIdx = effectSeq[i];
     if (efxIdx === undefined) continue;
     const rawEffect = EFFECT_POOL[efxIdx] ?? (EFFECT_POOL[0] as string);
-    const effectStr = substituteEffectParams(rawEffect, dt);
+    const effectStr = substituteEffectParams(rawEffect, dt, width, height);
     passes.push(buildEffectPass(ctx, workdir, i + 1, effectStr, segLen));
   }
 
