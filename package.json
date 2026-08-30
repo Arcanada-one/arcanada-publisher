@@ -27,7 +27,7 @@
     "format": "prettier --write \"**/*.{ts,md,json,yml,yaml}\""
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.4.0",
     "@typescript-eslint/eslint-plugin": "^8.67.0",
     "@typescript-eslint/parser": "^8.67.0",
     "eslint": "^10.8.1",
