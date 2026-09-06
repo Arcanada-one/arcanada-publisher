@@ -27,7 +27,7 @@
   "dependencies": {
     "@arcanada/publisher-core": "workspace:*",
     "playwright": "^1.62.1",
-    "zod": "^3.25.76"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "typescript": "^5.7.2",
