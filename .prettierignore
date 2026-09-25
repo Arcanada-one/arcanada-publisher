@@ -5,3 +5,8 @@ pnpm-lock.yaml
 coverage/
 # Vendored third-party subtree (ARCA-0191) — hash-pinned, not our code style.
 packages/video-shotcraft/vendor/**
+
+# AUP-GRAPH-006: digest-pinned vendored gate bundle - byte-identical to one pinned program-repo SHA,
+# with a sha256 per file in BUNDLE.json. Reformatting it would break the digests the job verifies.
+.github/graph-admission/**
+.github/workflows/graph-admission.yml
