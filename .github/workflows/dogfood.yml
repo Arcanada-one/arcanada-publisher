@@ -22,7 +22,7 @@ permissions:
 jobs:
   verify-sandbox:
     name: Sandbox verify (drift detection)
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, ci-general]
     steps:
       - uses: actions/checkout@v7
       # `dest` is pinned per job on purpose. Several runners on a host share

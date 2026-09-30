@@ -17,7 +17,7 @@ permissions:
 jobs:
   lint:
     name: Lint + Format
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, ci-general]
     steps:
       - uses: actions/checkout@v7
       # `dest` is pinned per job on purpose. Several runners on a host share
@@ -37,7 +37,7 @@ jobs:
 
   typecheck:
     name: TypeScript
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, ci-general]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
@@ -69,7 +69,7 @@ jobs:
 
   audit:
     name: Dependency audit
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, ci-general]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
@@ -84,7 +84,7 @@ jobs:
 
   footprint:
     name: Footprint + supply-chain gates (ARCA-0191)
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, ci-general]
     steps:
       - uses: actions/checkout@v4
       # These gates are pure grep + bash over the checked-in source tree — no
@@ -110,7 +110,7 @@ jobs:
 
   shell:
     name: Shell (shellcheck + bats)
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, ci-general]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
