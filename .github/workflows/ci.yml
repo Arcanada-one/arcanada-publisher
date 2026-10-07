@@ -17,10 +17,16 @@ permissions:
 jobs:
   lint:
     name: Lint + Format
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, ci-general]
     steps:
       - uses: actions/checkout@v7
+      # `dest` is pinned per job on purpose. Several runners on a host share
+      # one OS user, so the action default `~/setup-pnpm` is ONE directory that
+      # concurrent jobs install pnpm into simultaneously and corrupt (A2-227).
+      # `runner.temp` is per runner and per job. Do not drop this.
       - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
@@ -31,10 +37,12 @@ jobs:
 
   typecheck:
     name: TypeScript
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, ci-general]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
@@ -48,6 +56,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
@@ -59,10 +69,12 @@ jobs:
 
   audit:
     name: Dependency audit
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, ci-general]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
       - uses: actions/setup-node@v7
         with:
           node-version: 22.13.1
@@ -70,12 +82,40 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: npm run audit
 
+  footprint:
+    name: Footprint + supply-chain gates (ARCA-0191)
+    runs-on: [self-hosted, Linux, X64, ci-general]
+    steps:
+      - uses: actions/checkout@v4
+      # These gates are pure grep + bash over the checked-in source tree — no
+      # install needed, so node_modules is absent and the greps stay clean.
+      - name: V-AC-5 — footprint isolation (core + adapters carry no remotion/react)
+        run: |
+          if grep -REl --include=package.json --exclude-dir=node_modules \
+               'remotion|@remotion|"react"' packages/core packages/adapter-*; then
+            echo "FAIL: remotion/@remotion/react leaked into core or an adapter package.json" >&2
+            exit 1
+          fi
+          echo "V-AC-5: OK — 0 remotion/react deps in core + adapters"
+      - name: V-AC-6 — no shell-string interpolation / curl|bash in the shotcraft engine
+        run: |
+          if grep -REn 'shell:[[:space:]]*true|execSync|curl.*\|[[:space:]]*(bash|sh)' \
+               packages/video-shotcraft/src; then
+            echo "FAIL: shell-string interpolation or curl|bash in shotcraft src" >&2
+            exit 1
+          fi
+          echo "V-AC-6: OK — 0 shell-interp / curl|bash matches"
+      - name: V-AC-6 — vendored subtree matches the supply-chain pin
+        run: bash dev-tools/verify-vendor.sh
+
   shell:
     name: Shell (shellcheck + bats)
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, ci-general]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc

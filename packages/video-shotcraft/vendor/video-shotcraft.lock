@@ -1,0 +1,21 @@
+{
+  "source": "https://github.com/Vincentwei1021/video-shotcraft",
+  "commit": "a87bf81207b5b538d07b1da6f199627600013370",
+  "vendored": [
+    "references/",
+    "template/ (excluding out/reference-final.mp4)",
+    "demos/",
+    "assets/lib/",
+    "LICENSE",
+    "SKILL.md",
+    "README.md"
+  ],
+  "excluded": [
+    "gallery/ (108M motion previews — not needed to render)",
+    "template/out/ (15M reference render)",
+    "assets/audio/ + assets/scripts/ (template carries its own public/audio)"
+  ],
+  "contentHash": "sha256:eef48df666776537483cf991bf96e78b870049fe3cb3aa8d199a82b2e89a19bb",
+  "pinned_by": "ARCA-0191",
+  "pinned_at": "2026-07-23"
+}

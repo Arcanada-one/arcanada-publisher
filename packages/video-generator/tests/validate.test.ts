@@ -7,7 +7,12 @@ import { writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { validateCoverPath, validateAudioPath, validateOutputPath } from "../src/validate.js";
+import {
+  validateCoverPath,
+  validateAudioPath,
+  validateOutputPath,
+  validateDimensions,
+} from "../src/validate.js";
 import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -109,5 +114,28 @@ describe("validateOutputPath", () => {
   it("accepts output path in an existing directory", () => {
     const p = join(tmpdir(), `pub-test-out-${Date.now()}.mp4`);
     expect(() => validateOutputPath(p)).not.toThrow();
+  });
+});
+
+describe("validateDimensions", () => {
+  it("defaults to the 16:9 landscape canvas", () => {
+    expect(validateDimensions(undefined, undefined)).toEqual({ width: 1280, height: 720 });
+  });
+
+  it("accepts an explicit 9:16 portrait canvas", () => {
+    expect(validateDimensions(720, 1280)).toEqual({ width: 720, height: 1280 });
+  });
+
+  it("rejects odd dimensions, which h264 yuv420p cannot encode", () => {
+    // Refused at the boundary on purpose: ffmpeg's failure for an odd size
+    // surfaces deep inside a filter graph, far from the caller that chose it.
+    expect(() => validateDimensions(721, 1280)).toThrow(/even/i);
+    expect(() => validateDimensions(720, 1281)).toThrow(/even/i);
+  });
+
+  it("rejects zero, negative and non-integer dimensions", () => {
+    expect(() => validateDimensions(0, 720)).toThrow(/positive integer/i);
+    expect(() => validateDimensions(-720, 1280)).toThrow(/positive integer/i);
+    expect(() => validateDimensions(720.5, 1280)).toThrow(/positive integer/i);
   });
 });

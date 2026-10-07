@@ -15,7 +15,15 @@ import { type ParsedArgs } from "./parse-args.js";
 export function makeAdapter(platform: Platform, args: ParsedArgs): Adapter {
   switch (platform) {
     case "facebook":
-      return new FacebookAdapter();
+      // PUB-0033 parity: --headed must reach Facebook too. LinkedIn and X have
+      // honoured the flag since PUB-0033; Facebook silently ignored it, so an
+      // operator debugging a Facebook publish got a headless browser anyway.
+      return args.headed
+        ? new FacebookAdapter({
+            publishOptions: { headed: true },
+            commentOptions: { headed: true },
+          })
+        : new FacebookAdapter();
     case "linkedin":
       return args.headed
         ? new LinkedInAdapter({

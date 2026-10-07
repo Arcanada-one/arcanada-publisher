@@ -226,3 +226,49 @@ describe("cycle preset", () => {
     expect(args1).not.toBe(args2);
   });
 });
+
+// PUB: 9:16 support. A portrait render used to come out landscape, silently.
+//
+// The generator hardcoded a 1280x720 canvas, and every preset scales the cover
+// with force_original_aspect_ratio=increase then crops to the canvas — so a
+// 720x1280 portrait cover was centre-cropped into a wide frame and the output
+// was a mis-framed horizontal video. Nothing errored: ffmpeg did exactly what
+// it was told. These pin the dimension end of that.
+describe("vertical (9:16) canvas", () => {
+  const verticalCtx: BuildContext = { ...baseCtx, width: 720, height: 1280 };
+
+  it("cycle: zoompan effects re-rasterise to the REQUESTED canvas, not 1280x720", () => {
+    // zoompan is the trap: it re-rasterises to its own s= size, so an effect
+    // carrying a literal s=1280x720 drags the whole clip back to landscape
+    // partway through the chain even when every scale/crop around it is correct.
+    const args = normalizeCycleWorkdirs(flattenArgs(cyclePreset.buildPlan(verticalCtx))).join(" ");
+    expect(args).not.toContain("s=1280x720");
+    if (args.includes("zoompan")) expect(args).toContain("s=720x1280");
+  });
+
+  it("cycle: scale and crop target the requested canvas", () => {
+    const args = normalizeCycleWorkdirs(flattenArgs(cyclePreset.buildPlan(verticalCtx))).join(" ");
+    expect(args).toContain("scale=720:1280");
+    expect(args).toContain("crop=720:1280");
+  });
+
+  it("zoompan preset honours the requested canvas", () => {
+    const args = flattenArgs(zoompanPreset.buildPlan(verticalCtx)).join(" ");
+    expect(args).toContain("scale=720:1280");
+    expect(args).not.toContain("scale=1280:720");
+  });
+
+  it("cqt preset honours the requested canvas", () => {
+    const args = flattenArgs(cqtPreset.buildPlan(verticalCtx)).join(" ");
+    expect(args).toContain("scale=720:1280");
+    expect(args).not.toContain("scale=1280:720");
+  });
+
+  it("the landscape default is unchanged", () => {
+    // The whole point of a default is that adding the option changes nothing
+    // for every existing caller.
+    const args = normalizeCycleWorkdirs(flattenArgs(cyclePreset.buildPlan(baseCtx))).join(" ");
+    expect(args).toContain("scale=1280:720");
+    expect(args).toContain("crop=1280:720");
+  });
+});

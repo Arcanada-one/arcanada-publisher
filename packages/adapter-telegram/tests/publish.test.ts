@@ -3,7 +3,12 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AdapterError, ErrorCode } from "@arcanada/publisher-core";
-import { TelegramAdapter, TELEGRAM_TEST_CHAT_ID, requireMessage } from "../src/index.js";
+import {
+  TelegramAdapter,
+  TELEGRAM_TEST_CHAT_ID,
+  ffprobeVideoMetadata,
+  requireMessage,
+} from "../src/index.js";
 
 describe("TelegramAdapter publish safety", () => {
   it("dry-runs without credentials or network and requires a chat", async () => {
@@ -81,7 +86,20 @@ describe("TelegramAdapter publish safety", () => {
       .mockResolvedValueOnce({ ok: true, result: [] })
       .mockImplementationOnce(async (actualMethod: string, body: FormData) => {
         expect(actualMethod).toBe(method);
-        expect([...body.keys()].sort()).toEqual(["caption", "chat_id", field].sort());
+        expect([...body.keys()].sort()).toEqual(
+          [
+            "caption",
+            "chat_id",
+            field,
+            ...(field === "video" ? ["duration", "height", "supports_streaming", "width"] : []),
+          ].sort(),
+        );
+        if (field === "video") {
+          expect(body.get("width")).toBe("1280");
+          expect(body.get("height")).toBe("720");
+          expect(body.get("duration")).toBe("524");
+          expect(body.get("supports_streaming")).toBe("true");
+        }
         const caption = String(body.get("caption"));
         return {
           ok: true,
@@ -95,22 +113,105 @@ describe("TelegramAdapter publish safety", () => {
               : {
                   video: {
                     file_id: "video",
-                    width: 1,
-                    height: 1,
-                    duration: 1,
+                    width: 1280,
+                    height: 720,
+                    duration: 524,
                     file_name: fileName,
                   },
                 }),
           },
         };
       });
-    const adapter = new TelegramAdapter({ transport, nonce: () => "fixed" });
+    const adapter = new TelegramAdapter({
+      transport,
+      nonce: () => "fixed",
+      probeVideoMetadata: async () => ({ width: 1280, height: 720, duration: 524 }),
+    });
     await adapter.publish({
       text: "Title\n\nLead",
       imagePaths: [media],
       profile: "",
       chatId: TELEGRAM_TEST_CHAT_ID,
     });
+  });
+
+  it("fails closed before Telegram I/O when video metadata is invalid", async () => {
+    const transport = vi.fn();
+    const adapter = new TelegramAdapter({
+      transport,
+      probeVideoMetadata: async () => ({ width: 0, height: 720, duration: 524 }),
+    });
+
+    await expect(
+      adapter.publish({
+        text: "Title\n\nLead",
+        imagePaths: [makeMedia("hero.mp4")],
+        profile: "",
+        chatId: TELEGRAM_TEST_CHAT_ID,
+      }),
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_ARGS });
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it("derives Telegram video metadata from ffprobe JSON", async () => {
+    const run = vi.fn(async (_executable: string, _args: readonly string[]) =>
+      JSON.stringify({
+        streams: [{ width: 1280, height: 720, duration: "N/A" }],
+        format: { duration: "524.225000" },
+      }),
+    );
+
+    await expect(ffprobeVideoMetadata("/tmp/hero.mp4", run)).resolves.toEqual({
+      width: 1280,
+      height: 720,
+      duration: 524,
+    });
+    expect(run).toHaveBeenCalledWith(
+      "ffprobe",
+      expect.arrayContaining(["-select_streams", "v:0", "/tmp/hero.mp4"]),
+    );
+  });
+
+  it("rejects a video publish when Telegram read-back metadata differs from ffprobe", async () => {
+    const media = makeMedia("hero.mp4");
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, result: { id: 42 } })
+      .mockResolvedValueOnce({ ok: true, result: [] })
+      .mockImplementationOnce(async (_method: string, _body: FormData) => ({
+        ok: true,
+        result: {
+          message_id: 8,
+          chat: { id: Number(TELEGRAM_TEST_CHAT_ID), username: "test" },
+          sender_chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
+          caption: "Metadata gate",
+          video: {
+            file_id: "video",
+            width: 320,
+            height: 320,
+            duration: 0,
+            file_name: "hero.mp4",
+          },
+        },
+      }));
+    const adapter = new TelegramAdapter({
+      transport,
+      probeVideoMetadata: async () => ({ width: 1280, height: 720, duration: 524 }),
+    });
+
+    await expect(
+      adapter.publish({
+        text: "Full text",
+        title: "Metadata gate",
+        imagePaths: [media],
+        profile: "",
+        chatId: TELEGRAM_TEST_CHAT_ID,
+      }),
+    ).rejects.toMatchObject({
+      code: ErrorCode.VERIFY_FAILED,
+      message: "publish: returned video metadata does not match ffprobe",
+    });
+    expect(transport).toHaveBeenCalledTimes(3);
   });
 
   it("publishes Pattern A as a bounded photo caption and a linked body reply", async () => {
@@ -804,7 +905,7 @@ function removeOneTerminalLineEnding(text: string): string {
 }
 
 describe("TelegramAdapter two-post channel contract", () => {
-  it("publishes and reads back two ordered ordinary channel posts without reply fields", async () => {
+  it("publishes the longread as a verified reply to the captured media post", async () => {
     const media = makeMedia("hero.mp4");
     const text =
       '<b>Global Addresser</b>\n\nFull RU text\n\n<a href="https://arcanada.ai/ru/blog/cubrim-global-addresser">Читать статью полностью на arcanada.ai</a>';
@@ -817,6 +918,10 @@ describe("TelegramAdapter two-post channel contract", () => {
         expect(body.has("video")).toBe(true);
         expect(body.get("caption")).toBe("<b>Global Addresser</b>");
         expect(body.get("parse_mode")).toBe("HTML");
+        expect(body.get("width")).toBe("1280");
+        expect(body.get("height")).toBe("720");
+        expect(body.get("duration")).toBe("524");
+        expect(body.get("supports_streaming")).toBe("true");
         for (const key of ["reply_to_message_id", "reply_parameters", "message_thread_id"])
           expect(body.has(key)).toBe(false);
         return {
@@ -830,7 +935,7 @@ describe("TelegramAdapter two-post channel contract", () => {
               file_id: "video",
               width: 1280,
               height: 720,
-              duration: 1,
+              duration: 524,
               file_name: "hero.mp4",
             },
           },
@@ -840,8 +945,9 @@ describe("TelegramAdapter two-post channel contract", () => {
         expect(method).toBe("sendMessage");
         expect(body.get("text")).toBe(text);
         expect(body.get("parse_mode")).toBe("HTML");
-        for (const key of ["reply_to_message_id", "reply_parameters", "message_thread_id"])
-          expect(body.has(key)).toBe(false);
+        expect(JSON.parse(String(body.get("reply_parameters")))).toEqual({ message_id: 8 });
+        expect(body.has("reply_to_message_id")).toBe(false);
+        expect(body.has("message_thread_id")).toBe(false);
         return {
           ok: true,
           result: {
@@ -849,10 +955,18 @@ describe("TelegramAdapter two-post channel contract", () => {
             chat: { id: Number(TELEGRAM_TEST_CHAT_ID), username: "test" },
             sender_chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
             text: "Global Addresser\n\nFull RU text\n\nЧитать статью полностью на arcanada.ai",
+            reply_to_message: {
+              message_id: 8,
+              chat: { id: Number(TELEGRAM_TEST_CHAT_ID) },
+            },
           },
         };
       });
-    const adapter = new TelegramAdapter({ transport, nonce: () => "unused" });
+    const adapter = new TelegramAdapter({
+      transport,
+      nonce: () => "unused",
+      probeVideoMetadata: async () => ({ width: 1280, height: 720, duration: 524 }),
+    });
     const result = await adapter.publish({
       text,
       title: "Global Addresser",
