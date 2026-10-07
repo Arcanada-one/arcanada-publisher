@@ -24,7 +24,7 @@ jobs:
       # one OS user, so the action default `~/setup-pnpm` is ONE directory that
       # concurrent jobs install pnpm into simultaneously and corrupt (A2-227).
       # `runner.temp` is per runner and per job. Do not drop this.
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
       - uses: actions/setup-node@v7
@@ -40,7 +40,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, ci-general]
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
       - uses: actions/setup-node@v7
@@ -55,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
       - uses: actions/setup-node@v7
@@ -72,7 +72,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, ci-general]
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
       - uses: actions/setup-node@v7
@@ -113,7 +113,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, ci-general]
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
       - uses: actions/setup-node@v7
