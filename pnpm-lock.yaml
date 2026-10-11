@@ -263,8 +263,8 @@ importers:
         specifier: 4.0.525
         version: 4.0.525(postcss@8.5.28)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3)
       '@remotion/renderer':
-        specifier: 4.0.528
-        version: 4.0.528(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        specifier: 4.0.534
+        version: 4.0.534(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       react:
         specifier: 19.2.8
         version: 19.2.8
@@ -862,13 +862,13 @@ packages:
     cpu: [arm64]
     os: [darwin]
 
-  '@remotion/compositor-darwin-arm64@4.0.528':
-    resolution: {integrity: sha512-a7i67TJcNRL5L6VNyF6GofRd00pi4wwVhUueh9IsmgZhRo3nRMDSIwv9PVkxA+BleATr8G/qyoV2rui5SCGI+Q==}
+  '@remotion/compositor-darwin-arm64@4.0.532':
+    resolution: {integrity: sha512-K/RID6hvhRqiE1q/DTurkmG/6SrD9b918fgqvmntFpFiU3bc8Ti9ZaYQCOwTwOA6mVBh6oneuHuoA2QpFlP0Qg==}
     cpu: [arm64]
     os: [darwin]
 
-  '@remotion/compositor-darwin-arm64@4.0.532':
-    resolution: {integrity: sha512-K/RID6hvhRqiE1q/DTurkmG/6SrD9b918fgqvmntFpFiU3bc8Ti9ZaYQCOwTwOA6mVBh6oneuHuoA2QpFlP0Qg==}
+  '@remotion/compositor-darwin-arm64@4.0.534':
+    resolution: {integrity: sha512-q/FW5u8KaA/VIks8kPpOByIuJGaxH6myHG3Xyx5qAfxhiBjbimp2WEYmF09GivBdHp3CT/f5RrRLT+8Jrpi1ow==}
     cpu: [arm64]
     os: [darwin]
 
@@ -877,24 +877,18 @@ packages:
     cpu: [x64]
     os: [darwin]
 
-  '@remotion/compositor-darwin-x64@4.0.528':
-    resolution: {integrity: sha512-UdHc4DuAH/xQXiBXnhHvhuwqe/jEKh8wX3i4aBh82JhpLD+lLUV4yr2zlLk5/tlNahQ4XjHvkRFjf0C+6Zoing==}
-    cpu: [x64]
-    os: [darwin]
-
   '@remotion/compositor-darwin-x64@4.0.532':
     resolution: {integrity: sha512-mggi24c5As/H6wYoCr22oTRPVeblvNMdenh+bi7316lvBpBDgSXeIUkXvUEG4379lJQtshks0UfwkBkqnePyvg==}
     cpu: [x64]
     os: [darwin]
 
+  '@remotion/compositor-darwin-x64@4.0.534':
+    resolution: {integrity: sha512-yz5FtNA2k7Q1i8DBkHAMoBFkH+mCfwdYTxIQYROyZ640vDlZoXTqcDjKq0NLO1y/dGDpjpVWbYHjH1u4D+Dqeg==}
+    cpu: [x64]
+    os: [darwin]
+
   '@remotion/compositor-linux-arm64-gnu@4.0.525':
     resolution: {integrity: sha512-cvbg70XQTKNkibrLMiqKRY3TpN5NFfopVabd7i56yy2n029wm/CfxzbbGS81M5QzbqDOL/zvw//E7tyxKWKPWA==}
-    cpu: [arm64]
-    os: [linux]
-    libc: [glibc]
-
-  '@remotion/compositor-linux-arm64-gnu@4.0.528':
-    resolution: {integrity: sha512-uV+175ccEJmFbiV/K6f60ok1XW9P3RaZwknST55HZXO2dQJVsQFoYrQ0DjUTUYCc1ornHBrFcRtzcE66jZH7ug==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
@@ -905,14 +899,14 @@ packages:
     os: [linux]
     libc: [glibc]
 
-  '@remotion/compositor-linux-arm64-musl@4.0.525':
-    resolution: {integrity: sha512-Bd8vWbirviC0RH0gcqY9gOXku8W+GixdDvjvTYWpEAZBPBwiWnI6lloMpBu38NcG1nKdwCT0Rlb9KRvYsyVo3w==}
+  '@remotion/compositor-linux-arm64-gnu@4.0.534':
+    resolution: {integrity: sha512-7yeVbpaSdgymw1Fs4xm08ZOI55oL2Uq0WyJrqYIhQIbg6d7Ecd6ePNbPyaeQTIa9Dq5Rxay+qbF/DV3pqOb68w==}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
+    libc: [glibc]
 
-  '@remotion/compositor-linux-arm64-musl@4.0.528':
-    resolution: {integrity: sha512-E1bY9KZazdYyS49JG+Np9B4vYR30zveTKd0sGLgaxzODqU6Eddpn+i63kzP9as8VnBb1kM3UalVeAMtvQyOVyg==}
+  '@remotion/compositor-linux-arm64-musl@4.0.525':
+    resolution: {integrity: sha512-Bd8vWbirviC0RH0gcqY9gOXku8W+GixdDvjvTYWpEAZBPBwiWnI6lloMpBu38NcG1nKdwCT0Rlb9KRvYsyVo3w==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
@@ -923,14 +917,14 @@ packages:
     os: [linux]
     libc: [musl]
 
+  '@remotion/compositor-linux-arm64-musl@4.0.534':
+    resolution: {integrity: sha512-rJd/ZPEvQaLgh6ULy9svPwQ9QRNW2jX03PkX8heoIC1JUh196XupQ9QMRTMOFNz/Fu7yWgyVbXxQVkRtJb1EvA==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
   '@remotion/compositor-linux-x64-gnu@4.0.525':
     resolution: {integrity: sha512-TLku1Xcw+Je5aNQov1tUPMlsF2p5u1Sj10YmA0Lsf28JQqIGeozRYIBUDynjskghPxYSEvSDUEmRqpJsnP8IwQ==}
-    cpu: [x64]
-    os: [linux]
-    libc: [glibc]
-
-  '@remotion/compositor-linux-x64-gnu@4.0.528':
-    resolution: {integrity: sha512-Y549sFghYnEz23J28FIiG5OWvYy6anS8tPf+DH+l809/pkrubl3aLrivM6YVclOj/Djg3PjJSAZaAUcfBg6DDA==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
@@ -941,14 +935,14 @@ packages:
     os: [linux]
     libc: [glibc]
 
-  '@remotion/compositor-linux-x64-musl@4.0.525':
-    resolution: {integrity: sha512-s8TDKPSfBbT7ERuxGpcr7Z5TmAyxBqTuB1+5XT9edcxXk8ziu0rfH0ecttbNc/9wdrz+cPr+JIPaf1OvlZ3eDg==}
+  '@remotion/compositor-linux-x64-gnu@4.0.534':
+    resolution: {integrity: sha512-o7vW9vld+PmbjazKJl66sYdJZxCxW/adQd3zozV355Vb5NVqZmV8BHvSuZ1Xv210r0Vj0qtEv50ig2x0nAPmLA==}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
+    libc: [glibc]
 
-  '@remotion/compositor-linux-x64-musl@4.0.528':
-    resolution: {integrity: sha512-mIOxYBk2O5Um8hlVP9pvtP9ypr1lZdcpbsJUS4CP6VHMTOm2hzw2i1jGHj5FNa1Vwvdah1F9Ky3vpwvBbFmxww==}
+  '@remotion/compositor-linux-x64-musl@4.0.525':
+    resolution: {integrity: sha512-s8TDKPSfBbT7ERuxGpcr7Z5TmAyxBqTuB1+5XT9edcxXk8ziu0rfH0ecttbNc/9wdrz+cPr+JIPaf1OvlZ3eDg==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
@@ -959,18 +953,24 @@ packages:
     os: [linux]
     libc: [musl]
 
+  '@remotion/compositor-linux-x64-musl@4.0.534':
+    resolution: {integrity: sha512-6uMmkP143LF/AwjdU997xdwg7o7NCdb2eEtwt+/1qYK8/HTkd6KupqLFLBevuIQVyJ06iCwmUhZSxNL9tbWHoQ==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
   '@remotion/compositor-win32-x64-msvc@4.0.525':
     resolution: {integrity: sha512-+0/duQEdyul7IovzeCa8FA1iUF3/4OM9HPOUvBIU4xagzXWI1dcSf7SGf0wW3+as4WGLN9QdnNfsDoZ8k7Iu+g==}
     cpu: [x64]
     os: [win32]
 
-  '@remotion/compositor-win32-x64-msvc@4.0.528':
-    resolution: {integrity: sha512-ouOstGI/RbWxYq/x68GMq/6BnQSP58w+JOH2XeBZ39pBcWn8WHRav3UL5UNBcmQPEUZquEEgzqJiVzZTawiOuQ==}
+  '@remotion/compositor-win32-x64-msvc@4.0.532':
+    resolution: {integrity: sha512-OES5+mlcBTxcQc7VXszEqwbpnAU593P5uuXDGPz6VC/FMivFtOGmBObE8LQ3azAkVfls4Arjxh33U44inlCweg==}
     cpu: [x64]
     os: [win32]
 
-  '@remotion/compositor-win32-x64-msvc@4.0.532':
-    resolution: {integrity: sha512-OES5+mlcBTxcQc7VXszEqwbpnAU593P5uuXDGPz6VC/FMivFtOGmBObE8LQ3azAkVfls4Arjxh33U44inlCweg==}
+  '@remotion/compositor-win32-x64-msvc@4.0.534':
+    resolution: {integrity: sha512-+hp7c5ZAnomRe4U+s9tG36kmjMo0V43xV7WG353QCCHLRjKiR5KdkrU1TJQOAq53oyLdsD7BHUkEEWIBSSzSLg==}
     cpu: [x64]
     os: [win32]
 
@@ -980,11 +980,11 @@ packages:
   '@remotion/licensing@4.0.525':
     resolution: {integrity: sha512-4uNq/sgGjDIdNeJO5NWowbKkidSeZ6OTRe/L2nUh9BfS4dqnva6GCcZ8slfyiqB+YGCPpilq4LtHCTw8yhdNpw==}
 
-  '@remotion/licensing@4.0.528':
-    resolution: {integrity: sha512-JKPm2sDI//ga8gnhyXy1TpRd+nUQfW71J4h7HZwJg47Hc4lHT1j9WZdlPkyDVZrJY6D0XjwmXI882DblZVG0XA==}
-
   '@remotion/licensing@4.0.532':
     resolution: {integrity: sha512-rVFt+XpEn4X5aOiy1DDCjJeUKgGey1ftYK812W8iEBZkcl6hlb1eq9SyQTIX0JlTtMzdJrev6+jLSnLCOj69OQ==}
+
+  '@remotion/licensing@4.0.534':
+    resolution: {integrity: sha512-pNP8OfY+vbDbjNBLYGoxGyE0SsReRy85G/QTF17mQC86dt2+pzsYlOkG2mq6R4tkt27xaQv8O5EFiJfYYfVkkw==}
 
   '@remotion/media-parser@4.0.525':
     resolution: {integrity: sha512-HwfMhGBTJR+msrEVhus7ZtYISPCW6ShEHDRiHBUOoOtKESPQO4VHGe3apna2pFd0GY1WZV00VjgHz7K6pO+2Ag==}
@@ -1040,14 +1040,14 @@ packages:
       react: '>=16.8.0'
       react-dom: '>=16.8.0'
 
-  '@remotion/renderer@4.0.528':
-    resolution: {integrity: sha512-JxIDbpAhc/RUvP8m6qiOtAhyrk+UAh6/sXaTibacNwIUvDy0ZgeTJRL5jeB0qlT3pdi6gdiXmir82lx/BLjzbg==}
+  '@remotion/renderer@4.0.532':
+    resolution: {integrity: sha512-Iy5JVGKBglJNBzu5uT9qKG8ZK2HqK9dZWn1gVG+BjyH0QAlvry3E5drra6hRmI0e9nhu2HxT9MrKQ0oLIfX5hA==}
     peerDependencies:
       react: '>=16.8.0'
       react-dom: '>=16.8.0'
 
-  '@remotion/renderer@4.0.532':
-    resolution: {integrity: sha512-Iy5JVGKBglJNBzu5uT9qKG8ZK2HqK9dZWn1gVG+BjyH0QAlvry3E5drra6hRmI0e9nhu2HxT9MrKQ0oLIfX5hA==}
+  '@remotion/renderer@4.0.534':
+    resolution: {integrity: sha512-CLZiNRibavsEpDWSm1WsD//xLGCUA/OwhFektjiAbRNkX75Ee3bOV4cjpyihaEd0HaiUv3bUT0QLnvdwynor/w==}
     peerDependencies:
       react: '>=16.8.0'
       react-dom: '>=16.8.0'
@@ -1055,11 +1055,11 @@ packages:
   '@remotion/streaming@4.0.525':
     resolution: {integrity: sha512-wIRLtYes0TkgghlgtDbp9wXZKa57h5cFy2wxHaF5WXLsIx6wHmjY6OeAhhXaIYmsSUF+EhI+3ybctMYzOKOZzQ==}
 
-  '@remotion/streaming@4.0.528':
-    resolution: {integrity: sha512-vhAQJwadjU+ffbNdAKguFq72t/kbQrTz8XmvRwUljFNCnTrSy4Z/XqVgO5k/vNVTp96nMyFm8sttQwei/F1u7Q==}
-
   '@remotion/streaming@4.0.532':
     resolution: {integrity: sha512-1Lw5HQzznHEfSq2HjXEJHbWsXLHLjqiQ2CfUaeMHtpFCR2AqUle13vbnqw+yG96e2GmnHhRPwQONSMtGHSjnfw==}
+
+  '@remotion/streaming@4.0.534':
+    resolution: {integrity: sha512-GE7wbEbQH15Ul4wCJYv81bjpbVIBKTxkcfCJgtYV8kiydG8v0OduYRyeUk1NTAAm80MK1oGjPOqabwRMxFGOfg==}
 
   '@remotion/studio-codemods@4.0.525':
     resolution: {integrity: sha512-EmPyjLEh/22dgawZGsgot/no9H9f1gDPFh0sCMEkOYSMzQkABvDyQrZL2iBAhC/KPcHWGzVUace+Q66ehoiEJw==}
@@ -2302,14 +2302,14 @@ packages:
       react: '>=16.8.0'
       react-dom: '>=16.8.0'
 
-  remotion@4.0.528:
-    resolution: {integrity: sha512-0dLRJD7pvArKJGlapqlX4fzB7A2mlvSAC2+kEItKSc8mU2ESlUE0TvKcCph1zfRfRUnV5aRTD72bdgEz5uw1sw==}
+  remotion@4.0.532:
+    resolution: {integrity: sha512-YsxSVz4E7HDKhC9v+O9sNCA9ud05VuWbjTX/ko51lf4MV+uyyrvsAyVNbPW2pW9Nk5Ty+JPdW3osRr5A+hXOoA==}
     peerDependencies:
       react: '>=16.8.0'
       react-dom: '>=16.8.0'
 
-  remotion@4.0.532:
-    resolution: {integrity: sha512-YsxSVz4E7HDKhC9v+O9sNCA9ud05VuWbjTX/ko51lf4MV+uyyrvsAyVNbPW2pW9Nk5Ty+JPdW3osRr5A+hXOoA==}
+  remotion@4.0.534:
+    resolution: {integrity: sha512-gSfMreFJgncWEHGsIWksicmEGsTrGMIAgZ87WS4e+bIB+nVsAN67UXWbQ88xGwUONm3xzwu9Ty786kFDcgZoaQ==}
     peerDependencies:
       react: '>=16.8.0'
       react-dom: '>=16.8.0'
@@ -3237,64 +3237,64 @@ snapshots:
   '@remotion/compositor-darwin-arm64@4.0.525':
     optional: true
 
-  '@remotion/compositor-darwin-arm64@4.0.528':
+  '@remotion/compositor-darwin-arm64@4.0.532':
     optional: true
 
-  '@remotion/compositor-darwin-arm64@4.0.532':
+  '@remotion/compositor-darwin-arm64@4.0.534':
     optional: true
 
   '@remotion/compositor-darwin-x64@4.0.525':
     optional: true
 
-  '@remotion/compositor-darwin-x64@4.0.528':
+  '@remotion/compositor-darwin-x64@4.0.532':
     optional: true
 
-  '@remotion/compositor-darwin-x64@4.0.532':
+  '@remotion/compositor-darwin-x64@4.0.534':
     optional: true
 
   '@remotion/compositor-linux-arm64-gnu@4.0.525':
     optional: true
 
-  '@remotion/compositor-linux-arm64-gnu@4.0.528':
+  '@remotion/compositor-linux-arm64-gnu@4.0.532':
     optional: true
 
-  '@remotion/compositor-linux-arm64-gnu@4.0.532':
+  '@remotion/compositor-linux-arm64-gnu@4.0.534':
     optional: true
 
   '@remotion/compositor-linux-arm64-musl@4.0.525':
     optional: true
 
-  '@remotion/compositor-linux-arm64-musl@4.0.528':
+  '@remotion/compositor-linux-arm64-musl@4.0.532':
     optional: true
 
-  '@remotion/compositor-linux-arm64-musl@4.0.532':
+  '@remotion/compositor-linux-arm64-musl@4.0.534':
     optional: true
 
   '@remotion/compositor-linux-x64-gnu@4.0.525':
     optional: true
 
-  '@remotion/compositor-linux-x64-gnu@4.0.528':
+  '@remotion/compositor-linux-x64-gnu@4.0.532':
     optional: true
 
-  '@remotion/compositor-linux-x64-gnu@4.0.532':
+  '@remotion/compositor-linux-x64-gnu@4.0.534':
     optional: true
 
   '@remotion/compositor-linux-x64-musl@4.0.525':
     optional: true
 
-  '@remotion/compositor-linux-x64-musl@4.0.528':
+  '@remotion/compositor-linux-x64-musl@4.0.532':
     optional: true
 
-  '@remotion/compositor-linux-x64-musl@4.0.532':
+  '@remotion/compositor-linux-x64-musl@4.0.534':
     optional: true
 
   '@remotion/compositor-win32-x64-msvc@4.0.525':
     optional: true
 
-  '@remotion/compositor-win32-x64-msvc@4.0.528':
+  '@remotion/compositor-win32-x64-msvc@4.0.532':
     optional: true
 
-  '@remotion/compositor-win32-x64-msvc@4.0.532':
+  '@remotion/compositor-win32-x64-msvc@4.0.534':
     optional: true
 
   '@remotion/elevenlabs@4.0.532':
@@ -3304,9 +3304,9 @@ snapshots:
 
   '@remotion/licensing@4.0.525': {}
 
-  '@remotion/licensing@4.0.528': {}
-
   '@remotion/licensing@4.0.532': {}
+
+  '@remotion/licensing@4.0.534': {}
 
   '@remotion/media-parser@4.0.525': {}
 
@@ -3388,28 +3388,6 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@remotion/renderer@4.0.528(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
-    dependencies:
-      '@remotion/licensing': 4.0.528
-      '@remotion/streaming': 4.0.528
-      execa: 5.1.1
-      react: 19.2.8
-      react-dom: 19.2.8(react@19.2.8)
-      remotion: 4.0.528(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      source-map: 0.8.0
-      ws: 8.21.0
-    optionalDependencies:
-      '@remotion/compositor-darwin-arm64': 4.0.528
-      '@remotion/compositor-darwin-x64': 4.0.528
-      '@remotion/compositor-linux-arm64-gnu': 4.0.528
-      '@remotion/compositor-linux-arm64-musl': 4.0.528
-      '@remotion/compositor-linux-x64-gnu': 4.0.528
-      '@remotion/compositor-linux-x64-musl': 4.0.528
-      '@remotion/compositor-win32-x64-msvc': 4.0.528
-    transitivePeerDependencies:
-      - bufferutil
-      - utf-8-validate
-
   '@remotion/renderer@4.0.532(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
     dependencies:
       '@remotion/licensing': 4.0.532
@@ -3432,11 +3410,33 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
+  '@remotion/renderer@4.0.534(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
+    dependencies:
+      '@remotion/licensing': 4.0.534
+      '@remotion/streaming': 4.0.534
+      execa: 5.1.1
+      react: 19.2.8
+      react-dom: 19.2.8(react@19.2.8)
+      remotion: 4.0.534(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      source-map: 0.8.0
+      ws: 8.21.0
+    optionalDependencies:
+      '@remotion/compositor-darwin-arm64': 4.0.534
+      '@remotion/compositor-darwin-x64': 4.0.534
+      '@remotion/compositor-linux-arm64-gnu': 4.0.534
+      '@remotion/compositor-linux-arm64-musl': 4.0.534
+      '@remotion/compositor-linux-x64-gnu': 4.0.534
+      '@remotion/compositor-linux-x64-musl': 4.0.534
+      '@remotion/compositor-win32-x64-msvc': 4.0.534
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
   '@remotion/streaming@4.0.525': {}
 
-  '@remotion/streaming@4.0.528': {}
-
   '@remotion/streaming@4.0.532': {}
+
+  '@remotion/streaming@4.0.534': {}
 
   '@remotion/studio-codemods@4.0.525(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
     dependencies:
@@ -4766,12 +4766,12 @@ snapshots:
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
 
-  remotion@4.0.528(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+  remotion@4.0.532(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     dependencies:
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
 
-  remotion@4.0.532(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+  remotion@4.0.534(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     dependencies:
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
