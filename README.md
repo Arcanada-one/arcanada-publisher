@@ -5,7 +5,7 @@
 | Status      | **Experimental** — automate your **own accounts only**; ToS risk on operator.       |
 | ----------- | ----------------------------------------------------------------------------------- |
 | License     | [MIT](./LICENSE)                                                                    |
-| Node / pnpm | Node ≥ 20, pnpm ≥ 10                                                                |
+| Node / pnpm | Node ≥ 22.23.4, pnpm ≥ 10                                                           |
 | Foundation  | [Phase 0 plan](https://github.com/Arcanada-one/arcanada-publisher) — contracts only |
 
 ## What this is
