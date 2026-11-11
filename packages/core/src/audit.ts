@@ -14,12 +14,7 @@ import { join } from "node:path";
 import type { Platform } from "./platform.js";
 
 export type AuditAction =
-  | "publish"
-  | "comment"
-  | "edit"
-  | "delete"
-  | "playlist-create"
-  | "playlist-insert";
+  "publish" | "comment" | "edit" | "delete" | "playlist-create" | "playlist-insert";
 
 /** The fields an audit record may carry. Anything outside this set is dropped. */
 export interface AuditInput {

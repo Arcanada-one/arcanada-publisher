@@ -11,29 +11,27 @@ const platformEnum = z.enum(PLATFORMS);
  * constants — concrete rule-sets are supplied as data via a preset (loadable
  * from `--policy-config`). An empty config is a valid no-op.
  *
- * `.strict()` rejects unknown keys so a malformed preset fails closed rather
+ * `z.strictObject` rejects unknown keys so a malformed preset fails closed rather
  * than silently half-applying. The rule vocabulary is fixed at four axes; new
  * axes are an explicit, data-only schema extension.
  */
-export const PolicyConfigSchema = z
-  .object({
-    /** R2: platform → BCP-47-ish lang tag; the body variant is chosen from PolicyInput.bodyByLang. */
-    languageByPlatform: z.record(platformEnum, z.string().min(1)).optional(),
-    /** R3: when true, CTA links are stripped from the body and emitted in firstComment. */
-    linksInFirstComment: z.boolean().optional(),
-    /** R4: cross-link templates appended to firstComment, keyed by the post's resolved language. */
-    crossLink: z
-      .object({
-        url: z.string().min(1),
-        skipPlatform: platformEnum.optional(),
-        templateByLang: z.record(z.string(), z.string().min(1)),
-      })
-      .strict()
-      .optional(),
-    /** R5: platforms whose body must start "{headline}\n\n{rest}". */
-    headerSeparatorPlatforms: z.array(platformEnum).optional(),
-  })
-  .strict();
+export const PolicyConfigSchema = z.strictObject({
+  /** R2: platform → BCP-47-ish lang tag; the body variant is chosen from PolicyInput.bodyByLang. */
+  // Zod 4: z.record(enumKey, …) requires every enum key; presets map a subset → partialRecord.
+  languageByPlatform: z.partialRecord(platformEnum, z.string().min(1)).optional(),
+  /** R3: when true, CTA links are stripped from the body and emitted in firstComment. */
+  linksInFirstComment: z.boolean().optional(),
+  /** R4: cross-link templates appended to firstComment, keyed by the post's resolved language. */
+  crossLink: z
+    .strictObject({
+      url: z.string().min(1),
+      skipPlatform: platformEnum.optional(),
+      templateByLang: z.record(z.string(), z.string().min(1)),
+    })
+    .optional(),
+  /** R5: platforms whose body must start "{headline}\n\n{rest}". */
+  headerSeparatorPlatforms: z.array(platformEnum).optional(),
+});
 
 export type PolicyConfig = z.infer<typeof PolicyConfigSchema>;
 

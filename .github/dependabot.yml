@@ -4,8 +4,35 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
+    groups:
+      npm-dev-lint-format:
+        patterns:
+          - "@typescript-eslint/*"
+          - prettier
+          - eslint
+          - "@types/node"
+          - typescript
+      npm-dev-test:
+        patterns:
+          - vitest
+          - "@vitest/*"
+      npm-prod-runtime:
+        patterns:
+          - zod
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
+          - remotion
+          - "@remotion/*"
+          - playwright
+          - "@playwright/*"
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"

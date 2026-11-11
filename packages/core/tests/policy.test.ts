@@ -10,7 +10,6 @@ const ARCANADA_PRESET: PolicyConfig = {
   linksInFirstComment: true,
   crossLink: {
     url: "https://t.me/example/123",
-    skipPlatform: undefined,
     templateByLang: {
       en: "Telegram (in Russian): {url}",
       ru: "Telegram: {url}",
