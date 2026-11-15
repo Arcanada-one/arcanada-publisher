@@ -27,12 +27,12 @@
   },
   "dependencies": {
     "@arcanada/publisher-core": "workspace:*",
-    "@remotion/bundler": "4.0.537",
-    "@remotion/cli": "4.0.536",
-    "@remotion/renderer": "4.0.537",
+    "@remotion/bundler": "4.0.543",
+    "@remotion/cli": "4.0.543",
+    "@remotion/renderer": "4.0.543",
     "react": "19.3.1",
-    "react-dom": "19.3.0",
-    "remotion": "4.0.534"
+    "react-dom": "19.3.1",
+    "remotion": "4.0.543"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",
