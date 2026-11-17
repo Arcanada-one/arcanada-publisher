@@ -52,7 +52,7 @@ jobs:
 
   test:
     name: Tests (vitest)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, ci-general]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -63,7 +63,7 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @arcanada/publisher-x exec playwright install --with-deps chromium
+      - run: pnpm --filter @arcanada/publisher-x exec playwright install chromium
       - run: pnpm -r --filter "./packages/*" build
       - run: pnpm -r test
 
