@@ -1,7 +1,7 @@
 {
   "name": "@arcanada/publisher-core",
   "version": "0.1.0-pre.0",
-  "description": "Core contracts for arcanada-publisher — Adapter interface, result schemas, error taxonomy, profile manager, network guard",
+  "description": "Core contracts for arcanada-publisher \u2014 Adapter interface, result schemas, error taxonomy, profile manager, network guard",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -26,7 +26,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "typescript": "^5.7.2",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
     "vitest": "^5.1.1"
   },
   "publishConfig": {

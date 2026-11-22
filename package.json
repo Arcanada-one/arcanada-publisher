@@ -2,7 +2,7 @@
   "name": "arcanada-publisher",
   "version": "0.1.0-pre.0",
   "private": true,
-  "description": "OSS browser publisher (Facebook / LinkedIn / X / Reddit / VK) — Playwright + agent-callable CLI/HTTP",
+  "description": "OSS browser publisher (Facebook / LinkedIn / X / Reddit / VK) \u2014 Playwright + agent-callable CLI/HTTP",
   "license": "MIT",
   "type": "module",
   "homepage": "https://arcanada.one/publisher",
@@ -28,11 +28,12 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
-    "@typescript-eslint/eslint-plugin": "^8.71.2",
-    "@typescript-eslint/parser": "^8.72.2",
+    "@typescript-eslint/eslint-plugin": "^8.73.0",
+    "@typescript-eslint/parser": "^8.73.0",
     "eslint": "^10.14.0",
     "prettier": "^3.10.1",
-    "typescript": "^5.7.2",
-    "vitest": "^5.1.1"
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "vitest": "^5.1.1",
+    "@typescript/native": "npm:typescript@^7.0.2"
   }
 }
